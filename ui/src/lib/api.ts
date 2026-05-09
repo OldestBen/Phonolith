@@ -3,11 +3,14 @@
 export interface Track {
   hash: string
   path: string
-  title: string
-  artist: string
-  album: string
+  filename?: string
+  title?: string
+  artist?: string
+  album?: string
   genre?: string
   format?: string
+  bit_depth?: number
+  sample_rate?: number
   duration_seconds?: number
   dr_score?: number
   internal_rating?: number

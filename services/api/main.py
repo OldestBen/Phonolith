@@ -107,14 +107,16 @@ async def list_tracks(
         total = count_row[0] if count_row else 0
 
         rows = conn.execute(
-            f"SELECT hash, path, title, artist, album, genre, format, duration_seconds, "
+            f"SELECT id AS hash, path, filename, title, artist, album, genre, format, "
+            f"bit_depth, sample_rate, duration_seconds, "
             f"dr_score, internal_rating, prism_status FROM tracks {where} "
             f"ORDER BY {sort} {order} LIMIT ? OFFSET ?",
             params + [per_page, offset],
         ).fetchall()
 
-        cols = ["hash", "path", "title", "artist", "album", "genre", "format",
-                "duration_seconds", "dr_score", "internal_rating", "prism_status"]
+        cols = ["hash", "path", "filename", "title", "artist", "album", "genre", "format",
+                "bit_depth", "sample_rate", "duration_seconds",
+                "dr_score", "internal_rating", "prism_status"]
         tracks = [dict(zip(cols, row)) for row in rows]
         return {"tracks": tracks, "total": total, "page": page, "per_page": per_page}
     finally:
@@ -266,11 +268,15 @@ async def engram_snapshots(hash: str):
     try:
         conn = get_engram_db()
         rows = conn.execute(
-            "SELECT id, hash, snapshot_type, captured_at, metadata FROM snapshots WHERE hash = ? ORDER BY captured_at DESC",
+            """SELECT id, blake3_hash, triggered_by, snapshot_at,
+                      is_restore_point, restore_label
+               FROM tag_snapshots WHERE blake3_hash = ?
+               ORDER BY snapshot_at DESC""",
             [hash],
         ).fetchall()
         conn.close()
-        cols = ["id", "hash", "snapshot_type", "captured_at", "metadata"]
+        cols = ["id", "blake3_hash", "triggered_by", "snapshot_at",
+                "is_restore_point", "restore_label"]
         return [dict(zip(cols, r)) for r in rows]
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))

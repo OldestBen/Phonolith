@@ -39,7 +39,7 @@ export default function Analytics() {
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
         <StatCard label="Total Tracks"  value={(overview?.total_tracks ?? '—').toLocaleString()} />
         <StatCard label="Total Albums"  value={(overview?.total_albums ?? '—').toLocaleString()} />
-        <StatCard label="Avg DR Score"  value={overview?.avg_dr_score ? `DR${overview.avg_dr_score}` : '—'} />
+        <StatCard label="Avg DR Score"  value={overview?.avg_dr ? `DR${overview.avg_dr}` : '—'} />
         <StatCard label="Lossless"      value={overview ? `${losslessPct}%` : '—'} />
       </div>
 

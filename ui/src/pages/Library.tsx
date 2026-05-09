@@ -70,11 +70,11 @@ export default function Library() {
             <tbody>
               {tracks.map((t: Track) => (
                 <tr
-                  key={t.id}
-                  onClick={() => setSelected(t.id === selected ? null : t.id)}
+                  key={t.hash}
+                  onClick={() => setSelected(t.hash === selected ? null : t.hash)}
                   className={clsx(
                     'border-b border-zinc-800/50 cursor-pointer transition-colors',
-                    t.id === selected ? 'bg-violet-900/20' : 'hover:bg-zinc-900'
+                    t.hash === selected ? 'bg-violet-900/20' : 'hover:bg-zinc-900'
                   )}
                 >
                   <td className="px-4 py-2.5 text-zinc-100 truncate max-w-[200px]">{t.title ?? t.filename}</td>
