@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { getTracks, type Track } from '../lib/api'
-import { Search, AlertTriangle, CheckCircle, Minus } from 'lucide-react'
+import { getTracks, playTrack, type Track } from '../lib/api'
+import { Search, AlertTriangle, CheckCircle, Minus, Play } from 'lucide-react'
 import clsx from 'clsx'
 
 function DrBadge({ score }: { score: number | null }) {
@@ -25,7 +25,18 @@ function fmt(secs: number | null) {
 export default function Library() {
   const [search, setSearch] = useState('')
   const [selected, setSelected] = useState<string | null>(null)
+  const [playing, setPlaying] = useState<string | null>(null)
   const [page, setPage] = useState(1)
+
+  async function handlePlay(e: React.MouseEvent, hash: string) {
+    e.stopPropagation()
+    setPlaying(hash)
+    try {
+      await playTrack(hash)
+    } catch {
+      // error is surfaced by Lucid via NATS, not fatal here
+    }
+  }
 
   const { data, isLoading } = useQuery({
     queryKey: ['tracks', search, page],
@@ -58,6 +69,7 @@ export default function Library() {
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-zinc-800 text-zinc-400 text-left">
+                <th className="w-10 px-2 py-3" />
                 <th className="px-4 py-3 font-medium">Title</th>
                 <th className="px-4 py-3 font-medium">Artist</th>
                 <th className="px-4 py-3 font-medium">Album</th>
@@ -73,10 +85,24 @@ export default function Library() {
                   key={t.hash}
                   onClick={() => setSelected(t.hash === selected ? null : t.hash)}
                   className={clsx(
-                    'border-b border-zinc-800/50 cursor-pointer transition-colors',
+                    'group border-b border-zinc-800/50 cursor-pointer transition-colors',
                     t.hash === selected ? 'bg-violet-900/20' : 'hover:bg-zinc-900'
                   )}
                 >
+                  <td className="w-10 px-2 py-2.5 text-center">
+                    <button
+                      onClick={(e) => handlePlay(e, t.hash)}
+                      className={clsx(
+                        'rounded-full p-1 transition-colors',
+                        playing === t.hash
+                          ? 'text-violet-400'
+                          : 'text-zinc-600 opacity-0 group-hover:opacity-100 hover:text-violet-400',
+                      )}
+                      title="Play"
+                    >
+                      <Play className="h-3.5 w-3.5" fill="currentColor" />
+                    </button>
+                  </td>
                   <td className="px-4 py-2.5 text-zinc-100 truncate max-w-[200px]">{t.title ?? t.filename}</td>
                   <td className="px-4 py-2.5 text-zinc-300 truncate max-w-[160px]">{t.artist ?? '—'}</td>
                   <td className="px-4 py-2.5 text-zinc-400 truncate max-w-[160px]">{t.album ?? '—'}</td>
@@ -93,7 +119,7 @@ export default function Library() {
                 </tr>
               ))}
               {tracks.length === 0 && (
-                <tr><td colSpan={7} className="px-4 py-10 text-center text-zinc-600">No tracks found</td></tr>
+                <tr><td colSpan={8} className="px-4 py-10 text-center text-zinc-600">No tracks found</td></tr>
               )}
             </tbody>
           </table>

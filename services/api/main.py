@@ -1,8 +1,8 @@
-import json, os, sqlite3
+import asyncio, json, os, sqlite3
 from contextlib import asynccontextmanager
 from typing import Optional
 from loguru import logger
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, HTTPException, Query, WebSocket, WebSocketDisconnect
 from pydantic import BaseModel
 import duckdb
 import nats
@@ -12,6 +12,17 @@ DB_PATH = os.getenv("DB_PATH", "/data/phonolith.duckdb")
 ENGRAM_DB = os.getenv("ENGRAM_DB", "/data/engram.db")
 
 nc_client = None
+_ws_clients: set[WebSocket] = set()
+
+
+async def _broadcast(data: str) -> None:
+    dead = set()
+    for ws in _ws_clients:
+        try:
+            await ws.send_text(data)
+        except Exception:
+            dead.add(ws)
+    _ws_clients.difference_update(dead)
 
 
 @asynccontextmanager
@@ -20,6 +31,15 @@ async def lifespan(app: FastAPI):
     try:
         nc_client = await nats.connect(NATS_URL)
         logger.info(f"Connected to NATS at {NATS_URL}")
+
+        async def _on_playback(msg):
+            try:
+                await _broadcast(msg.data.decode())
+            except Exception as e:
+                logger.warning(f"WebSocket broadcast error: {e}")
+
+        await nc_client.subscribe("phonolith.playback.>", cb=_on_playback)
+        logger.info("Subscribed to phonolith.playback.> for WebSocket fan-out")
     except Exception as e:
         logger.warning(f"NATS connection failed (non-fatal): {e}")
     yield
@@ -247,9 +267,39 @@ async def analytics_dr_heatmap():
 async def playback_play(req: PlayRequest):
     if not nc_client or not nc_client.is_connected:
         raise HTTPException(status_code=503, detail="NATS unavailable")
-    payload = {"hash": req.hash, "endpoint_id": req.endpoint_id, "validate_hash": req.validate_hash}
+    conn = get_db()
+    try:
+        row = conn.execute(
+            "SELECT path FROM tracks WHERE id = ?", [req.hash]
+        ).fetchone()
+    finally:
+        conn.close()
+    if not row:
+        raise HTTPException(status_code=404, detail="Track not found")
+    payload = {
+        "blake3_hash": req.hash,
+        "path": row[0],
+        "endpoint_id": req.endpoint_id,
+        "validate_hash": req.validate_hash,
+    }
     await nc_client.publish("phonolith.lucid.play", json.dumps(payload).encode())
     return {"status": "queued", "hash": req.hash}
+
+
+@app.websocket("/api/playback/ws")
+async def playback_ws(websocket: WebSocket):
+    await websocket.accept()
+    _ws_clients.add(websocket)
+    logger.info(f"WebSocket client connected ({len(_ws_clients)} total)")
+    try:
+        while True:
+            # Keep alive — client messages ignored; we only push
+            await websocket.receive_text()
+    except WebSocketDisconnect:
+        pass
+    finally:
+        _ws_clients.discard(websocket)
+        logger.info(f"WebSocket client disconnected ({len(_ws_clients)} remaining)")
 
 
 # --- Engram ---

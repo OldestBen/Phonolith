@@ -1,6 +1,7 @@
 import { NavLink, Outlet } from 'react-router-dom'
 import { Waves, Music, BarChart3, Cpu, Shield, Settings } from 'lucide-react'
 import clsx from 'clsx'
+import PlayerBar from './PlayerBar'
 
 const navItems = [
   { to: '/', label: 'Library', icon: Music, end: true },
@@ -51,10 +52,13 @@ export default function Layout() {
         </div>
       </aside>
 
-      {/* Main content */}
-      <main className="flex flex-1 flex-col overflow-y-auto p-6">
-        <Outlet />
-      </main>
+      {/* Main content + player */}
+      <div className="flex flex-1 flex-col overflow-hidden">
+        <main className="flex-1 overflow-y-auto p-6">
+          <Outlet />
+        </main>
+        <PlayerBar />
+      </div>
     </div>
   )
 }
