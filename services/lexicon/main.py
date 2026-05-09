@@ -117,7 +117,7 @@ async def handle_snapshot(msg, js):
                 None, lambda: identify_master_lineage(mb_r_id, mb_rg_id)
             )
             enriched["mastering_lineage"] = lineage
-            time.sleep(0.5)  # MusicBrainz rate limit
+            await asyncio.sleep(0.5)  # MusicBrainz rate limit
 
         if discogs_id:
             credits = await loop.run_in_executor(

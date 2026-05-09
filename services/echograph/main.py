@@ -66,16 +66,28 @@ def upsert_track(conn, data: dict):
         [h, path, data.get("event_type", ""), datetime.now(timezone.utc).isoformat()],
     )
 
+ENRICHABLE_COLS = {
+    "engineer", "mixer", "mastered_by",
+    "lastfm_playcount", "plex_rating", "internal_rating",
+    "embedded_rating", "title", "artist", "album", "album_artist",
+    "year", "genre", "label", "composer", "lyricist", "remixed_by",
+    "bpm", "initial_key", "track_number", "disc_number",
+    "musicbrainz_track_id", "musicbrainz_release_id",
+    "musicbrainz_release_group_id", "musicbrainz_artist_id",
+    "discogs_release_id",
+}
+
 def apply_enriched(conn, data: dict):
     h = data.get("blake3_hash", "")
     if not h:
         return
     updates = []
     vals = []
-    for col in ["engineer", "mixer", "mastered_by"]:
+    for col in ENRICHABLE_COLS:
         if col in data:
+            v = data[col]
             updates.append(f"{col} = ?")
-            vals.append(", ".join(data[col]) if isinstance(data[col], list) else data[col])
+            vals.append(", ".join(v) if isinstance(v, list) else v)
     if updates:
         vals.append(h)
         conn.execute(f"UPDATE tracks SET {', '.join(updates)} WHERE id = ?", vals)
@@ -135,16 +147,74 @@ def record_vault(conn, data: dict):
          datetime.now(timezone.utc).isoformat()],
     )
 
+KEY_NAMES = ['C','C#','D','D#','E','F','F#','G','G#','A','A#','B']
+
+def apply_semantic(conn, data: dict):
+    h = data.get("blake3_hash", "")
+    if not h:
+        return
+    key_index = data.get("key_index")
+    detected_key = KEY_NAMES[key_index] if key_index is not None and 0 <= key_index <= 11 else None
+    conn.execute(
+        """UPDATE tracks SET
+             bpm            = COALESCE(bpm, ?),
+             initial_key    = COALESCE(initial_key, ?),
+             detected_bpm   = ?,
+             detected_key   = ?,
+             last_analyzed_at = ?
+           WHERE id = ?""",
+        [
+            data.get("bpm"), detected_key,
+            data.get("bpm"), detected_key,
+            datetime.now(timezone.utc).isoformat(), h,
+        ],
+    )
+
+ALLOWED_FIX_FIELDS = {
+    "title", "artist", "album", "album_artist", "year", "genre", "label",
+    "composer", "lyricist", "engineer", "mixer", "mastered_by", "remixed_by",
+    "bpm", "initial_key", "track_number", "disc_number",
+}
+
+def apply_accuraterip(conn, data: dict):
+    h      = data.get("blake3_hash", "")
+    result = data.get("ar_result")
+    if not h or result not in ("match", "no_match", "unknown"):
+        return
+    conn.execute(
+        "UPDATE tracks SET accuraterip_result = ? WHERE id = ?", [result, h]
+    )
+    logger.debug(f"AccurateRip result {result} written for {h[:12]}…")
+
+
+def apply_polyphony_fix(conn, data: dict):
+    """Apply a peer-approved metadata correction directly to the tracks table."""
+    h      = data.get("blake3_hash", "")
+    field  = data.get("field", "")
+    value  = data.get("value")
+    if not h or field not in ALLOWED_FIX_FIELDS:
+        logger.warning(f"Ignored polyphony fix: hash={h!r}, field={field!r}")
+        return
+    conn.execute(
+        f"UPDATE tracks SET {field} = ?, last_analyzed_at = ? WHERE id = ?",
+        [value, datetime.now(timezone.utc).isoformat(), h],
+    )
+    logger.info(f"Applied polyphony fix: {h}/{field} = {value!r}")
+
+
 HANDLERS = {
-    "phonolith.hash.created":        upsert_track,
-    "phonolith.hash.modified":       upsert_track,
-    "phonolith.hash.deleted":        upsert_track,
-    "phonolith.hash.renamed":        upsert_track,
-    "phonolith.metadata.enriched":   apply_enriched,
-    "phonolith.analysis.prism":      apply_prism,
-    "phonolith.analysis.crest":      apply_crest,
-    "phonolith.playback.started":    record_play,
-    "phonolith.vault.uploaded":      record_vault,
+    "phonolith.hash.created":           upsert_track,
+    "phonolith.hash.modified":          upsert_track,
+    "phonolith.hash.deleted":           upsert_track,
+    "phonolith.hash.renamed":           upsert_track,
+    "phonolith.metadata.enriched":      apply_enriched,
+    "phonolith.analysis.prism":         apply_prism,
+    "phonolith.analysis.crest":         apply_crest,
+    "phonolith.analysis.semantic":      apply_semantic,
+    "phonolith.playback.started":       record_play,
+    "phonolith.vault.uploaded":         record_vault,
+    "phonolith.polyphony.fix.approved": apply_polyphony_fix,
+    "phonolith.analysis.accuraterip":   apply_accuraterip,
 }
 
 async def handle(msg, conn: duckdb.DuckDBPyConnection):
@@ -158,19 +228,42 @@ async def handle(msg, conn: duckdb.DuckDBPyConnection):
     except Exception as exc:
         logger.error(f"EchoGraph error on {subject}: {exc}")
 
+STREAMS = {
+    "PHONOLITH_HASH":      ["phonolith.hash.>"],
+    "PHONOLITH_METADATA":  ["phonolith.metadata.>"],
+    "PHONOLITH_ANALYSIS":  ["phonolith.analysis.>"],
+    "PHONOLITH_PLAYBACK":  ["phonolith.playback.>"],
+    "PHONOLITH_VAULT":     ["phonolith.vault.>"],
+    "PHONOLITH_POLYPHONY": ["phonolith.polyphony.>"],
+    "PHONOLITH_HEALTH":    ["phonolith.health.>"],
+}
+
+async def ensure_streams(js) -> None:
+    """Create JetStream streams that don't exist yet. Safe to call on every start."""
+    from nats.js.errors import NotFoundError
+    for name, subjects in STREAMS.items():
+        try:
+            await js.find_stream(name)
+        except NotFoundError:
+            await js.add_stream(name=name, subjects=subjects)
+            logger.info(f"Created JetStream stream: {name}")
+
+
 async def main():
     conn = init_db()
     nc = await nats.connect(NATS_URL)
     js = nc.jetstream()
 
     logger.info("EchoGraph starting — analytics engine online (DuckDB writer)")
+    await ensure_streams(js)
 
     for subject, stream in [
-        ("phonolith.hash.>",           "PHONOLITH_HASH"),
-        ("phonolith.metadata.enriched", "PHONOLITH_METADATA"),
-        ("phonolith.analysis.>",        "PHONOLITH_ANALYSIS"),
-        ("phonolith.playback.started",  "PHONOLITH_PLAYBACK"),
-        ("phonolith.vault.uploaded",    "PHONOLITH_VAULT"),
+        ("phonolith.hash.>",                "PHONOLITH_HASH"),
+        ("phonolith.metadata.enriched",     "PHONOLITH_METADATA"),
+        ("phonolith.analysis.>",            "PHONOLITH_ANALYSIS"),
+        ("phonolith.playback.started",      "PHONOLITH_PLAYBACK"),
+        ("phonolith.vault.uploaded",        "PHONOLITH_VAULT"),
+        ("phonolith.polyphony.fix.approved","PHONOLITH_POLYPHONY"),
     ]:
         durable = "echograph-" + subject.replace(".", "-").replace(">", "all")
         await js.subscribe(

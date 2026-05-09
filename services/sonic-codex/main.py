@@ -1,4 +1,4 @@
-import asyncio, json, os, sqlite3, zlib
+import asyncio, json, os, sqlite3
 from datetime import datetime, timezone
 from loguru import logger
 import nats
@@ -9,9 +9,17 @@ DATA_DIR = os.getenv("DATA_DIR", "/data")
 DUCKDB_PATH = os.path.join(DATA_DIR, "phonolith.duckdb")
 
 
+def table_exists(conn, name: str) -> bool:
+    try:
+        conn.execute(f"SELECT 1 FROM {name} LIMIT 1")
+        return True
+    except Exception:
+        return False
+
+
 def export_to_codex(output_path: str) -> dict:
     """Export the DuckDB library to a compressed SQLite .codex file."""
-    os.makedirs(os.path.dirname(output_path), exist_ok=True)
+    os.makedirs(os.path.dirname(output_path) or ".", exist_ok=True)
 
     # Read from DuckDB
     conn = duckdb.connect(DUCKDB_PATH, read_only=True)
@@ -65,7 +73,7 @@ def import_ghost_codex(codex_path: str) -> dict:
     try:
         meta = dict(codex.execute("SELECT key, value FROM codex_meta").fetchall())
         track_count = codex.execute("SELECT COUNT(*) FROM tracks").fetchone()[0]
-        tracks = codex.execute(
+        sample_tracks = codex.execute(
             "SELECT hash, title, artist, album FROM tracks LIMIT 10"
         ).fetchall()
     except Exception as e:
@@ -81,16 +89,8 @@ def import_ghost_codex(codex_path: str) -> dict:
         "mode": "ghost",
         "track_count": track_count,
         "meta": meta,
-        "sample_tracks": tracks,
+        "sample_tracks": sample_tracks,
     }
-
-
-def table_exists(conn, name: str) -> bool:
-    try:
-        conn.execute(f"SELECT 1 FROM {name} LIMIT 1")
-        return True
-    except Exception:
-        return False
 
 
 async def handle_export(msg, nc):
