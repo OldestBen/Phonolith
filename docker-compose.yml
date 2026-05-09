@@ -167,6 +167,37 @@ services:
     depends_on: [nats]
     logging: *logging
 
+  # ── External sync ─────────────────────────────────────────────────────────
+
+  lastfm:
+    build: ./services/lastfm
+    restart: unless-stopped
+    environment:
+      <<: *common-env
+      LASTFM_API_KEY: ${LASTFM_API_KEY:-}
+      LASTFM_API_SECRET: ${LASTFM_API_SECRET:-}
+      LASTFM_USERNAME: ${LASTFM_USERNAME:-}
+      LASTFM_SYNC_INTERVAL_HOURS: ${LASTFM_SYNC_INTERVAL_HOURS:-6}
+    volumes:
+      - phonolith-data:/data
+    depends_on: [nats]
+    logging: *logging
+
+  plex:
+    build: ./services/plex
+    restart: unless-stopped
+    environment:
+      <<: *common-env
+      PLEX_URL: ${PLEX_URL:-}
+      PLEX_TOKEN: ${PLEX_TOKEN:-}
+      PLEX_SYNC_INTERVAL_HOURS: ${PLEX_SYNC_INTERVAL_HOURS:-1}
+      LIBRARY_PATH: /library
+    volumes:
+      - ${LIBRARY_PATH:-/tmp/phonolith-lib}:/library:ro
+      - phonolith-data:/data
+    depends_on: [nats]
+    logging: *logging
+
   # ── Analytics Layer ────────────────────────────────────────────────────────
 
   echograph:

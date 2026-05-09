@@ -66,16 +66,28 @@ def upsert_track(conn, data: dict):
         [h, path, data.get("event_type", ""), datetime.now(timezone.utc).isoformat()],
     )
 
+ENRICHABLE_COLS = {
+    "engineer", "mixer", "mastered_by",
+    "lastfm_playcount", "plex_rating", "internal_rating",
+    "embedded_rating", "title", "artist", "album", "album_artist",
+    "year", "genre", "label", "composer", "lyricist", "remixed_by",
+    "bpm", "initial_key", "track_number", "disc_number",
+    "musicbrainz_track_id", "musicbrainz_release_id",
+    "musicbrainz_release_group_id", "musicbrainz_artist_id",
+    "discogs_release_id",
+}
+
 def apply_enriched(conn, data: dict):
     h = data.get("blake3_hash", "")
     if not h:
         return
     updates = []
     vals = []
-    for col in ["engineer", "mixer", "mastered_by"]:
+    for col in ENRICHABLE_COLS:
         if col in data:
+            v = data[col]
             updates.append(f"{col} = ?")
-            vals.append(", ".join(data[col]) if isinstance(data[col], list) else data[col])
+            vals.append(", ".join(v) if isinstance(v, list) else v)
     if updates:
         vals.append(h)
         conn.execute(f"UPDATE tracks SET {', '.join(updates)} WHERE id = ?", vals)
