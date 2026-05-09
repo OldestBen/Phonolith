@@ -117,6 +117,33 @@ export function getDRHeatmap(): Promise<{ dr: number; count: number }[]> {
   return apiFetch('/api/analytics/dr-heatmap')
 }
 
+export interface SankeyData {
+  nodes: { name: string }[]
+  links: { source: number; target: number; value: number }[]
+  periods: number[]
+}
+
+export function getGenreEvolution(): Promise<SankeyData> {
+  return apiFetch('/api/analytics/genre-evolution')
+}
+
+export interface BpmKeyMismatch {
+  hash: string
+  path: string
+  title?: string
+  artist?: string
+  album?: string
+  tag_bpm?: number
+  detected_bpm?: number
+  tag_key?: string
+  detected_key?: string
+  bpm_delta: number
+}
+
+export function getBpmKeyMismatches(): Promise<BpmKeyMismatch[]> {
+  return apiFetch('/api/analytics/bpm-key-mismatches')
+}
+
 export async function playTrack(hash: string, endpointId?: string): Promise<void> {
   await apiFetch('/api/playback/play', {
     method: 'POST',

@@ -248,6 +248,77 @@ async def analytics_label_breakdown():
         conn.close()
 
 
+@app.get("/api/analytics/genre-evolution")
+async def analytics_genre_evolution(top_n: int = Query(8, ge=2, le=20)):
+    """
+    Returns data for a genre evolution Sankey: flows between consecutive
+    5-year bands showing play counts per genre.
+    Nodes: genre+period pairs. Links: plays that cross period boundaries
+    (i.e. same genre listened to in adjacent periods).
+    """
+    conn = get_db()
+    try:
+        rows = conn.execute(
+            """
+            SELECT
+                CAST(FLOOR(YEAR(played_at) / 5) * 5 AS INTEGER) AS period,
+                t.genre,
+                COUNT(*) AS plays
+            FROM play_events pe
+            JOIN tracks t ON t.id = pe.blake3_hash
+            WHERE t.genre IS NOT NULL
+              AND pe.played_at IS NOT NULL
+            GROUP BY period, t.genre
+            ORDER BY period, plays DESC
+            """
+        ).fetchall()
+
+        if not rows:
+            return {"nodes": [], "links": []}
+
+        # Keep only top_n genres by total play count
+        from collections import defaultdict
+        genre_totals: dict = defaultdict(int)
+        for _, genre, plays in rows:
+            genre_totals[genre] += plays
+        top_genres = {g for g, _ in sorted(genre_totals.items(), key=lambda x: -x[1])[:top_n]}
+
+        # Build period→genre→plays map
+        period_genre: dict = defaultdict(lambda: defaultdict(int))
+        for period, genre, plays in rows:
+            if genre in top_genres:
+                period_genre[period][genre] += plays
+
+        periods = sorted(period_genre.keys())
+
+        # Build Sankey nodes and links
+        nodes = []
+        node_index: dict = {}
+        for period in periods:
+            for genre in sorted(period_genre[period].keys()):
+                label = f"{genre} ({period}s)"
+                node_index[(period, genre)] = len(nodes)
+                nodes.append({"name": label})
+
+        links = []
+        for i in range(len(periods) - 1):
+            p1, p2 = periods[i], periods[i + 1]
+            for genre in top_genres:
+                if genre in period_genre[p1] and genre in period_genre[p2]:
+                    src = node_index.get((p1, genre))
+                    dst = node_index.get((p2, genre))
+                    if src is not None and dst is not None:
+                        links.append({
+                            "source": src,
+                            "target": dst,
+                            "value":  min(period_genre[p1][genre], period_genre[p2][genre]),
+                        })
+
+        return {"nodes": nodes, "links": links, "periods": periods}
+    finally:
+        conn.close()
+
+
 @app.get("/api/analytics/dr-heatmap")
 async def analytics_dr_heatmap():
     conn = get_db()
