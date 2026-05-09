@@ -262,6 +262,126 @@ async def analytics_dr_heatmap():
         conn.close()
 
 
+# --- Version Manager ---
+
+class SetPrimaryRequest(BaseModel):
+    hash: str
+
+
+@app.get("/api/versions")
+async def list_version_groups():
+    """
+    Return all albums that have more than one version (pressing) in the library,
+    grouped by MusicBrainz release group ID when available, otherwise by
+    normalised album+artist string.
+    """
+    conn = get_db()
+    try:
+        rows = conn.execute(
+            """
+            SELECT
+                COALESCE(musicbrainz_release_group_id, LOWER(TRIM(album || '|||' || COALESCE(album_artist, artist)))) AS group_key,
+                album,
+                COALESCE(album_artist, artist) AS artist,
+                COUNT(DISTINCT id) AS version_count
+            FROM tracks
+            WHERE album IS NOT NULL
+            GROUP BY group_key, album, artist
+            HAVING COUNT(DISTINCT id) > 1
+            ORDER BY version_count DESC, artist, album
+            LIMIT 200
+            """
+        ).fetchall()
+        cols = ["group_key", "album", "artist", "version_count"]
+        return [dict(zip(cols, r)) for r in rows]
+    finally:
+        conn.close()
+
+
+@app.get("/api/versions/{group_key:path}")
+async def get_version_group(group_key: str):
+    """
+    Return all tracks in a version group with their sonic metadata for comparison.
+    group_key is either a MusicBrainz release group ID or the encoded album|||artist string.
+    """
+    conn = get_db()
+    try:
+        rows = conn.execute(
+            """
+            SELECT
+                id AS hash, path, filename, title, artist, album_artist, album,
+                year, format, bit_depth, sample_rate, bitrate_kbps, duration_seconds,
+                dr_score, peak_level, rms_level, crest_factor,
+                label, mastered_by, engineer,
+                is_primary_version, is_shadowed,
+                musicbrainz_release_id, musicbrainz_release_group_id,
+                discogs_release_id, prism_status
+            FROM tracks
+            WHERE COALESCE(musicbrainz_release_group_id,
+                  LOWER(TRIM(album || '|||' || COALESCE(album_artist, artist)))) = ?
+            ORDER BY dr_score DESC NULLS LAST, year
+            """,
+            [group_key],
+        ).fetchall()
+        cols = [
+            "hash", "path", "filename", "title", "artist", "album_artist", "album",
+            "year", "format", "bit_depth", "sample_rate", "bitrate_kbps", "duration_seconds",
+            "dr_score", "peak_level", "rms_level", "crest_factor",
+            "label", "mastered_by", "engineer",
+            "is_primary_version", "is_shadowed",
+            "musicbrainz_release_id", "musicbrainz_release_group_id",
+            "discogs_release_id", "prism_status",
+        ]
+        versions = [dict(zip(cols, r)) for r in rows]
+
+        # Flag if any "remaster" has lower DR than the oldest version (loudness war victim)
+        if len(versions) >= 2:
+            sorted_by_year = sorted(versions, key=lambda v: v["year"] or 9999)
+            oldest_dr = sorted_by_year[0].get("dr_score")
+            for v in versions:
+                v["loudness_war_flag"] = (
+                    oldest_dr is not None
+                    and v.get("dr_score") is not None
+                    and v["year"] is not None
+                    and v["year"] > (sorted_by_year[0]["year"] or 0)
+                    and v["dr_score"] < oldest_dr
+                )
+        return versions
+    finally:
+        conn.close()
+
+
+@app.post("/api/versions/set-primary")
+async def set_primary_version(req: SetPrimaryRequest):
+    """
+    Mark one track as the primary version and shadow all others in the same group.
+    Writes directly to DuckDB — API uses a write connection only for this endpoint.
+    """
+    write_conn = duckdb.connect(DB_PATH, read_only=False)
+    try:
+        row = write_conn.execute(
+            """SELECT COALESCE(musicbrainz_release_group_id,
+               LOWER(TRIM(album || '|||' || COALESCE(album_artist, artist))))
+               FROM tracks WHERE id = ?""",
+            [req.hash],
+        ).fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="Track not found")
+        group_key = row[0]
+
+        write_conn.execute(
+            """UPDATE tracks
+               SET is_primary_version = (id = ?), is_shadowed = (id != ?)
+               WHERE COALESCE(musicbrainz_release_group_id,
+                     LOWER(TRIM(album || '|||' || COALESCE(album_artist, artist)))) = ?""",
+            [req.hash, req.hash, group_key],
+        )
+        write_conn.commit()
+        return {"status": "ok", "primary": req.hash, "group_key": group_key}
+    finally:
+        write_conn.close()
+
+
 # --- Playback ---
 
 @app.post("/api/playback/play", status_code=202)
