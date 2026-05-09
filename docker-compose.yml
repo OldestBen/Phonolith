@@ -131,8 +131,9 @@ services:
       S3_ACCESS_KEY: ${S3_ACCESS_KEY:-}
       S3_SECRET_KEY: ${S3_SECRET_KEY:-}
       S3_REGION: ${S3_REGION:-us-east-1}
-      S3_OBJECT_LOCK: ${S3_OBJECT_LOCK:-false}
-      S3_RETENTION_DAYS: ${S3_RETENTION_DAYS:-365}
+      WORM_RETENTION_DAYS: ${WORM_RETENTION_DAYS:-0}
+      SUREPLAY_INTERVAL_HOURS: ${SUREPLAY_INTERVAL_HOURS:-720}
+      SUREPLAY_SAMPLE_SIZE: ${SUREPLAY_SAMPLE_SIZE:-50}
       RUST_LOG: aegis=info
     volumes: *rust-volumes
     depends_on: [nats]
