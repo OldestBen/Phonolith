@@ -351,6 +351,81 @@ async def analytics_dr_heatmap():
         conn.close()
 
 
+# --- Mastering Engineer Matrix ---
+
+@app.get("/api/analytics/mastering-engineers")
+async def mastering_engineers(limit: int = Query(30, ge=1, le=100)):
+    """
+    Ranks mastering engineers (and audio engineers) in your library by:
+    average DR score, average internal rating, track count, and
+    percentage of your library they represent.
+    """
+    conn = get_db()
+    try:
+        rows = conn.execute(
+            """
+            SELECT
+                COALESCE(mastered_by, engineer) AS credit,
+                COUNT(*) AS track_count,
+                AVG(dr_score) AS avg_dr,
+                AVG(internal_rating) AS avg_rating,
+                AVG(peak_level) AS avg_peak,
+                AVG(rms_level) AS avg_rms,
+                COUNT(CASE WHEN format IN ('flac','wav','aiff','alac') THEN 1 END) AS lossless_count
+            FROM tracks
+            WHERE COALESCE(mastered_by, engineer) IS NOT NULL
+            GROUP BY credit
+            HAVING track_count >= 2
+            ORDER BY avg_dr DESC NULLS LAST
+            LIMIT ?
+            """,
+            [limit],
+        ).fetchall()
+        cols = ["credit", "track_count", "avg_dr", "avg_rating",
+                "avg_peak", "avg_rms", "lossless_count"]
+        total_tracks = conn.execute("SELECT COUNT(*) FROM tracks").fetchone()[0] or 1
+        result = []
+        for r in rows:
+            d = dict(zip(cols, r))
+            d["avg_dr"] = round(d["avg_dr"], 1) if d["avg_dr"] else None
+            d["avg_rating"] = round(d["avg_rating"], 2) if d["avg_rating"] else None
+            d["avg_peak"] = round(d["avg_peak"], 2) if d["avg_peak"] else None
+            d["avg_rms"] = round(d["avg_rms"], 2) if d["avg_rms"] else None
+            d["library_pct"] = round(d["track_count"] / total_tracks * 100, 1)
+            result.append(d)
+        return result
+    finally:
+        conn.close()
+
+
+@app.get("/api/analytics/mastering-engineers/{credit}/tracks")
+async def mastering_engineer_tracks(
+    credit: str,
+    limit: int = Query(50, ge=1, le=200),
+    sort: str = Query("dr_score", pattern="^(dr_score|internal_rating|year|title)$"),
+    order: str = Query("desc", pattern="^(asc|desc)$"),
+):
+    """Return all tracks credited to a specific mastering/audio engineer."""
+    conn = get_db()
+    try:
+        rows = conn.execute(
+            f"""
+            SELECT id AS hash, title, artist, album, year, format, bit_depth, sample_rate,
+                   dr_score, peak_level, rms_level, internal_rating, prism_status
+            FROM tracks
+            WHERE COALESCE(mastered_by, engineer) = ?
+            ORDER BY {sort} {order} NULLS LAST
+            LIMIT ?
+            """,
+            [credit, limit],
+        ).fetchall()
+        cols = ["hash", "title", "artist", "album", "year", "format", "bit_depth",
+                "sample_rate", "dr_score", "peak_level", "rms_level", "internal_rating", "prism_status"]
+        return [dict(zip(cols, r)) for r in rows]
+    finally:
+        conn.close()
+
+
 # --- BPM / Key mismatch report ---
 
 @app.get("/api/analytics/bpm-key-mismatches")

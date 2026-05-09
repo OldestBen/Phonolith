@@ -144,6 +144,25 @@ export function getBpmKeyMismatches(): Promise<BpmKeyMismatch[]> {
   return apiFetch('/api/analytics/bpm-key-mismatches')
 }
 
+export interface MasteringEngineer {
+  credit: string
+  track_count: number
+  avg_dr: number | null
+  avg_rating: number | null
+  avg_peak: number | null
+  avg_rms: number | null
+  lossless_count: number
+  library_pct: number
+}
+
+export function getMasteringEngineers(): Promise<MasteringEngineer[]> {
+  return apiFetch('/api/analytics/mastering-engineers')
+}
+
+export function getEngineerTracks(credit: string): Promise<Track[]> {
+  return apiFetch(`/api/analytics/mastering-engineers/${encodeURIComponent(credit)}/tracks`)
+}
+
 export async function playTrack(hash: string, endpointId?: string): Promise<void> {
   await apiFetch('/api/playback/play', {
     method: 'POST',
