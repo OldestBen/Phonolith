@@ -281,6 +281,7 @@ services:
       WAVEFORM_DIR: /data/waveforms
       PROXY_DIR: /data/proxies
       SEMANTIC_DB: /data/semantic.db
+      POLYPHONY_DB: /data/polyphony.db
     volumes:
       - ${LIBRARY_PATH:-/tmp/phonolith-lib}:/library:ro
       - phonolith-data:/data

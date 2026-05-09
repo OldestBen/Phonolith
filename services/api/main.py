@@ -10,7 +10,8 @@ import nats
 
 NATS_URL = os.getenv("NATS_URL", "nats://localhost:4222")
 DB_PATH = os.getenv("DB_PATH", "/data/phonolith.duckdb")
-ENGRAM_DB = os.getenv("ENGRAM_DB", "/data/engram.db")
+ENGRAM_DB     = os.getenv("ENGRAM_DB",     "/data/engram.db")
+POLYPHONY_DB  = os.getenv("POLYPHONY_DB", "/data/polyphony.db")
 
 nc_client = None
 _ws_clients: set[WebSocket] = set()
@@ -1028,6 +1029,75 @@ async def playlist_export_m3u(
         media_type="audio/x-mpegurl",
         headers={"Content-Disposition": f'attachment; filename="{name}.m3u"'},
     )
+
+
+# --- Polyphony ---
+
+def _open_polyphony_db():
+    return sqlite3.connect(POLYPHONY_DB)
+
+
+class FixDecisionRequest(BaseModel):
+    fix_id: str
+    action: str  # 'approve' | 'reject'
+
+
+@app.get("/api/polyphony/fixes")
+async def list_pending_fixes(status: str = Query("pending")):
+    """List peer metadata fix proposals, filtered by status."""
+    try:
+        conn = _open_polyphony_db()
+        rows = conn.execute(
+            """SELECT id, blake3_hash, field, old_value, new_value,
+                      peer_alias, received_at, status
+               FROM pending_fixes WHERE status = ?
+               ORDER BY received_at DESC LIMIT 200""",
+            [status],
+        ).fetchall()
+        conn.close()
+        cols = ["id", "blake3_hash", "field", "old_value", "new_value",
+                "peer_alias", "received_at", "status"]
+        # Enrich with track title/artist from DuckDB
+        db = get_db()
+        results = []
+        for row in rows:
+            d = dict(zip(cols, row))
+            track_row = db.execute(
+                "SELECT title, artist FROM tracks WHERE id = ?", [d["blake3_hash"]]
+            ).fetchone()
+            if track_row:
+                d["track_title"]  = track_row[0]
+                d["track_artist"] = track_row[1]
+            results.append(d)
+        db.close()
+        return results
+    except FileNotFoundError:
+        return []
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/polyphony/fixes/decide")
+async def decide_fix(req: FixDecisionRequest):
+    """Approve or reject a pending peer fix."""
+    if req.action not in ("approve", "reject"):
+        raise HTTPException(status_code=400, detail="action must be 'approve' or 'reject'")
+    if not nc_client or not nc_client.is_connected:
+        raise HTTPException(status_code=503, detail="NATS unavailable")
+    payload = {"fix_id": req.fix_id, "action": req.action}
+    await nc_client.publish("phonolith.polyphony.fix.decision", json.dumps(payload).encode())
+    return {"status": "queued", "fix_id": req.fix_id, "action": req.action}
+
+
+@app.get("/api/polyphony/peers")
+async def list_peers(db: duckdb.DuckDBPyConnection = Depends(get_db)):
+    """List known trusted peers from DuckDB peer_nodes table."""
+    rows = db.execute(
+        """SELECT id, alias, wireguard_endpoint, last_seen_at, is_trusted, shared_track_count
+           FROM peer_nodes ORDER BY last_seen_at DESC NULLS LAST"""
+    ).fetchall()
+    cols = ["id", "alias", "wireguard_endpoint", "last_seen_at", "is_trusted", "shared_track_count"]
+    return [dict(zip(cols, r)) for r in rows]
 
 
 # --- Engram ---

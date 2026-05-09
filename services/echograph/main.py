@@ -158,17 +158,39 @@ def apply_semantic(conn, data: dict):
         ],
     )
 
+ALLOWED_FIX_FIELDS = {
+    "title", "artist", "album", "album_artist", "year", "genre", "label",
+    "composer", "lyricist", "engineer", "mixer", "mastered_by", "remixed_by",
+    "bpm", "initial_key", "track_number", "disc_number",
+}
+
+def apply_polyphony_fix(conn, data: dict):
+    """Apply a peer-approved metadata correction directly to the tracks table."""
+    h      = data.get("blake3_hash", "")
+    field  = data.get("field", "")
+    value  = data.get("value")
+    if not h or field not in ALLOWED_FIX_FIELDS:
+        logger.warning(f"Ignored polyphony fix: hash={h!r}, field={field!r}")
+        return
+    conn.execute(
+        f"UPDATE tracks SET {field} = ?, last_analyzed_at = ? WHERE id = ?",
+        [value, datetime.now(timezone.utc).isoformat(), h],
+    )
+    logger.info(f"Applied polyphony fix: {h}/{field} = {value!r}")
+
+
 HANDLERS = {
-    "phonolith.hash.created":        upsert_track,
-    "phonolith.hash.modified":       upsert_track,
-    "phonolith.hash.deleted":        upsert_track,
-    "phonolith.hash.renamed":        upsert_track,
-    "phonolith.metadata.enriched":   apply_enriched,
-    "phonolith.analysis.prism":      apply_prism,
-    "phonolith.analysis.crest":      apply_crest,
-    "phonolith.analysis.semantic":   apply_semantic,
-    "phonolith.playback.started":    record_play,
-    "phonolith.vault.uploaded":      record_vault,
+    "phonolith.hash.created":           upsert_track,
+    "phonolith.hash.modified":          upsert_track,
+    "phonolith.hash.deleted":           upsert_track,
+    "phonolith.hash.renamed":           upsert_track,
+    "phonolith.metadata.enriched":      apply_enriched,
+    "phonolith.analysis.prism":         apply_prism,
+    "phonolith.analysis.crest":         apply_crest,
+    "phonolith.analysis.semantic":      apply_semantic,
+    "phonolith.playback.started":       record_play,
+    "phonolith.vault.uploaded":         record_vault,
+    "phonolith.polyphony.fix.approved": apply_polyphony_fix,
 }
 
 async def handle(msg, conn: duckdb.DuckDBPyConnection):
@@ -190,11 +212,12 @@ async def main():
     logger.info("EchoGraph starting — analytics engine online (DuckDB writer)")
 
     for subject, stream in [
-        ("phonolith.hash.>",           "PHONOLITH_HASH"),
-        ("phonolith.metadata.enriched", "PHONOLITH_METADATA"),
-        ("phonolith.analysis.>",        "PHONOLITH_ANALYSIS"),
-        ("phonolith.playback.started",  "PHONOLITH_PLAYBACK"),
-        ("phonolith.vault.uploaded",    "PHONOLITH_VAULT"),
+        ("phonolith.hash.>",                "PHONOLITH_HASH"),
+        ("phonolith.metadata.enriched",     "PHONOLITH_METADATA"),
+        ("phonolith.analysis.>",            "PHONOLITH_ANALYSIS"),
+        ("phonolith.playback.started",      "PHONOLITH_PLAYBACK"),
+        ("phonolith.vault.uploaded",        "PHONOLITH_VAULT"),
+        ("phonolith.polyphony.fix.approved","PHONOLITH_POLYPHONY"),
     ]:
         durable = "echograph-" + subject.replace(".", "-").replace(">", "all")
         await js.subscribe(

@@ -10,6 +10,7 @@ import Versions from './pages/Versions'
 import Engineers from './pages/Engineers'
 import Janitor from './pages/Janitor'
 import Playlists from './pages/Playlists'
+import Polyphony from './pages/Polyphony'
 
 export default function App() {
   return (
@@ -22,6 +23,7 @@ export default function App() {
           <Route path="engineers" element={<Engineers />} />
           <Route path="janitor" element={<Janitor />} />
           <Route path="playlists" element={<Playlists />} />
+          <Route path="polyphony" element={<Polyphony />} />
           <Route path="analytics" element={<Analytics />} />
           <Route path="hardware" element={<Hardware />} />
           <Route path="vault" element={<Vault />} />

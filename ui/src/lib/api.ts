@@ -343,3 +343,42 @@ export function getPlaylistM3uUrl(filters: PlaylistFilters, name: string): strin
   qs.set('name', name)
   return `/api/playlists/export.m3u?${qs}`
 }
+
+// --- Polyphony ---
+
+export interface PendingFix {
+  id: string
+  blake3_hash: string
+  field: string
+  old_value?: string
+  new_value: string
+  peer_alias: string
+  received_at: string
+  status: 'pending' | 'approved' | 'rejected'
+  track_title?: string
+  track_artist?: string
+}
+
+export interface PeerNode {
+  id: string
+  alias: string
+  wireguard_endpoint?: string
+  last_seen_at?: string
+  is_trusted: boolean
+  shared_track_count: number
+}
+
+export function getPendingFixes(status = 'pending'): Promise<PendingFix[]> {
+  return apiFetch(`/api/polyphony/fixes?status=${status}`)
+}
+
+export function decideFix(fixId: string, action: 'approve' | 'reject'): Promise<{ status: string }> {
+  return apiFetch('/api/polyphony/fixes/decide', {
+    method: 'POST',
+    body: JSON.stringify({ fix_id: fixId, action }),
+  })
+}
+
+export function getPeers(): Promise<PeerNode[]> {
+  return apiFetch('/api/polyphony/peers')
+}
