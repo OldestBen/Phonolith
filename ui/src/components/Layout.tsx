@@ -1,14 +1,15 @@
 import { NavLink, Outlet } from 'react-router-dom'
-import { Waves, Music, BarChart3, Cpu, Shield, Settings } from 'lucide-react'
+import { Waves, Music, BarChart3, Cpu, Shield, Settings, SearchCode } from 'lucide-react'
 import clsx from 'clsx'
 import PlayerBar from './PlayerBar'
 
 const navItems = [
-  { to: '/', label: 'Library', icon: Music, end: true },
-  { to: '/analytics', label: 'Analytics', icon: BarChart3, end: false },
-  { to: '/hardware', label: 'Hardware', icon: Cpu, end: false },
-  { to: '/vault', label: 'Vault', icon: Shield, end: false },
-  { to: '/settings', label: 'Settings', icon: Settings, end: false },
+  { to: '/',          label: 'Library',   icon: Music,       end: true },
+  { to: '/search',    label: 'Search',    icon: SearchCode,  end: false },
+  { to: '/analytics', label: 'Analytics', icon: BarChart3,   end: false },
+  { to: '/hardware',  label: 'Hardware',  icon: Cpu,         end: false },
+  { to: '/vault',     label: 'Vault',     icon: Shield,      end: false },
+  { to: '/settings',  label: 'Settings',  icon: Settings,    end: false },
 ]
 
 export default function Layout() {

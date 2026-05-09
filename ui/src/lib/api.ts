@@ -148,3 +148,39 @@ export interface WaveformData {
 export function getWaveform(hash: string): Promise<WaveformData> {
   return apiFetch(`/api/waveform/${encodeURIComponent(hash)}`)
 }
+
+export function getProxyUrl(hash: string): string {
+  return `/api/proxy/${encodeURIComponent(hash)}?proxy=1`
+}
+
+export interface SemanticTrack {
+  blake3_hash: string
+  path: string
+  bpm: number
+  key_index: number
+  spectral_centroid: number
+  rms_energy: number
+  duration_seconds?: number
+  similarity?: number
+}
+
+export interface SemanticParams {
+  min_bpm?: number
+  max_bpm?: number
+  key?: number
+  min_energy?: number
+  max_energy?: number
+  limit?: number
+}
+
+export function searchSimilar(hash: string, limit = 10): Promise<SemanticTrack[]> {
+  return apiFetch(`/api/search/similar/${encodeURIComponent(hash)}?limit=${limit}`)
+}
+
+export function searchSemantic(params: SemanticParams): Promise<SemanticTrack[]> {
+  const qs = new URLSearchParams()
+  for (const [k, v] of Object.entries(params)) {
+    if (v !== undefined) qs.set(k, String(v))
+  }
+  return apiFetch(`/api/search/semantic?${qs}`)
+}

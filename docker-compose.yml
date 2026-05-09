@@ -218,6 +218,37 @@ services:
     depends_on: [nats]
     logging: *logging
 
+  # ── Semantic embedding engine ─────────────────────────────────────────────
+
+  semantic:
+    build: ./services/semantic
+    restart: unless-stopped
+    environment:
+      <<: *common-env
+      DATA_DIR: /data
+      WORKER_POOL_SIZE: "2"
+    volumes:
+      - ${LIBRARY_PATH:-/tmp/phonolith-lib}:/library:ro
+      - phonolith-data:/data
+    depends_on: [nats]
+    logging: *logging
+
+  # ── Opus proxy transcoder ─────────────────────────────────────────────────
+
+  opus-proxy:
+    build: ./services/opus-proxy
+    restart: unless-stopped
+    environment:
+      <<: *common-env
+      PROXY_DIR: /data/proxies
+      OPUS_BITRATE: "128k"
+      WORKER_POOL_SIZE: "2"
+    volumes:
+      - ${LIBRARY_PATH:-/tmp/phonolith-lib}:/library:ro
+      - phonolith-proxies:/data/proxies
+    depends_on: [nats]
+    logging: *logging
+
   # ── Waveform renderer ─────────────────────────────────────────────────────
 
   waveform:
@@ -247,10 +278,13 @@ services:
       PLEX_URL: ${PLEX_URL:-}
       PLEX_TOKEN: ${PLEX_TOKEN:-}
       WAVEFORM_DIR: /data/waveforms
+      PROXY_DIR: /data/proxies
+      SEMANTIC_DB: /data/semantic.db
     volumes:
       - ${LIBRARY_PATH:-/tmp/phonolith-lib}:/library:ro
       - phonolith-data:/data
       - phonolith-waveforms:/data/waveforms:ro
+      - phonolith-proxies:/data/proxies:ro
     depends_on: [nats]
     logging: *logging
 
@@ -269,3 +303,4 @@ volumes:
   nats-data:
   polyphony-keys:
   phonolith-waveforms:
+  phonolith-proxies:

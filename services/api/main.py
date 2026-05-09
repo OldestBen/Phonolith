@@ -1,8 +1,9 @@
-import asyncio, json, os, sqlite3
+import asyncio, json, os, sqlite3, struct
 from contextlib import asynccontextmanager
 from typing import Optional
 from loguru import logger
-from fastapi import FastAPI, HTTPException, Query, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, HTTPException, Query, Request, WebSocket, WebSocketDisconnect
+from fastapi.responses import FileResponse
 from pydantic import BaseModel
 import duckdb
 import nats
@@ -312,6 +313,134 @@ async def get_waveform(hash: str):
         raise HTTPException(status_code=404, detail="Waveform not yet computed")
     with open(cache_file) as f:
         return json.load(f)
+
+
+# --- Opus Proxy ---
+
+@app.get("/api/proxy/{hash}")
+async def get_proxy(hash: str, request: Request, proxy: Optional[int] = None):
+    """
+    Stream the 128kbps Opus proxy for a track.
+    Served when ?proxy=1 or when the X-Remote: true header is present.
+    Returns 404 if the proxy hasn't been generated yet.
+    """
+    want_proxy = proxy == 1 or request.headers.get("x-remote", "").lower() == "true"
+    if not want_proxy:
+        raise HTTPException(status_code=400, detail="Pass ?proxy=1 or X-Remote: true")
+    proxy_dir = os.getenv("PROXY_DIR", "/data/proxies")
+    proxy_file = os.path.join(proxy_dir, f"{hash}.opus")
+    if not os.path.exists(proxy_file):
+        raise HTTPException(status_code=404, detail="Proxy not yet generated")
+    return FileResponse(
+        proxy_file,
+        media_type="audio/ogg",
+        filename=f"{hash}.opus",
+    )
+
+
+# --- Semantic Search ---
+
+def _load_semantic_db():
+    semantic_db = os.getenv("SEMANTIC_DB", "/data/semantic.db")
+    if not os.path.exists(semantic_db):
+        return None
+    return sqlite3.connect(semantic_db, check_same_thread=False)
+
+
+def _unpack_vector(blob: bytes):
+    n = len(blob) // 4
+    return list(struct.unpack(f"{n}f", blob))
+
+
+def _cosine(a: list, b: list) -> float:
+    dot = sum(x * y for x, y in zip(a, b))
+    # Vectors are pre-normalised in the semantic service, so dot == cosine sim
+    return dot
+
+
+@app.get("/api/search/similar/{hash}")
+async def search_similar(hash: str, limit: int = Query(10, ge=1, le=50)):
+    """Return the N most acoustically similar tracks to the given hash."""
+    conn = _load_semantic_db()
+    if conn is None:
+        raise HTTPException(status_code=503, detail="Semantic index not ready")
+    try:
+        row = conn.execute(
+            "SELECT vector FROM embeddings WHERE blake3_hash = ?", [hash]
+        ).fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="No embedding for this track yet")
+
+        query_vec = _unpack_vector(row[0])
+        rows = conn.execute(
+            "SELECT blake3_hash, path, bpm, key_index, spectral_centroid, rms_energy, vector "
+            "FROM embeddings WHERE blake3_hash != ?",
+            [hash],
+        ).fetchall()
+
+        scored = []
+        for r in rows:
+            candidate_vec = _unpack_vector(r[6])
+            score = _cosine(query_vec, candidate_vec)
+            scored.append({
+                "blake3_hash":      r[0],
+                "path":             r[1],
+                "bpm":              r[2],
+                "key_index":        r[3],
+                "spectral_centroid": r[4],
+                "rms_energy":       r[5],
+                "similarity":       round(score, 4),
+            })
+
+        scored.sort(key=lambda x: x["similarity"], reverse=True)
+        return scored[:limit]
+    finally:
+        conn.close()
+
+
+@app.get("/api/search/semantic")
+async def search_semantic(
+    min_bpm: Optional[float] = None,
+    max_bpm: Optional[float] = None,
+    key: Optional[int] = Query(None, ge=0, le=11),
+    min_energy: Optional[float] = None,
+    max_energy: Optional[float] = None,
+    limit: int = Query(20, ge=1, le=100),
+):
+    """
+    Filter tracks by acoustic attributes.
+    key: chromatic pitch class 0=C, 1=C#, 2=D … 11=B
+    energy/bpm: raw librosa values (bpm ~60-180, rms_energy ~0.0-0.5)
+    """
+    conn = _load_semantic_db()
+    if conn is None:
+        raise HTTPException(status_code=503, detail="Semantic index not ready")
+    try:
+        conditions = []
+        params = []
+        if min_bpm is not None:
+            conditions.append("bpm >= ?"); params.append(min_bpm)
+        if max_bpm is not None:
+            conditions.append("bpm <= ?"); params.append(max_bpm)
+        if key is not None:
+            conditions.append("key_index = ?"); params.append(key)
+        if min_energy is not None:
+            conditions.append("rms_energy >= ?"); params.append(min_energy)
+        if max_energy is not None:
+            conditions.append("rms_energy <= ?"); params.append(max_energy)
+
+        where = ("WHERE " + " AND ".join(conditions)) if conditions else ""
+        rows = conn.execute(
+            f"SELECT blake3_hash, path, bpm, key_index, spectral_centroid, rms_energy, duration_seconds "
+            f"FROM embeddings {where} ORDER BY bpm LIMIT ?",
+            params + [limit],
+        ).fetchall()
+
+        cols = ["blake3_hash", "path", "bpm", "key_index",
+                "spectral_centroid", "rms_energy", "duration_seconds"]
+        return [dict(zip(cols, r)) for r in rows]
+    finally:
+        conn.close()
 
 
 # --- Engram ---
