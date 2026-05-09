@@ -151,6 +151,17 @@ export async function playTrack(hash: string, endpointId?: string): Promise<void
   })
 }
 
+export async function streamToAirPlay(hash: string, endpointId: string): Promise<void> {
+  await apiFetch('/api/flux/stream', {
+    method: 'POST',
+    body: JSON.stringify({ hash, endpoint_id: endpointId }),
+  })
+}
+
+export async function stopAirPlay(endpointId: string): Promise<void> {
+  await apiFetch(`/api/flux/stop?endpoint_id=${encodeURIComponent(endpointId)}`, { method: 'POST' })
+}
+
 export async function restoreSnapshot(snapshotId: string): Promise<void> {
   await apiFetch('/api/engram/restore', {
     method: 'POST',

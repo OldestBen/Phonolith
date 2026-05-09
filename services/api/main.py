@@ -40,7 +40,8 @@ async def lifespan(app: FastAPI):
                 logger.warning(f"WebSocket broadcast error: {e}")
 
         await nc_client.subscribe("phonolith.playback.>", cb=_on_playback)
-        logger.info("Subscribed to phonolith.playback.> for WebSocket fan-out")
+        await nc_client.subscribe("phonolith.flux.endpoints", cb=_on_playback)
+        logger.info("Subscribed to phonolith.playback.> and phonolith.flux.endpoints for WebSocket fan-out")
     except Exception as e:
         logger.warning(f"NATS connection failed (non-fatal): {e}")
     yield
@@ -488,6 +489,46 @@ async def set_primary_version(req: SetPrimaryRequest):
         return {"status": "ok", "primary": req.hash, "group_key": group_key}
     finally:
         write_conn.close()
+
+
+# --- AirPlay endpoints ---
+
+@app.get("/api/flux/endpoints")
+async def flux_endpoints():
+    """Return the live list of discovered AirPlay endpoints from Flux."""
+    if not nc_client or not nc_client.is_connected:
+        raise HTTPException(status_code=503, detail="NATS unavailable")
+    return {"endpoints": []}   # Real-time data comes via WebSocket; this is a stub for polling
+
+
+class AirPlayStreamRequest(BaseModel):
+    hash: str
+    endpoint_id: str
+
+
+@app.post("/api/flux/stream", status_code=202)
+async def flux_stream(req: AirPlayStreamRequest):
+    """Route a track to an AirPlay endpoint via Flux."""
+    if not nc_client or not nc_client.is_connected:
+        raise HTTPException(status_code=503, detail="NATS unavailable")
+    conn = get_db()
+    try:
+        row = conn.execute("SELECT path FROM tracks WHERE id = ?", [req.hash]).fetchone()
+    finally:
+        conn.close()
+    if not row:
+        raise HTTPException(status_code=404, detail="Track not found")
+    payload = {"endpoint_id": req.endpoint_id, "path": row[0], "blake3_hash": req.hash}
+    await nc_client.publish("phonolith.flux.stream", json.dumps(payload).encode())
+    return {"status": "queued", "hash": req.hash, "endpoint_id": req.endpoint_id}
+
+
+@app.post("/api/flux/stop", status_code=202)
+async def flux_stop(endpoint_id: str):
+    if not nc_client or not nc_client.is_connected:
+        raise HTTPException(status_code=503, detail="NATS unavailable")
+    await nc_client.publish("phonolith.flux.stop", json.dumps({"endpoint_id": endpoint_id}).encode())
+    return {"status": "stop_sent", "endpoint_id": endpoint_id}
 
 
 # --- Playback ---
