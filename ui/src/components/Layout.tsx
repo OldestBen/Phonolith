@@ -2,10 +2,11 @@ import { NavLink, Outlet } from 'react-router-dom'
 import {
   Waves, Music, BarChart3, Cpu, Shield, Settings, SearchCode,
   GitCompare, Mic2, Trash2, ListMusic, Network, BookOpen,
-  Headphones, SlidersHorizontal, Copy,
+  Headphones, SlidersHorizontal, Copy, FolderOpen,
 } from 'lucide-react'
 import clsx from 'clsx'
 import PlayerBar from './PlayerBar'
+import OnboardingBanner from './OnboardingBanner'
 
 type NavGroup = {
   label: string
@@ -41,6 +42,7 @@ const navGroups: NavGroup[] = [
   {
     label: 'System',
     items: [
+      { to: '/sources',   label: 'Sources',     icon: FolderOpen },
       { to: '/hardware',  label: 'Hardware',    icon: Cpu },
       { to: '/polyphony', label: 'Polyphony',   icon: Network },
       { to: '/vault',     label: 'Vault',       icon: Shield },
@@ -103,6 +105,7 @@ export default function Layout() {
       {/* Main content + player */}
       <div className="flex flex-1 flex-col overflow-hidden">
         <main className="flex-1 overflow-y-auto p-6">
+          <OnboardingBanner />
           <Outlet />
         </main>
         <PlayerBar />

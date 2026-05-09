@@ -523,6 +523,40 @@ export function getSmartReports(): Promise<SmartReport[]> {
   return apiFetch('/api/health/smart')
 }
 
+// --- System Status & Sources ---
+
+export interface SystemStatus {
+  track_count: number
+  source_count: number
+  first_boot: boolean
+}
+
+export function getSystemStatus(): Promise<SystemStatus> {
+  return apiFetch('/api/status')
+}
+
+export interface LibrarySource {
+  id: string
+  name: string
+  path: string
+  created_at: string
+}
+
+export function getSources(): Promise<LibrarySource[]> {
+  return apiFetch('/api/sources')
+}
+
+export function addSource(name: string, path: string): Promise<LibrarySource> {
+  return apiFetch('/api/sources', {
+    method: 'POST',
+    body: JSON.stringify({ name, path }),
+  })
+}
+
+export function deleteSource(id: string): Promise<void> {
+  return apiFetch(`/api/sources/${encodeURIComponent(id)}`, { method: 'DELETE' })
+}
+
 // --- Dedup ---
 
 export interface DedupPair {

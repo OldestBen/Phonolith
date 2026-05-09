@@ -6,8 +6,8 @@ use notify::{
     Event, EventKind, RecommendedWatcher, RecursiveMode, Watcher,
 };
 use serde::{Deserialize, Serialize};
-use std::{path::Path, time::Duration};
-use tokio::sync::mpsc;
+use std::{path::Path, sync::Arc, time::Duration};
+use tokio::sync::{mpsc, watch};
 use tracing::{error, info, warn};
 
 const AUDIO_EXTENSIONS: &[&str] = &[
@@ -15,20 +15,36 @@ const AUDIO_EXTENSIONS: &[&str] = &[
     "dsf", "dff", "wv", "ape", "mpc", "wma",
 ];
 
+const SOURCES_FILE: &str = "/data/sources.json";
+
+// ── Types ─────────────────────────────────────────────────────────────────────
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+struct LibrarySource {
+    id:   String,
+    name: String,
+    path: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct SourcesConfig {
+    sources: Vec<LibrarySource>,
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 struct FsEvent {
     event_type: String,
-    path: String,
+    path:       String,
     #[serde(skip_serializing_if = "Option::is_none")]
-    old_path: Option<String>,
-    timestamp: String,
+    old_path:   Option<String>,
+    timestamp:  String,
 }
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
 
 fn is_audio(path: &str) -> bool {
     let lower = path.to_lowercase();
-    AUDIO_EXTENSIONS
-        .iter()
-        .any(|ext| lower.ends_with(&format!(".{ext}")))
+    AUDIO_EXTENSIONS.iter().any(|ext| lower.ends_with(&format!(".{ext}")))
 }
 
 fn map_event(event: Event) -> Option<FsEvent> {
@@ -36,21 +52,11 @@ fn map_event(event: Event) -> Option<FsEvent> {
     match &event.kind {
         EventKind::Create(_) => {
             let path = event.paths.first()?.to_string_lossy().to_string();
-            is_audio(&path).then_some(FsEvent {
-                event_type: "created".into(),
-                path,
-                old_path: None,
-                timestamp: ts,
-            })
+            is_audio(&path).then_some(FsEvent { event_type: "created".into(), path, old_path: None, timestamp: ts })
         }
         EventKind::Modify(ModifyKind::Data(_)) | EventKind::Modify(ModifyKind::Metadata(_)) => {
             let path = event.paths.first()?.to_string_lossy().to_string();
-            is_audio(&path).then_some(FsEvent {
-                event_type: "modified".into(),
-                path,
-                old_path: None,
-                timestamp: ts,
-            })
+            is_audio(&path).then_some(FsEvent { event_type: "modified".into(), path, old_path: None, timestamp: ts })
         }
         EventKind::Modify(ModifyKind::Name(RenameMode::Both)) => {
             let old = event.paths.first()?.to_string_lossy().to_string();
@@ -64,47 +70,40 @@ fn map_event(event: Event) -> Option<FsEvent> {
         }
         EventKind::Remove(_) => {
             let path = event.paths.first()?.to_string_lossy().to_string();
-            is_audio(&path).then_some(FsEvent {
-                event_type: "deleted".into(),
-                path,
-                old_path: None,
-                timestamp: ts,
-            })
+            is_audio(&path).then_some(FsEvent { event_type: "deleted".into(), path, old_path: None, timestamp: ts })
         }
         _ => None,
     }
 }
 
-#[tokio::main]
-async fn main() -> Result<()> {
-    tracing_subscriber::fmt()
-        .with_env_filter(
-            std::env::var("RUST_LOG").unwrap_or_else(|_| "tremor=info".into()),
-        )
-        .init();
+// ── Source loading ─────────────────────────────────────────────────────────────
 
-    let nats_url =
-        std::env::var("NATS_URL").unwrap_or_else(|_| "nats://localhost:4222".into());
-    let library_path =
-        std::env::var("LIBRARY_PATH").unwrap_or_else(|_| "/library".into());
+fn load_sources(fallback: &str) -> Vec<String> {
+    // Try sources.json first; fall back to the LIBRARY_PATH env var.
+    if let Ok(raw) = std::fs::read_to_string(SOURCES_FILE) {
+        if let Ok(cfg) = serde_json::from_str::<SourcesConfig>(&raw) {
+            let paths: Vec<String> = cfg.sources.iter().map(|s| s.path.clone()).collect();
+            if !paths.is_empty() {
+                info!("Loaded {} source(s) from {SOURCES_FILE}", paths.len());
+                return paths;
+            }
+        }
+    }
+    if !fallback.is_empty() {
+        info!("No sources.json — watching LIBRARY_PATH: {fallback}");
+        return vec![fallback.to_string()];
+    }
+    info!("No sources configured yet — Tremor idle until a library source is added");
+    vec![]
+}
 
-    info!("Tremor starting — watching {library_path}");
+// ── Watcher task ──────────────────────────────────────────────────────────────
 
-    let client = async_nats::connect(&nats_url).await?;
-    let js = jetstream::new(client);
-
-    js.get_or_create_stream(jetstream::stream::Config {
-        name: "PHONOLITH_FS".into(),
-        subjects: vec!["phonolith.fs.>".into()],
-        retention: jetstream::stream::RetentionPolicy::WorkQueue,
-        max_age: Duration::from_secs(86_400),
-        ..Default::default()
-    })
-    .await?;
-
-    let (tx, mut rx) = mpsc::channel::<FsEvent>(4096);
-
-    let mut watcher = RecommendedWatcher::new(
+fn start_watcher(paths: Vec<String>, tx: mpsc::Sender<FsEvent>) -> Option<RecommendedWatcher> {
+    if paths.is_empty() {
+        return None;
+    }
+    let mut watcher = match RecommendedWatcher::new(
         {
             let tx = tx.clone();
             move |result: notify::Result<Event>| match result {
@@ -119,24 +118,94 @@ async fn main() -> Result<()> {
             }
         },
         notify::Config::default().with_poll_interval(Duration::from_secs(2)),
-    )?;
+    ) {
+        Ok(w) => w,
+        Err(e) => { error!("Failed to create watcher: {e}"); return None; }
+    };
 
-    watcher.watch(Path::new(&library_path), RecursiveMode::Recursive)?;
-    info!("Watching {library_path} recursively — listening for audio file changes");
-
-    while let Some(ev) = rx.recv().await {
-        let subject = format!("phonolith.fs.{}", ev.event_type);
-        match serde_json::to_vec(&ev) {
-            Ok(payload) => {
-                if let Err(e) = js.publish(subject.clone(), payload.into()).await {
-                    error!("Failed to publish {subject}: {e}");
-                } else {
-                    info!("▶ {} → {}", ev.event_type, ev.path);
-                }
-            }
-            Err(e) => error!("Serialization error: {e}"),
+    let mut active = 0usize;
+    for path in &paths {
+        let p = Path::new(path);
+        if !p.exists() {
+            warn!("Source path does not exist (yet): {path}");
+            continue;
+        }
+        match watcher.watch(p, RecursiveMode::Recursive) {
+            Ok(_) => { info!("Watching: {path}"); active += 1; }
+            Err(e) => warn!("Cannot watch {path}: {e}"),
         }
     }
+    if active == 0 { return None; }
+    Some(watcher)
+}
 
-    Ok(())
+// ── Main ──────────────────────────────────────────────────────────────────────
+
+#[tokio::main]
+async fn main() -> Result<()> {
+    tracing_subscriber::fmt()
+        .with_env_filter(std::env::var("RUST_LOG").unwrap_or_else(|_| "tremor=info".into()))
+        .init();
+
+    let nats_url    = std::env::var("NATS_URL").unwrap_or_else(|_| "nats://localhost:4222".into());
+    let library_env = std::env::var("LIBRARY_PATH").unwrap_or_default();
+
+    info!("Tremor starting");
+
+    let client = async_nats::connect(&nats_url).await?;
+    let js = jetstream::new(client.clone());
+
+    js.get_or_create_stream(jetstream::stream::Config {
+        name:      "PHONOLITH_FS".into(),
+        subjects:  vec!["phonolith.fs.>".into()],
+        retention: jetstream::stream::RetentionPolicy::WorkQueue,
+        max_age:   Duration::from_secs(86_400),
+        ..Default::default()
+    })
+    .await?;
+
+    let (ev_tx, mut ev_rx) = mpsc::channel::<FsEvent>(4096);
+
+    // Watch for source config changes via NATS.
+    let (reload_tx, mut reload_rx) = watch::channel::<()>(());
+    let reload_tx = Arc::new(reload_tx);
+
+    {
+        let reload_tx = Arc::clone(&reload_tx);
+        tokio::spawn(async move {
+            if let Ok(mut sub) = client.subscribe("phonolith.config.sources").await {
+                use futures::StreamExt;
+                while let Some(_msg) = sub.next().await {
+                    info!("Source config update received — reloading watchers");
+                    let _ = reload_tx.send(());
+                }
+            }
+        });
+    }
+
+    // Initial watch.
+    let mut _watcher = start_watcher(load_sources(&library_env), ev_tx.clone());
+
+    loop {
+        tokio::select! {
+            Some(ev) = ev_rx.recv() => {
+                let subject = format!("phonolith.fs.{}", ev.event_type);
+                match serde_json::to_vec(&ev) {
+                    Ok(payload) => {
+                        if let Err(e) = js.publish(subject.clone(), payload.into()).await {
+                            error!("Failed to publish {subject}: {e}");
+                        } else {
+                            info!("▶ {} → {}", ev.event_type, ev.path);
+                        }
+                    }
+                    Err(e) => error!("Serialization error: {e}"),
+                }
+            }
+            Ok(_) = reload_rx.changed() => {
+                // Drop old watcher (stops watching), start fresh.
+                _watcher = None;
+                _watcher = start_watcher(load_sources(&library_env), ev_tx.clone());
+            }
+        }
+    }
 }

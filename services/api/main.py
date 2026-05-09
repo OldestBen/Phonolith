@@ -12,6 +12,9 @@ NATS_URL = os.getenv("NATS_URL", "nats://localhost:4222")
 DB_PATH = os.getenv("DB_PATH", "/data/phonolith.duckdb")
 ENGRAM_DB     = os.getenv("ENGRAM_DB",     "/data/engram.db")
 POLYPHONY_DB  = os.getenv("POLYPHONY_DB", "/data/polyphony.db")
+DATA_DIR      = os.getenv("DATA_DIR", "/data")
+SOURCES_FILE  = os.path.join(DATA_DIR, "sources.json")
+CONFIG_DB     = os.path.join(DATA_DIR, "phonolith_config.db")
 
 nc_client = None
 _ws_clients: set[WebSocket] = set()
@@ -1594,3 +1597,78 @@ async def dedup_candidates(
         })
 
     return results[:200]
+
+
+# ── Library Sources ────────────────────────────────────────────────────────────
+
+def _config_db() -> sqlite3.Connection:
+    c = sqlite3.connect(CONFIG_DB)
+    c.execute("""CREATE TABLE IF NOT EXISTS library_sources (
+        id        TEXT PRIMARY KEY,
+        name      TEXT NOT NULL,
+        path      TEXT NOT NULL,
+        created_at TEXT DEFAULT (datetime('now'))
+    )""")
+    c.commit()
+    return c
+
+def _write_sources_json(sources: list[dict]) -> None:
+    """Write sources list to the JSON file Tremor watches."""
+    os.makedirs(os.path.dirname(SOURCES_FILE), exist_ok=True)
+    with open(SOURCES_FILE, "w") as f:
+        json.dump({"sources": sources}, f)
+
+@app.get("/api/sources")
+async def list_sources():
+    c = _config_db()
+    rows = c.execute("SELECT id, name, path, created_at FROM library_sources ORDER BY created_at").fetchall()
+    return [{"id": r[0], "name": r[1], "path": r[2], "created_at": r[3]} for r in rows]
+
+class SourceCreate(BaseModel):
+    name: str
+    path: str
+
+@app.post("/api/sources", status_code=201)
+async def add_source(body: SourceCreate):
+    import uuid as _uuid
+    sid = str(_uuid.uuid4())
+    c = _config_db()
+    c.execute("INSERT INTO library_sources (id, name, path) VALUES (?, ?, ?)",
+              [sid, body.name.strip(), body.path.strip()])
+    c.commit()
+    sources = [{"id": r[0], "name": r[1], "path": r[2]}
+               for r in c.execute("SELECT id, name, path FROM library_sources").fetchall()]
+    _write_sources_json(sources)
+    if nc_client:
+        await nc_client.publish("phonolith.config.sources", json.dumps(sources).encode())
+    return {"id": sid, "name": body.name, "path": body.path}
+
+@app.delete("/api/sources/{source_id}", status_code=204)
+async def delete_source(source_id: str):
+    c = _config_db()
+    if not c.execute("SELECT id FROM library_sources WHERE id=?", [source_id]).fetchone():
+        raise HTTPException(404, "Source not found")
+    c.execute("DELETE FROM library_sources WHERE id=?", [source_id])
+    c.commit()
+    sources = [{"id": r[0], "name": r[1], "path": r[2]}
+               for r in c.execute("SELECT id, name, path FROM library_sources").fetchall()]
+    _write_sources_json(sources)
+    if nc_client:
+        await nc_client.publish("phonolith.config.sources", json.dumps(sources).encode())
+
+@app.get("/api/status")
+async def system_status():
+    """First-boot detection: returns track count and source count for onboarding."""
+    try:
+        db = get_db()
+        track_count = db.execute("SELECT COUNT(*) FROM tracks").fetchone()[0]
+        db.close()
+    except Exception:
+        track_count = 0
+    c = _config_db()
+    source_count = c.execute("SELECT COUNT(*) FROM library_sources").fetchone()[0]
+    return {
+        "track_count": track_count,
+        "source_count": source_count,
+        "first_boot": track_count == 0 and source_count == 0,
+    }

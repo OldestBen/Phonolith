@@ -15,6 +15,7 @@ import Codex from './pages/Codex'
 import Cathode from './pages/Cathode'
 import EQProfiles from './pages/EQProfiles'
 import Dedup from './pages/Dedup'
+import Sources from './pages/Sources'
 
 export default function App() {
   return (
@@ -36,6 +37,7 @@ export default function App() {
           <Route path="codex" element={<Codex />} />
           <Route path="vault" element={<Vault />} />
           <Route path="settings" element={<Settings />} />
+          <Route path="sources" element={<Sources />} />
         </Route>
       </Routes>
     </BrowserRouter>

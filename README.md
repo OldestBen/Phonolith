@@ -53,7 +53,8 @@ Full architectural detail for every subsystem lives in [`docs/ARCHITECTURE.md`](
 
 ```bash
 cp .env.example .env
-# Edit .env — at minimum set LIBRARY_PATH to your music directory
+# Optional: set LIBRARY_PATH to your music directory, or leave blank
+# and add sources later via the Sources page in the UI.
 nano .env
 ```
 
