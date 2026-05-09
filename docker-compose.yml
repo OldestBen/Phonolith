@@ -1,0 +1,252 @@
+version: "3.9"
+
+x-logging: &logging
+  driver: "json-file"
+  options:
+    max-size: "10m"
+    max-file: "3"
+
+x-env: &common-env
+  NATS_URL: nats://nats:4222
+  DATA_DIR: /data
+
+x-rust-volumes: &rust-volumes
+  - ${LIBRARY_PATH:-/tmp/phonolith-lib}:/library:ro
+  - phonolith-data:/data
+
+services:
+
+  # ── Infrastructure ─────────────────────────────────────────────────────────
+
+  nats:
+    image: nats:2.10-alpine
+    restart: unless-stopped
+    command: ["--js", "--m", "8222", "--sd", "/data"]
+    ports:
+      - "4222:4222"
+      - "8222:8222"
+    volumes:
+      - nats-data:/data
+    logging: *logging
+
+  # ── Ingestion Layer ────────────────────────────────────────────────────────
+
+  tremor:
+    build: ./services/tremor
+    restart: unless-stopped
+    environment:
+      <<: *common-env
+      LIBRARY_PATH: /library
+      RUST_LOG: tremor=info
+    volumes: *rust-volumes
+    depends_on: [nats]
+    logging: *logging
+
+  bitforge:
+    build: ./services/bitforge
+    restart: unless-stopped
+    environment:
+      <<: *common-env
+      LIBRARY_PATH: /library
+      WORKER_POOL_SIZE: ${WORKER_POOL_SIZE:-4}
+      RUST_LOG: bitforge=info
+    volumes: *rust-volumes
+    depends_on: [nats]
+    logging: *logging
+
+  # ── VFS Layer ──────────────────────────────────────────────────────────────
+
+  resonancefs:
+    build: ./services/resonancefs
+    restart: unless-stopped
+    environment:
+      <<: *common-env
+    volumes:
+      - phonolith-data:/data
+    cap_add: [SYS_ADMIN]
+    security_opt: [apparmor:unconfined]
+    depends_on: [nats]
+    logging: *logging
+
+  # ── Metadata Layer ─────────────────────────────────────────────────────────
+
+  engram:
+    build: ./services/engram
+    restart: unless-stopped
+    environment:
+      <<: *common-env
+      LIBRARY_PATH: /library
+    volumes:
+      - ${LIBRARY_PATH:-/tmp/phonolith-lib}:/library
+      - phonolith-data:/data
+    depends_on: [nats]
+    logging: *logging
+
+  lexicon:
+    build: ./services/lexicon
+    restart: unless-stopped
+    environment:
+      <<: *common-env
+      MUSICBRAINZ_USER_AGENT: ${MUSICBRAINZ_USER_AGENT:-Phonolith/0.1.0}
+      DISCOGS_TOKEN: ${DISCOGS_TOKEN:-}
+    volumes:
+      - phonolith-data:/data
+    depends_on: [nats]
+    logging: *logging
+
+  # ── Sonic Lab ──────────────────────────────────────────────────────────────
+
+  prism:
+    build: ./services/prism
+    restart: unless-stopped
+    environment:
+      <<: *common-env
+      LIBRARY_PATH: /library
+      WORKER_POOL_SIZE: ${WORKER_POOL_SIZE:-4}
+    volumes: *rust-volumes
+    depends_on: [nats]
+    logging: *logging
+
+  crest:
+    build: ./services/crest
+    restart: unless-stopped
+    environment:
+      <<: *common-env
+      LIBRARY_PATH: /library
+      WORKER_POOL_SIZE: ${WORKER_POOL_SIZE:-4}
+    volumes: *rust-volumes
+    depends_on: [nats]
+    logging: *logging
+
+  # ── Vaulting Layer ─────────────────────────────────────────────────────────
+
+  aegis:
+    build: ./services/aegis
+    restart: unless-stopped
+    environment:
+      <<: *common-env
+      LIBRARY_PATH: /library
+      S3_ENDPOINT: ${S3_ENDPOINT:-}
+      S3_BUCKET: ${S3_BUCKET:-}
+      S3_ACCESS_KEY: ${S3_ACCESS_KEY:-}
+      S3_SECRET_KEY: ${S3_SECRET_KEY:-}
+      S3_REGION: ${S3_REGION:-us-east-1}
+      S3_OBJECT_LOCK: ${S3_OBJECT_LOCK:-false}
+      S3_RETENTION_DAYS: ${S3_RETENTION_DAYS:-365}
+      RUST_LOG: aegis=info
+    volumes: *rust-volumes
+    depends_on: [nats]
+    logging: *logging
+
+  # ── Playback Layer ─────────────────────────────────────────────────────────
+
+  lucid:
+    build: ./services/lucid
+    restart: unless-stopped
+    environment:
+      <<: *common-env
+      LIBRARY_PATH: /library
+      RUST_LOG: lucid=info
+    volumes: *rust-volumes
+    devices:
+      - /dev/snd:/dev/snd
+    group_add: [audio]
+    depends_on: [nats]
+    logging: *logging
+
+  flux:
+    build: ./services/flux
+    restart: unless-stopped
+    network_mode: host
+    environment:
+      <<: *common-env
+      AIRPLAY_RECEIVER_NAME: ${AIRPLAY_RECEIVER_NAME:-Phonolith}
+    volumes:
+      - phonolith-data:/data
+    depends_on: [nats]
+    logging: *logging
+
+  # ── Analytics Layer ────────────────────────────────────────────────────────
+
+  echograph:
+    build: ./services/echograph
+    restart: unless-stopped
+    environment:
+      <<: *common-env
+      LASTFM_API_KEY: ${LASTFM_API_KEY:-}
+      LASTFM_API_SECRET: ${LASTFM_API_SECRET:-}
+      LASTFM_USERNAME: ${LASTFM_USERNAME:-}
+    volumes:
+      - phonolith-data:/data
+    depends_on: [nats]
+    logging: *logging
+
+  cathode:
+    build: ./services/cathode
+    restart: unless-stopped
+    environment:
+      <<: *common-env
+    volumes:
+      - phonolith-data:/data
+    depends_on: [nats]
+    logging: *logging
+
+  # ── Ecosystem Layer ────────────────────────────────────────────────────────
+
+  polyphony:
+    build: ./services/polyphony
+    restart: unless-stopped
+    ports:
+      - "51820:51820/udp"
+    environment:
+      <<: *common-env
+      POLYPHONY_NODE_ALIAS: ${POLYPHONY_NODE_ALIAS:-phonolith-node}
+    volumes:
+      - phonolith-data:/data
+      - polyphony-keys:/keys
+    cap_add: [NET_ADMIN]
+    depends_on: [nats]
+    logging: *logging
+
+  sonic-codex:
+    build: ./services/sonic-codex
+    restart: unless-stopped
+    environment:
+      <<: *common-env
+    volumes:
+      - phonolith-data:/data
+    depends_on: [nats]
+    logging: *logging
+
+  # ── API Gateway ────────────────────────────────────────────────────────────
+
+  api:
+    build: ./services/api
+    restart: unless-stopped
+    ports:
+      - "${API_PORT:-8000}:8000"
+    environment:
+      <<: *common-env
+      LIBRARY_PATH: /library
+      PLEX_URL: ${PLEX_URL:-}
+      PLEX_TOKEN: ${PLEX_TOKEN:-}
+    volumes:
+      - ${LIBRARY_PATH:-/tmp/phonolith-lib}:/library:ro
+      - phonolith-data:/data
+    depends_on: [nats]
+    logging: *logging
+
+  # ── Web UI ─────────────────────────────────────────────────────────────────
+
+  ui:
+    build: ./ui
+    restart: unless-stopped
+    ports:
+      - "${UI_PORT:-3000}:80"
+    depends_on: [api]
+    logging: *logging
+
+volumes:
+  phonolith-data:
+  nats-data:
+  polyphony-keys:
