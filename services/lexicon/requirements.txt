@@ -1,0 +1,5 @@
+nats-py>=2.6.0
+mutagen>=1.47.0
+musicbrainzngs>=0.7.1
+requests>=2.31.0
+loguru>=0.7.0

@@ -1,0 +1,36 @@
+# Rust
+target/
+Cargo.lock
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+*.egg-info/
+dist/
+.mypy_cache/
+.ruff_cache/
+
+# Node
+node_modules/
+ui/dist/
+ui/.vite/
+*.tsbuildinfo
+
+# Env
+.env
+
+# Data
+data/
+*.duckdb
+*.duckdb.wal
+*.db
+*.db-shm
+*.db-wal
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
