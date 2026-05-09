@@ -804,6 +804,95 @@ async def search_semantic(
         conn.close()
 
 
+# --- Data Janitor ---
+
+@app.get("/api/janitor/silent-tracks")
+async def janitor_silent_tracks(
+    peak_threshold: float = Query(-50.0, description="Peak level dBFS ceiling"),
+    rms_threshold:  float = Query(-60.0, description="RMS level dBFS ceiling"),
+    db: duckdb.DuckDBPyConnection = Depends(get_db),
+):
+    """Tracks where measured levels suggest silence or near-silence."""
+    rows = db.execute(
+        """SELECT id AS hash, path, filename, title, artist, album, year,
+                  peak_level, rms_level, duration_seconds, dr_score, format
+           FROM tracks
+           WHERE (peak_level IS NOT NULL AND peak_level < ?)
+              OR (rms_level  IS NOT NULL AND rms_level  < ?)
+           ORDER BY peak_level ASC NULLS LAST
+           LIMIT 500""",
+        [peak_threshold, rms_threshold],
+    ).fetchall()
+    cols = ["hash", "path", "filename", "title", "artist", "album", "year",
+            "peak_level", "rms_level", "duration_seconds", "dr_score", "format"]
+    return [dict(zip(cols, r)) for r in rows]
+
+
+@app.get("/api/janitor/artwork-audit")
+async def janitor_artwork_audit(
+    min_dimension: int = Query(500, description="Minimum acceptable artwork dimension (px)"),
+    db: duckdb.DuckDBPyConnection = Depends(get_db),
+):
+    """Albums with missing or low-resolution embedded artwork."""
+    rows = db.execute(
+        """SELECT a.id, a.title AS album, a.artist,
+                  a.artwork_path, a.artwork_width, a.artwork_height,
+                  COUNT(t.id) AS track_count,
+                  CASE
+                    WHEN a.artwork_path IS NULL THEN 'missing'
+                    WHEN COALESCE(a.artwork_width,0) < ? OR COALESCE(a.artwork_height,0) < ? THEN 'low_res'
+                    ELSE 'ok'
+                  END AS issue
+           FROM albums a
+           LEFT JOIN tracks t
+             ON LOWER(TRIM(t.album)) = LOWER(TRIM(a.title))
+            AND LOWER(TRIM(COALESCE(t.album_artist, t.artist, ''))) = LOWER(TRIM(COALESCE(a.artist,'')))
+           WHERE a.artwork_path IS NULL
+              OR a.artwork_width  < ?
+              OR a.artwork_height < ?
+           GROUP BY a.id, a.title, a.artist, a.artwork_path, a.artwork_width, a.artwork_height
+           ORDER BY issue, a.title
+           LIMIT 300""",
+        [min_dimension, min_dimension, min_dimension, min_dimension],
+    ).fetchall()
+    cols = ["id", "album", "artist", "artwork_path", "artwork_width",
+            "artwork_height", "track_count", "issue"]
+    return [dict(zip(cols, r)) for r in rows]
+
+
+@app.get("/api/janitor/missing-disc")
+async def janitor_missing_disc(
+    track_count_floor: int = Query(15, description="Minimum tracks for an album to be flagged"),
+    db: duckdb.DuckDBPyConnection = Depends(get_db),
+):
+    """Albums that look like they span multiple discs but lack disc_number tags."""
+    rows = db.execute(
+        """SELECT album,
+                  COALESCE(album_artist, artist) AS artist,
+                  COUNT(*)                        AS track_count,
+                  MAX(track_number)               AS max_track_number,
+                  COUNT(CASE WHEN disc_number IS NOT NULL THEN 1 END) AS tagged_disc_count,
+                  COUNT(CASE WHEN disc_number IS NULL     THEN 1 END) AS untagged_disc_count
+           FROM tracks
+           WHERE album IS NOT NULL
+           GROUP BY album, COALESCE(album_artist, artist)
+           HAVING (
+             -- large album with no disc tags at all → likely multi-disc
+             (MAX(track_number) > ? AND COUNT(CASE WHEN disc_number IS NOT NULL THEN 1 END) = 0)
+             OR
+             -- inconsistent tagging: some have disc_number, some don't
+             (COUNT(CASE WHEN disc_number IS NOT NULL THEN 1 END) > 0
+              AND COUNT(CASE WHEN disc_number IS NULL THEN 1 END) > 0)
+           )
+           ORDER BY track_count DESC
+           LIMIT 200""",
+        [track_count_floor],
+    ).fetchall()
+    cols = ["album", "artist", "track_count", "max_track_number",
+            "tagged_disc_count", "untagged_disc_count"]
+    return [dict(zip(cols, r)) for r in rows]
+
+
 # --- Engram ---
 
 @app.post("/api/engram/restore", status_code=202)

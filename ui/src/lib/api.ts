@@ -241,3 +241,52 @@ export function searchSemantic(params: SemanticParams): Promise<SemanticTrack[]>
   }
   return apiFetch(`/api/search/semantic?${qs}`)
 }
+
+// --- Data Janitor ---
+
+export interface SilentTrack {
+  hash: string
+  path: string
+  filename?: string
+  title?: string
+  artist?: string
+  album?: string
+  year?: number
+  peak_level?: number
+  rms_level?: number
+  duration_seconds?: number
+  dr_score?: number
+  format?: string
+}
+
+export interface ArtworkIssue {
+  id: string
+  album: string
+  artist?: string
+  artwork_path?: string
+  artwork_width?: number
+  artwork_height?: number
+  track_count: number
+  issue: 'missing' | 'low_res'
+}
+
+export interface DiscIssue {
+  album: string
+  artist?: string
+  track_count: number
+  max_track_number?: number
+  tagged_disc_count: number
+  untagged_disc_count: number
+}
+
+export function getJanitorSilentTracks(peakThreshold = -50, rmsThreshold = -60): Promise<SilentTrack[]> {
+  return apiFetch(`/api/janitor/silent-tracks?peak_threshold=${peakThreshold}&rms_threshold=${rmsThreshold}`)
+}
+
+export function getJanitorArtworkAudit(minDimension = 500): Promise<ArtworkIssue[]> {
+  return apiFetch(`/api/janitor/artwork-audit?min_dimension=${minDimension}`)
+}
+
+export function getJanitorMissingDisc(): Promise<DiscIssue[]> {
+  return apiFetch('/api/janitor/missing-disc')
+}

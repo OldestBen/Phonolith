@@ -8,6 +8,7 @@ import Settings from './pages/Settings'
 import Search from './pages/Search'
 import Versions from './pages/Versions'
 import Engineers from './pages/Engineers'
+import Janitor from './pages/Janitor'
 
 export default function App() {
   return (
@@ -18,6 +19,7 @@ export default function App() {
           <Route path="search" element={<Search />} />
           <Route path="versions" element={<Versions />} />
           <Route path="engineers" element={<Engineers />} />
+          <Route path="janitor" element={<Janitor />} />
           <Route path="analytics" element={<Analytics />} />
           <Route path="hardware" element={<Hardware />} />
           <Route path="vault" element={<Vault />} />
