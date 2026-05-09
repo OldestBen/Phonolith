@@ -39,6 +39,8 @@ CREATE TABLE IF NOT EXISTS tracks (
     bpm              DOUBLE,
     initial_key      VARCHAR,
     mood             VARCHAR,
+    detected_bpm     DOUBLE,   -- librosa beat tracker result
+    detected_key     VARCHAR,  -- chromagram argmax (C, C#, D … B)
     -- External IDs
     musicbrainz_track_id         VARCHAR,
     musicbrainz_release_id       VARCHAR,

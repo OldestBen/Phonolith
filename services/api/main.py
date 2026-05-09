@@ -262,6 +262,43 @@ async def analytics_dr_heatmap():
         conn.close()
 
 
+# --- BPM / Key mismatch report ---
+
+@app.get("/api/analytics/bpm-key-mismatches")
+async def bpm_key_mismatches(
+    bpm_tolerance: float = Query(5.0, description="Allowed BPM deviation before flagging"),
+    limit: int = Query(50, ge=1, le=200),
+):
+    """
+    Tracks where tag BPM or key differs from the librosa-detected value.
+    Useful for finding badly tagged files or BPM-doubled tags.
+    """
+    conn = get_db()
+    try:
+        rows = conn.execute(
+            """
+            SELECT id AS hash, path, title, artist, album,
+                   bpm AS tag_bpm, detected_bpm,
+                   initial_key AS tag_key, detected_key,
+                   ABS(COALESCE(bpm, 0) - COALESCE(detected_bpm, 0)) AS bpm_delta
+            FROM tracks
+            WHERE detected_bpm IS NOT NULL
+              AND (
+                  (bpm IS NOT NULL AND ABS(bpm - detected_bpm) > ?)
+                  OR (initial_key IS NOT NULL AND UPPER(TRIM(initial_key)) != UPPER(TRIM(detected_key)))
+              )
+            ORDER BY bpm_delta DESC
+            LIMIT ?
+            """,
+            [bpm_tolerance, limit],
+        ).fetchall()
+        cols = ["hash", "path", "title", "artist", "album",
+                "tag_bpm", "detected_bpm", "tag_key", "detected_key", "bpm_delta"]
+        return [dict(zip(cols, r)) for r in rows]
+    finally:
+        conn.close()
+
+
 # --- Version Manager ---
 
 class SetPrimaryRequest(BaseModel):

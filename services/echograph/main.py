@@ -135,6 +135,29 @@ def record_vault(conn, data: dict):
          datetime.now(timezone.utc).isoformat()],
     )
 
+KEY_NAMES = ['C','C#','D','D#','E','F','F#','G','G#','A','A#','B']
+
+def apply_semantic(conn, data: dict):
+    h = data.get("blake3_hash", "")
+    if not h:
+        return
+    key_index = data.get("key_index")
+    detected_key = KEY_NAMES[key_index] if key_index is not None and 0 <= key_index <= 11 else None
+    conn.execute(
+        """UPDATE tracks SET
+             bpm            = COALESCE(bpm, ?),
+             initial_key    = COALESCE(initial_key, ?),
+             detected_bpm   = ?,
+             detected_key   = ?,
+             last_analyzed_at = ?
+           WHERE id = ?""",
+        [
+            data.get("bpm"), detected_key,
+            data.get("bpm"), detected_key,
+            datetime.now(timezone.utc).isoformat(), h,
+        ],
+    )
+
 HANDLERS = {
     "phonolith.hash.created":        upsert_track,
     "phonolith.hash.modified":       upsert_track,
@@ -143,6 +166,7 @@ HANDLERS = {
     "phonolith.metadata.enriched":   apply_enriched,
     "phonolith.analysis.prism":      apply_prism,
     "phonolith.analysis.crest":      apply_crest,
+    "phonolith.analysis.semantic":   apply_semantic,
     "phonolith.playback.started":    record_play,
     "phonolith.vault.uploaded":      record_vault,
 }
