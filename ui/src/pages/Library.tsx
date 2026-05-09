@@ -1,8 +1,11 @@
 import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { getTracks, playTrack, type Track } from '../lib/api'
+import TrackDetail from '../components/TrackDetail'
 import { Search, AlertTriangle, CheckCircle, Minus, Play } from 'lucide-react'
 import clsx from 'clsx'
+
+const COL_COUNT = 8
 
 function DrBadge({ score }: { score: number | null }) {
   if (score == null) return <span className="text-zinc-600">—</span>
@@ -31,11 +34,7 @@ export default function Library() {
   async function handlePlay(e: React.MouseEvent, hash: string) {
     e.stopPropagation()
     setPlaying(hash)
-    try {
-      await playTrack(hash)
-    } catch {
-      // error is surfaced by Lucid via NATS, not fatal here
-    }
+    try { await playTrack(hash) } catch { /* surfaced via signal path */ }
   }
 
   const { data, isLoading } = useQuery({
@@ -81,45 +80,52 @@ export default function Library() {
             </thead>
             <tbody>
               {tracks.map((t: Track) => (
-                <tr
-                  key={t.hash}
-                  onClick={() => setSelected(t.hash === selected ? null : t.hash)}
-                  className={clsx(
-                    'group border-b border-zinc-800/50 cursor-pointer transition-colors',
-                    t.hash === selected ? 'bg-violet-900/20' : 'hover:bg-zinc-900'
+                <>
+                  <tr
+                    key={t.hash}
+                    onClick={() => setSelected(t.hash === selected ? null : t.hash)}
+                    className={clsx(
+                      'group cursor-pointer transition-colors',
+                      t.hash === selected
+                        ? 'bg-violet-900/20 border-b border-violet-800/40'
+                        : 'border-b border-zinc-800/50 hover:bg-zinc-900',
+                    )}
+                  >
+                    <td className="w-10 px-2 py-2.5 text-center">
+                      <button
+                        onClick={(e) => handlePlay(e, t.hash)}
+                        className={clsx(
+                          'rounded-full p-1 transition-colors',
+                          playing === t.hash
+                            ? 'text-violet-400'
+                            : 'text-zinc-600 opacity-0 group-hover:opacity-100 hover:text-violet-400',
+                        )}
+                        title="Play"
+                      >
+                        <Play className="h-3.5 w-3.5" fill="currentColor" />
+                      </button>
+                    </td>
+                    <td className="px-4 py-2.5 text-zinc-100 truncate max-w-[200px]">{t.title ?? t.filename}</td>
+                    <td className="px-4 py-2.5 text-zinc-300 truncate max-w-[160px]">{t.artist ?? '—'}</td>
+                    <td className="px-4 py-2.5 text-zinc-400 truncate max-w-[160px]">{t.album ?? '—'}</td>
+                    <td className="px-4 py-2.5">
+                      <span className="font-mono text-xs text-zinc-400 bg-zinc-800 px-1.5 py-0.5 rounded">
+                        {t.format ?? '?'}
+                        {t.bit_depth ? ` ${t.bit_depth}b` : ''}
+                        {t.sample_rate ? `/${Math.round(t.sample_rate / 1000)}k` : ''}
+                      </span>
+                    </td>
+                    <td className="px-4 py-2.5"><DrBadge score={t.dr_score} /></td>
+                    <td className="px-4 py-2.5 font-mono text-zinc-400 text-xs">{fmt(t.duration_seconds)}</td>
+                    <td className="px-4 py-2.5 text-center"><PrismBadge status={t.prism_status} /></td>
+                  </tr>
+                  {t.hash === selected && (
+                    <TrackDetail key={`detail-${t.hash}`} hash={t.hash} colSpan={COL_COUNT} />
                   )}
-                >
-                  <td className="w-10 px-2 py-2.5 text-center">
-                    <button
-                      onClick={(e) => handlePlay(e, t.hash)}
-                      className={clsx(
-                        'rounded-full p-1 transition-colors',
-                        playing === t.hash
-                          ? 'text-violet-400'
-                          : 'text-zinc-600 opacity-0 group-hover:opacity-100 hover:text-violet-400',
-                      )}
-                      title="Play"
-                    >
-                      <Play className="h-3.5 w-3.5" fill="currentColor" />
-                    </button>
-                  </td>
-                  <td className="px-4 py-2.5 text-zinc-100 truncate max-w-[200px]">{t.title ?? t.filename}</td>
-                  <td className="px-4 py-2.5 text-zinc-300 truncate max-w-[160px]">{t.artist ?? '—'}</td>
-                  <td className="px-4 py-2.5 text-zinc-400 truncate max-w-[160px]">{t.album ?? '—'}</td>
-                  <td className="px-4 py-2.5">
-                    <span className="font-mono text-xs text-zinc-400 bg-zinc-800 px-1.5 py-0.5 rounded">
-                      {t.format ?? '?'}
-                      {t.bit_depth ? ` ${t.bit_depth}b` : ''}
-                      {t.sample_rate ? `/${Math.round(t.sample_rate / 1000)}k` : ''}
-                    </span>
-                  </td>
-                  <td className="px-4 py-2.5"><DrBadge score={t.dr_score} /></td>
-                  <td className="px-4 py-2.5 font-mono text-zinc-400 text-xs">{fmt(t.duration_seconds)}</td>
-                  <td className="px-4 py-2.5 text-center"><PrismBadge status={t.prism_status} /></td>
-                </tr>
+                </>
               ))}
               {tracks.length === 0 && (
-                <tr><td colSpan={8} className="px-4 py-10 text-center text-zinc-600">No tracks found</td></tr>
+                <tr><td colSpan={COL_COUNT} className="px-4 py-10 text-center text-zinc-600">No tracks found</td></tr>
               )}
             </tbody>
           </table>

@@ -150,14 +150,31 @@ async def get_track(hash: str):
     conn = get_db()
     try:
         row = conn.execute(
-            "SELECT hash, path, title, artist, album, genre, format, duration_seconds, "
-            "dr_score, internal_rating, prism_status, label, year FROM tracks WHERE hash = ?",
+            """SELECT id AS hash, path, filename, title, artist, album_artist, album,
+                      genre, format, bit_depth, sample_rate, bitrate_kbps, duration_seconds,
+                      dr_score, peak_level, rms_level, crest_factor,
+                      internal_rating, embedded_rating, prism_status, prism_fraud_reason,
+                      spectral_cutoff_hz, accuraterip_result,
+                      label, year, composer, lyricist, engineer, mastered_by, mixer, remixed_by,
+                      bpm, initial_key, detected_bpm, detected_key, mood,
+                      musicbrainz_release_group_id, musicbrainz_release_id,
+                      discogs_release_id, is_primary_version, is_shadowed
+               FROM tracks WHERE id = ?""",
             [hash],
         ).fetchone()
         if not row:
             raise HTTPException(status_code=404, detail="Track not found")
-        cols = ["hash", "path", "title", "artist", "album", "genre", "format",
-                "duration_seconds", "dr_score", "internal_rating", "prism_status", "label", "year"]
+        cols = [
+            "hash", "path", "filename", "title", "artist", "album_artist", "album",
+            "genre", "format", "bit_depth", "sample_rate", "bitrate_kbps", "duration_seconds",
+            "dr_score", "peak_level", "rms_level", "crest_factor",
+            "internal_rating", "embedded_rating", "prism_status", "prism_fraud_reason",
+            "spectral_cutoff_hz", "accuraterip_result",
+            "label", "year", "composer", "lyricist", "engineer", "mastered_by", "mixer", "remixed_by",
+            "bpm", "initial_key", "detected_bpm", "detected_key", "mood",
+            "musicbrainz_release_group_id", "musicbrainz_release_id",
+            "discogs_release_id", "is_primary_version", "is_shadowed",
+        ]
         return dict(zip(cols, row))
     finally:
         conn.close()
