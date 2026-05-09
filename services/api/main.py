@@ -302,6 +302,18 @@ async def playback_ws(websocket: WebSocket):
         logger.info(f"WebSocket client disconnected ({len(_ws_clients)} remaining)")
 
 
+# --- Waveform ---
+
+@app.get("/api/waveform/{hash}")
+async def get_waveform(hash: str):
+    waveform_dir = os.getenv("WAVEFORM_DIR", "/data/waveforms")
+    cache_file = os.path.join(waveform_dir, f"{hash}.json")
+    if not os.path.exists(cache_file):
+        raise HTTPException(status_code=404, detail="Waveform not yet computed")
+    with open(cache_file) as f:
+        return json.load(f)
+
+
 # --- Engram ---
 
 @app.post("/api/engram/restore", status_code=202)

@@ -218,6 +218,22 @@ services:
     depends_on: [nats]
     logging: *logging
 
+  # ── Waveform renderer ─────────────────────────────────────────────────────
+
+  waveform:
+    build: ./services/waveform
+    restart: unless-stopped
+    environment:
+      <<: *common-env
+      DATA_DIR: /data/waveforms
+      WAVEFORM_RESOLUTION: "1800"
+      WORKER_POOL_SIZE: "2"
+    volumes:
+      - ${LIBRARY_PATH:-/tmp/phonolith-lib}:/library:ro
+      - phonolith-waveforms:/data/waveforms
+    depends_on: [nats]
+    logging: *logging
+
   # ── API Gateway ────────────────────────────────────────────────────────────
 
   api:
@@ -230,9 +246,11 @@ services:
       LIBRARY_PATH: /library
       PLEX_URL: ${PLEX_URL:-}
       PLEX_TOKEN: ${PLEX_TOKEN:-}
+      WAVEFORM_DIR: /data/waveforms
     volumes:
       - ${LIBRARY_PATH:-/tmp/phonolith-lib}:/library:ro
       - phonolith-data:/data
+      - phonolith-waveforms:/data/waveforms:ro
     depends_on: [nats]
     logging: *logging
 
@@ -250,3 +268,4 @@ volumes:
   phonolith-data:
   nats-data:
   polyphony-keys:
+  phonolith-waveforms:

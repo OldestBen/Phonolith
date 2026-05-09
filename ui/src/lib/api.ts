@@ -134,3 +134,17 @@ export async function restoreSnapshot(snapshotId: string): Promise<void> {
 export function getSnapshots(hash: string): Promise<Snapshot[]> {
   return apiFetch(`/api/engram/snapshots/${encodeURIComponent(hash)}`)
 }
+
+export interface WaveformData {
+  resolution: number
+  sample_rate: number
+  duration_seconds: number
+  peaks: number[]
+  rms: number[]
+  blake3_hash: string
+  path: string
+}
+
+export function getWaveform(hash: string): Promise<WaveformData> {
+  return apiFetch(`/api/waveform/${encodeURIComponent(hash)}`)
+}
