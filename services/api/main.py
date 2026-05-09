@@ -42,7 +42,9 @@ async def lifespan(app: FastAPI):
 
         await nc_client.subscribe("phonolith.playback.>", cb=_on_playback)
         await nc_client.subscribe("phonolith.flux.endpoints", cb=_on_playback)
-        logger.info("Subscribed to phonolith.playback.> and phonolith.flux.endpoints for WebSocket fan-out")
+        await nc_client.subscribe("phonolith.flux.zones",     cb=_on_playback)
+        await nc_client.subscribe("phonolith.health.smart",   cb=_on_smart)
+        logger.info("Subscribed to NATS topics for WebSocket fan-out and health cache")
     except Exception as e:
         logger.warning(f"NATS connection failed (non-fatal): {e}")
     yield
@@ -624,6 +626,68 @@ async def flux_stop(endpoint_id: str):
     return {"status": "stop_sent", "endpoint_id": endpoint_id}
 
 
+# --- AirPlay Zones ---
+
+class ZoneRequest(BaseModel):
+    zone_id:      str
+    name:         str
+    endpoint_ids: list[str]
+
+
+class ZoneStreamRequest(BaseModel):
+    zone_id: str
+    hash:    str
+
+
+@app.post("/api/flux/zones", status_code=202)
+async def create_zone(req: ZoneRequest):
+    """Create or update a named zone grouping multiple AirPlay endpoints."""
+    if not nc_client or not nc_client.is_connected:
+        raise HTTPException(status_code=503, detail="NATS unavailable")
+    await nc_client.publish(
+        "phonolith.flux.zone.create",
+        json.dumps({"zone_id": req.zone_id, "name": req.name, "endpoint_ids": req.endpoint_ids}).encode(),
+    )
+    return {"status": "created", "zone_id": req.zone_id}
+
+
+@app.delete("/api/flux/zones/{zone_id}", status_code=202)
+async def delete_zone(zone_id: str):
+    if not nc_client or not nc_client.is_connected:
+        raise HTTPException(status_code=503, detail="NATS unavailable")
+    await nc_client.publish(
+        "phonolith.flux.zone.delete",
+        json.dumps({"zone_id": zone_id}).encode(),
+    )
+    return {"status": "deleted", "zone_id": zone_id}
+
+
+@app.post("/api/flux/zones/stream", status_code=202)
+async def stream_to_zone(req: ZoneStreamRequest, db: duckdb.DuckDBPyConnection = Depends(get_db)):
+    """Stream a track to all endpoints in a zone simultaneously."""
+    if not nc_client or not nc_client.is_connected:
+        raise HTTPException(status_code=503, detail="NATS unavailable")
+    row = db.execute("SELECT path FROM tracks WHERE id = ?", [req.hash]).fetchone()
+    if not row:
+        raise HTTPException(status_code=404, detail="Track not found")
+    await nc_client.publish(
+        "phonolith.flux.zone.stream",
+        json.dumps({"zone_id": req.zone_id, "path": row[0], "blake3_hash": req.hash}).encode(),
+    )
+    return {"status": "queued", "zone_id": req.zone_id, "hash": req.hash}
+
+
+@app.post("/api/flux/zones/{zone_id}/stop", status_code=202)
+async def stop_zone(zone_id: str):
+    if not nc_client or not nc_client.is_connected:
+        raise HTTPException(status_code=503, detail="NATS unavailable")
+    await nc_client.publish(
+        "phonolith.flux.zone.stop",
+        json.dumps({"zone_id": zone_id}).encode(),
+    )
+    return {"status": "stopped", "zone_id": zone_id}
+
+
 # --- Playback ---
 
 @app.post("/api/playback/play", status_code=202)
@@ -1098,6 +1162,27 @@ async def list_peers(db: duckdb.DuckDBPyConnection = Depends(get_db)):
     ).fetchall()
     cols = ["id", "alias", "wireguard_endpoint", "last_seen_at", "is_trusted", "shared_track_count"]
     return [dict(zip(cols, r)) for r in rows]
+
+
+# --- SMART Health ---
+
+_smart_reports: dict[str, dict] = {}  # device -> latest report
+
+
+async def _on_smart(msg) -> None:
+    """Cache the latest S.M.A.R.T. report for each device."""
+    try:
+        data = json.loads(msg.data.decode())
+        device = data.get("device", "unknown")
+        _smart_reports[device] = data
+    except Exception:
+        pass
+
+
+@app.get("/api/health/smart")
+async def health_smart():
+    """Return the latest cached S.M.A.R.T. report for each monitored drive."""
+    return list(_smart_reports.values())
 
 
 # --- Engram ---

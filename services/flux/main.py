@@ -45,6 +45,9 @@ discovered_endpoints: dict[str, dict] = {}
 # Active streaming sessions: endpoint_id -> asyncio.Task
 active_streams: dict[str, asyncio.Task] = {}
 
+# Zone registry: zone_id -> {name, endpoint_ids: list[str]}
+zones: dict[str, dict] = {}
+
 nc_global = None
 
 
@@ -216,6 +219,103 @@ async def handle_stop(msg):
         logger.info(f"Stopped AirPlay stream to {endpoint_id}")
 
 
+async def handle_zone_create(msg):
+    """Create or update a zone: {zone_id, name, endpoint_ids: [...]}"""
+    try:
+        payload = json.loads(msg.data.decode())
+        zone_id      = payload.get("zone_id", "")
+        name         = payload.get("name", zone_id)
+        endpoint_ids = payload.get("endpoint_ids", [])
+        if not zone_id:
+            return
+        zones[zone_id] = {"zone_id": zone_id, "name": name, "endpoint_ids": endpoint_ids}
+        logger.info(f"Zone '{name}' ({zone_id}) → {len(endpoint_ids)} endpoints: {endpoint_ids}")
+        await _publish_zones()
+    except Exception as e:
+        logger.exception(f"Zone create error: {e}")
+
+
+async def handle_zone_delete(msg):
+    try:
+        payload = json.loads(msg.data.decode())
+        zone_id = payload.get("zone_id", "")
+        if zone_id in zones:
+            del zones[zone_id]
+            logger.info(f"Zone deleted: {zone_id}")
+        await _publish_zones()
+    except Exception as e:
+        logger.exception(f"Zone delete error: {e}")
+
+
+async def handle_zone_stream(msg):
+    """
+    Stream a track to all endpoints in a zone simultaneously.
+    Payload: {zone_id, path, blake3_hash}
+    Each endpoint gets its own independent Task so they can differ in latency.
+    """
+    try:
+        payload     = json.loads(msg.data.decode())
+        zone_id     = payload.get("zone_id", "")
+        path        = payload.get("path", "")
+        blake3_hash = payload.get("blake3_hash", "")
+
+        zone = zones.get(zone_id)
+        if not zone:
+            logger.warning(f"Zone stream to unknown zone: {zone_id}")
+            return
+
+        if not Path(path).exists():
+            logger.error(f"File not found for zone stream: {path}")
+            return
+
+        for ep_id in zone["endpoint_ids"]:
+            endpoint = next(
+                (e for e in discovered_endpoints.values() if e["endpoint_id"] == ep_id), None
+            )
+            if endpoint is None:
+                logger.warning(f"Zone {zone_id}: endpoint {ep_id} not discovered, skipping")
+                continue
+
+            existing = active_streams.pop(ep_id, None)
+            if existing and not existing.done():
+                existing.cancel()
+                try:
+                    await existing
+                except asyncio.CancelledError:
+                    pass
+
+            task = asyncio.create_task(_stream_to_endpoint(endpoint, path, blake3_hash))
+            active_streams[ep_id] = task
+
+        logger.info(f"Zone '{zone['name']}' stream started — {len(zone['endpoint_ids'])} endpoints")
+    except Exception as e:
+        logger.exception(f"Zone stream error: {e}")
+
+
+async def handle_zone_stop(msg):
+    try:
+        payload = json.loads(msg.data.decode())
+        zone_id = payload.get("zone_id", "")
+        zone    = zones.get(zone_id)
+        if not zone:
+            return
+        for ep_id in zone["endpoint_ids"]:
+            task = active_streams.pop(ep_id, None)
+            if task and not task.done():
+                task.cancel()
+        logger.info(f"Zone '{zone['name']}' stopped")
+    except Exception as e:
+        logger.exception(f"Zone stop error: {e}")
+
+
+async def _publish_zones():
+    if nc_global:
+        await nc_global.publish(
+            "phonolith.flux.zones",
+            json.dumps(list(zones.values())).encode(),
+        )
+
+
 async def handle_route_command(msg):
     try:
         payload = json.loads(msg.data.decode())
@@ -265,7 +365,23 @@ async def main():
         "phonolith.flux.route",
         cb=lambda msg: asyncio.create_task(handle_route_command(msg)),
     )
-    logger.info("Subscribed to phonolith.flux.{stream,stop,route}")
+    await nc_global.subscribe(
+        "phonolith.flux.zone.create",
+        cb=lambda msg: asyncio.create_task(handle_zone_create(msg)),
+    )
+    await nc_global.subscribe(
+        "phonolith.flux.zone.delete",
+        cb=lambda msg: asyncio.create_task(handle_zone_delete(msg)),
+    )
+    await nc_global.subscribe(
+        "phonolith.flux.zone.stream",
+        cb=lambda msg: asyncio.create_task(handle_zone_stream(msg)),
+    )
+    await nc_global.subscribe(
+        "phonolith.flux.zone.stop",
+        cb=lambda msg: asyncio.create_task(handle_zone_stop(msg)),
+    )
+    logger.info("Subscribed to phonolith.flux.{stream,stop,route,zone.*}")
 
     zc = Zeroconf()
     ServiceBrowser(zc, ["_airplay._tcp.local.", "_raop._tcp.local."], handlers=[on_service_state_change])

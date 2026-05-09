@@ -164,6 +164,17 @@ ALLOWED_FIX_FIELDS = {
     "bpm", "initial_key", "track_number", "disc_number",
 }
 
+def apply_accuraterip(conn, data: dict):
+    h      = data.get("blake3_hash", "")
+    result = data.get("ar_result")
+    if not h or result not in ("match", "no_match", "unknown"):
+        return
+    conn.execute(
+        "UPDATE tracks SET accuraterip_result = ? WHERE id = ?", [result, h]
+    )
+    logger.debug(f"AccurateRip result {result} written for {h[:12]}…")
+
+
 def apply_polyphony_fix(conn, data: dict):
     """Apply a peer-approved metadata correction directly to the tracks table."""
     h      = data.get("blake3_hash", "")
@@ -191,6 +202,7 @@ HANDLERS = {
     "phonolith.playback.started":       record_play,
     "phonolith.vault.uploaded":         record_vault,
     "phonolith.polyphony.fix.approved": apply_polyphony_fix,
+    "phonolith.analysis.accuraterip":   apply_accuraterip,
 }
 
 async def handle(msg, conn: duckdb.DuckDBPyConnection):

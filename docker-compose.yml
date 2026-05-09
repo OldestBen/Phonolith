@@ -266,6 +266,30 @@ services:
     depends_on: [nats]
     logging: *logging
 
+  accuraterip:
+    build: ./services/accuraterip
+    restart: unless-stopped
+    environment:
+      <<: *common-env
+    volumes:
+      - ${LIBRARY_PATH:-/tmp/phonolith-lib}:/library:ro
+      - phonolith-data:/data
+    depends_on: [nats]
+    logging: *logging
+
+  smart:
+    build: ./services/smart
+    restart: unless-stopped
+    privileged: true                    # required for smartctl raw device access
+    environment:
+      <<: *common-env
+      SMART_POLL_INTERVAL_SECS: "3600"
+      DEVICES: ${SMART_DEVICES:-}       # e.g. /dev/sda,/dev/sdb  — empty = auto-detect
+    volumes:
+      - /dev:/dev:ro
+    depends_on: [nats]
+    logging: *logging
+
   # ── API Gateway ────────────────────────────────────────────────────────────
 
   api:

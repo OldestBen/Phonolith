@@ -470,6 +470,59 @@ export function deleteEQProfile(id: string): Promise<void> {
   return apiFetch(`/api/eq-profiles/${encodeURIComponent(id)}`, { method: 'DELETE' })
 }
 
+// --- AirPlay Zones ---
+
+export interface AirPlayZone {
+  zone_id: string
+  name: string
+  endpoint_ids: string[]
+}
+
+export function createZone(zone: AirPlayZone): Promise<{ status: string }> {
+  return apiFetch('/api/flux/zones', { method: 'POST', body: JSON.stringify(zone) })
+}
+
+export function deleteZone(zoneId: string): Promise<{ status: string }> {
+  return apiFetch(`/api/flux/zones/${encodeURIComponent(zoneId)}`, { method: 'DELETE' })
+}
+
+export function streamToZone(zoneId: string, hash: string): Promise<{ status: string }> {
+  return apiFetch('/api/flux/zones/stream', {
+    method: 'POST',
+    body: JSON.stringify({ zone_id: zoneId, hash }),
+  })
+}
+
+export function stopZone(zoneId: string): Promise<{ status: string }> {
+  return apiFetch(`/api/flux/zones/${encodeURIComponent(zoneId)}/stop`, { method: 'POST' })
+}
+
+// --- SMART Health ---
+
+export interface SmartWarning {
+  attr_id: number
+  attr_name: string
+  raw_value: number
+}
+
+export interface SmartReport {
+  device: string
+  model: string
+  model_family?: string
+  serial?: string
+  capacity_bytes?: number
+  temperature_c?: number
+  power_on_hours?: number
+  smart_passed: boolean
+  status: 'healthy' | 'warning' | 'failed'
+  critical_warnings: SmartWarning[]
+  polled_at: string
+}
+
+export function getSmartReports(): Promise<SmartReport[]> {
+  return apiFetch('/api/health/smart')
+}
+
 // --- Dedup ---
 
 export interface DedupPair {
