@@ -1,5 +1,5 @@
 import { NavLink, Outlet } from 'react-router-dom'
-import { Waves, Music, BarChart3, Cpu, Shield, Settings, SearchCode, GitCompare, Mic2, Trash2 } from 'lucide-react'
+import { Waves, Music, BarChart3, Cpu, Shield, Settings, SearchCode, GitCompare, Mic2, Trash2, ListMusic } from 'lucide-react'
 import clsx from 'clsx'
 import PlayerBar from './PlayerBar'
 
@@ -9,6 +9,7 @@ const navItems = [
   { to: '/versions',   label: 'Versions',   icon: GitCompare,  end: false },
   { to: '/engineers',  label: 'Engineers',  icon: Mic2,        end: false },
   { to: '/analytics',  label: 'Analytics',  icon: BarChart3,   end: false },
+  { to: '/playlists',  label: 'Playlists',  icon: ListMusic,   end: false },
   { to: '/janitor',    label: 'Janitor',    icon: Trash2,      end: false },
   { to: '/hardware',  label: 'Hardware',  icon: Cpu,         end: false },
   { to: '/vault',     label: 'Vault',     icon: Shield,      end: false },

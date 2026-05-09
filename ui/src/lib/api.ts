@@ -290,3 +290,56 @@ export function getJanitorArtworkAudit(minDimension = 500): Promise<ArtworkIssue
 export function getJanitorMissingDisc(): Promise<DiscIssue[]> {
   return apiFetch('/api/janitor/missing-disc')
 }
+
+// --- Smart Playlists ---
+
+export interface PlaylistFilters {
+  min_dr?: number
+  max_dr?: number
+  min_bpm?: number
+  max_bpm?: number
+  key?: string
+  genre?: string
+  min_year?: number
+  max_year?: number
+  min_rating?: number
+  format?: string
+  engineer?: string
+  lossless_only?: boolean
+}
+
+export interface PlaylistTrack {
+  hash: string
+  path: string
+  title?: string
+  artist?: string
+  album?: string
+  year?: number
+  format?: string
+  bit_depth?: number
+  sample_rate?: number
+  dr_score?: number
+  internal_rating?: number
+  bpm?: number
+  key?: string
+}
+
+export function getPlaylistPreview(filters: PlaylistFilters, limit = 200): Promise<PlaylistTrack[]> {
+  const qs = new URLSearchParams()
+  for (const [k, v] of Object.entries(filters)) {
+    if (v !== undefined && v !== '' && v !== false) qs.set(k, String(v))
+  }
+  if (filters.lossless_only) qs.set('lossless_only', 'true')
+  qs.set('limit', String(limit))
+  return apiFetch(`/api/playlists/preview?${qs}`)
+}
+
+export function getPlaylistM3uUrl(filters: PlaylistFilters, name: string): string {
+  const qs = new URLSearchParams()
+  for (const [k, v] of Object.entries(filters)) {
+    if (v !== undefined && v !== '' && v !== false) qs.set(k, String(v))
+  }
+  if (filters.lossless_only) qs.set('lossless_only', 'true')
+  qs.set('name', name)
+  return `/api/playlists/export.m3u?${qs}`
+}

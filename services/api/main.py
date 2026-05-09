@@ -893,6 +893,143 @@ async def janitor_missing_disc(
     return [dict(zip(cols, r)) for r in rows]
 
 
+# --- Smart Playlists ---
+
+@app.get("/api/playlists/preview")
+async def playlist_preview(
+    min_dr:       Optional[int]   = Query(None),
+    max_dr:       Optional[int]   = Query(None),
+    min_bpm:      Optional[float] = Query(None),
+    max_bpm:      Optional[float] = Query(None),
+    key:          Optional[str]   = Query(None, description="Musical key, e.g. C, C#, D …"),
+    genre:        Optional[str]   = Query(None),
+    min_year:     Optional[int]   = Query(None),
+    max_year:     Optional[int]   = Query(None),
+    min_rating:   Optional[float] = Query(None, ge=0, le=5),
+    format:       Optional[str]   = Query(None, description="FLAC, MP3, AAC …"),
+    engineer:     Optional[str]   = Query(None, description="Mastered-by or engineer credit"),
+    lossless_only: bool           = Query(False),
+    limit:        int             = Query(200, ge=1, le=2000),
+    db: duckdb.DuckDBPyConnection = Depends(get_db),
+):
+    """Return tracks matching the given filter set (used for live preview)."""
+    conditions, params = [], []
+
+    if min_dr is not None:
+        conditions.append("dr_score >= ?"); params.append(min_dr)
+    if max_dr is not None:
+        conditions.append("dr_score <= ?"); params.append(max_dr)
+    if min_bpm is not None:
+        conditions.append("COALESCE(detected_bpm, bpm) >= ?"); params.append(min_bpm)
+    if max_bpm is not None:
+        conditions.append("COALESCE(detected_bpm, bpm) <= ?"); params.append(max_bpm)
+    if key is not None:
+        conditions.append("(initial_key = ? OR detected_key = ?)"); params += [key, key]
+    if genre is not None:
+        conditions.append("LOWER(genre) LIKE ?"); params.append(f"%{genre.lower()}%")
+    if min_year is not None:
+        conditions.append("year >= ?"); params.append(min_year)
+    if max_year is not None:
+        conditions.append("year <= ?"); params.append(max_year)
+    if min_rating is not None:
+        conditions.append("internal_rating >= ?"); params.append(min_rating)
+    if format is not None:
+        conditions.append("LOWER(format) = ?"); params.append(format.lower())
+    if engineer is not None:
+        conditions.append(
+            "(LOWER(COALESCE(mastered_by,'')) LIKE ? OR LOWER(COALESCE(engineer,'')) LIKE ?)"
+        ); params += [f"%{engineer.lower()}%", f"%{engineer.lower()}%"]
+    if lossless_only:
+        conditions.append("format IN ('FLAC','WAV','AIFF','DSF','DFF','ALAC','APE','WV')")
+
+    where = ("WHERE " + " AND ".join(conditions)) if conditions else ""
+    rows = db.execute(
+        f"""SELECT id AS hash, path, title, artist, album, year, format,
+                   bit_depth, sample_rate, dr_score, internal_rating,
+                   COALESCE(detected_bpm, bpm) AS bpm,
+                   COALESCE(detected_key, initial_key) AS key
+            FROM tracks {where}
+            ORDER BY COALESCE(internal_rating, 0) DESC, dr_score DESC NULLS LAST
+            LIMIT ?""",
+        params + [limit],
+    ).fetchall()
+    cols = ["hash", "path", "title", "artist", "album", "year", "format",
+            "bit_depth", "sample_rate", "dr_score", "internal_rating", "bpm", "key"]
+    return [dict(zip(cols, r)) for r in rows]
+
+
+from fastapi.responses import PlainTextResponse
+
+@app.get("/api/playlists/export.m3u")
+async def playlist_export_m3u(
+    min_dr:       Optional[int]   = Query(None),
+    max_dr:       Optional[int]   = Query(None),
+    min_bpm:      Optional[float] = Query(None),
+    max_bpm:      Optional[float] = Query(None),
+    key:          Optional[str]   = Query(None),
+    genre:        Optional[str]   = Query(None),
+    min_year:     Optional[int]   = Query(None),
+    max_year:     Optional[int]   = Query(None),
+    min_rating:   Optional[float] = Query(None),
+    format:       Optional[str]   = Query(None),
+    engineer:     Optional[str]   = Query(None),
+    lossless_only: bool           = Query(False),
+    name:         str             = Query("Phonolith Playlist"),
+    db: duckdb.DuckDBPyConnection = Depends(get_db),
+):
+    """Export matching tracks as an M3U playlist."""
+    conditions, params = [], []
+
+    if min_dr is not None:
+        conditions.append("dr_score >= ?"); params.append(min_dr)
+    if max_dr is not None:
+        conditions.append("dr_score <= ?"); params.append(max_dr)
+    if min_bpm is not None:
+        conditions.append("COALESCE(detected_bpm, bpm) >= ?"); params.append(min_bpm)
+    if max_bpm is not None:
+        conditions.append("COALESCE(detected_bpm, bpm) <= ?"); params.append(max_bpm)
+    if key is not None:
+        conditions.append("(initial_key = ? OR detected_key = ?)"); params += [key, key]
+    if genre is not None:
+        conditions.append("LOWER(genre) LIKE ?"); params.append(f"%{genre.lower()}%")
+    if min_year is not None:
+        conditions.append("year >= ?"); params.append(min_year)
+    if max_year is not None:
+        conditions.append("year <= ?"); params.append(max_year)
+    if min_rating is not None:
+        conditions.append("internal_rating >= ?"); params.append(min_rating)
+    if format is not None:
+        conditions.append("LOWER(format) = ?"); params.append(format.lower())
+    if engineer is not None:
+        conditions.append(
+            "(LOWER(COALESCE(mastered_by,'')) LIKE ? OR LOWER(COALESCE(engineer,'')) LIKE ?)"
+        ); params += [f"%{engineer.lower()}%", f"%{engineer.lower()}%"]
+    if lossless_only:
+        conditions.append("format IN ('FLAC','WAV','AIFF','DSF','DFF','ALAC','APE','WV')")
+
+    where = ("WHERE " + " AND ".join(conditions)) if conditions else ""
+    rows = db.execute(
+        f"""SELECT path, title, artist, duration_seconds
+            FROM tracks {where}
+            ORDER BY COALESCE(internal_rating, 0) DESC, dr_score DESC NULLS LAST
+            LIMIT 2000""",
+        params,
+    ).fetchall()
+
+    lines = ["#EXTM3U", f"#PLAYLIST:{name}"]
+    for path, title, artist, duration in rows:
+        dur = int(duration) if duration else -1
+        display = f"{artist} - {title}" if artist and title else (title or path)
+        lines.append(f"#EXTINF:{dur},{display}")
+        lines.append(path)
+
+    return PlainTextResponse(
+        "\n".join(lines) + "\n",
+        media_type="audio/x-mpegurl",
+        headers={"Content-Disposition": f'attachment; filename="{name}.m3u"'},
+    )
+
+
 # --- Engram ---
 
 @app.post("/api/engram/restore", status_code=202)
