@@ -1,9 +1,9 @@
-import asyncio, json, os, sqlite3, struct
+import asyncio, json, os, sqlite3, struct, gzip, io, tempfile
 from contextlib import asynccontextmanager
 from typing import Optional
 from loguru import logger
 from fastapi import FastAPI, HTTPException, Query, Request, WebSocket, WebSocketDisconnect
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel
 import duckdb
 import nats
@@ -1128,3 +1128,384 @@ async def engram_snapshots(hash: str):
         return [dict(zip(cols, r)) for r in rows]
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+# --- Sonic Codex ---
+
+def _build_codex_sqlite(db: duckdb.DuckDBPyConnection) -> bytes:
+    """
+    Produce a gzip-compressed SQLite file containing all library intelligence
+    but no audio data and no absolute filesystem paths.
+    """
+    buf = io.BytesIO()
+    conn = sqlite3.connect(":memory:")
+
+    # ── Tracks (strip path for portability; keep hash as identity) ────────────
+    conn.execute("""
+        CREATE TABLE tracks (
+            id TEXT, filename TEXT, title TEXT, artist TEXT, album_artist TEXT,
+            album TEXT, year INTEGER, track_number INTEGER, disc_number INTEGER,
+            genre TEXT, label TEXT, composer TEXT, lyricist TEXT, engineer TEXT,
+            mixer TEXT, mastered_by TEXT, remixed_by TEXT, bpm REAL,
+            initial_key TEXT, mood TEXT, detected_bpm REAL, detected_key TEXT,
+            format TEXT, bit_depth INTEGER, sample_rate INTEGER,
+            bitrate_kbps INTEGER, channels INTEGER, duration_seconds REAL,
+            dr_score INTEGER, peak_level REAL, rms_level REAL,
+            embedded_rating INTEGER, internal_rating REAL,
+            prism_status TEXT, accuraterip_result TEXT,
+            musicbrainz_track_id TEXT, musicbrainz_release_id TEXT,
+            musicbrainz_release_group_id TEXT, musicbrainz_artist_id TEXT,
+            acoustid TEXT, discogs_release_id TEXT,
+            ingested_at TEXT, last_played_at TEXT
+        )
+    """)
+    rows = db.execute("""
+        SELECT id, filename, title, artist, album_artist, album, year,
+               track_number, disc_number, genre, label, composer, lyricist,
+               engineer, mixer, mastered_by, remixed_by, bpm, initial_key,
+               mood, detected_bpm, detected_key, format, bit_depth,
+               sample_rate, bitrate_kbps, channels, duration_seconds,
+               dr_score, peak_level, rms_level, embedded_rating,
+               internal_rating, prism_status, accuraterip_result,
+               musicbrainz_track_id, musicbrainz_release_id,
+               musicbrainz_release_group_id, musicbrainz_artist_id,
+               acoustid, discogs_release_id, ingested_at, last_played_at
+        FROM tracks
+    """).fetchall()
+    conn.executemany("INSERT INTO tracks VALUES (" + ",".join(["?"] * 43) + ")", rows)
+
+    # ── Albums ────────────────────────────────────────────────────────────────
+    conn.execute("""
+        CREATE TABLE albums (
+            id TEXT, title TEXT, artist TEXT, year INTEGER, label TEXT,
+            total_tracks INTEGER, total_discs INTEGER,
+            artwork_width INTEGER, artwork_height INTEGER,
+            avg_dr_score REAL, musicbrainz_release_group_id TEXT,
+            discogs_release_id TEXT, discogs_market_value REAL
+        )
+    """)
+    arows = db.execute("""
+        SELECT id, title, artist, year, label, total_tracks, total_discs,
+               artwork_width, artwork_height, avg_dr_score,
+               musicbrainz_release_group_id, discogs_release_id, discogs_market_value
+        FROM albums
+    """).fetchall()
+    conn.executemany("INSERT INTO albums VALUES (" + ",".join(["?"] * 13) + ")", arows)
+
+    # ── Play events (scrobble history) ────────────────────────────────────────
+    conn.execute("""
+        CREATE TABLE play_events (
+            id TEXT, blake3_hash TEXT, played_at TEXT,
+            duration_played_secs REAL, completed INTEGER,
+            source TEXT, format_played TEXT
+        )
+    """)
+    prows = db.execute("""
+        SELECT id, blake3_hash, played_at, duration_played_secs,
+               completed::INTEGER, source, format_played
+        FROM play_events
+    """).fetchall()
+    conn.executemany("INSERT INTO play_events VALUES (?,?,?,?,?,?,?)", prows)
+
+    # ── Codex metadata ────────────────────────────────────────────────────────
+    conn.execute("""
+        CREATE TABLE codex_meta (
+            created_at TEXT, track_count INTEGER, play_event_count INTEGER,
+            schema_version TEXT
+        )
+    """)
+    from datetime import datetime, timezone
+    conn.execute("INSERT INTO codex_meta VALUES (?,?,?,?)", [
+        datetime.now(timezone.utc).isoformat(),
+        len(rows), len(prows), "1.0",
+    ])
+
+    conn.commit()
+
+    # Serialise SQLite → in-memory bytes, then gzip
+    for chunk in conn.iterdump():
+        pass  # ensures WAL is flushed
+    conn.backup(sqlite3.connect(buf_path := tempfile.mktemp(suffix=".sqlite")))
+    conn.close()
+    with open(buf_path, "rb") as f:
+        raw = f.read()
+    os.unlink(buf_path)
+
+    gz_buf = io.BytesIO()
+    with gzip.GzipFile(fileobj=gz_buf, mode="wb", compresslevel=9) as gz:
+        gz.write(raw)
+    return gz_buf.getvalue()
+
+
+@app.get("/api/codex/export")
+async def codex_export(db: duckdb.DuckDBPyConnection = Depends(get_db)):
+    """Export the library Sonic Codex as a gzip-compressed SQLite (.codex) file."""
+    data = await asyncio.get_event_loop().run_in_executor(
+        None, _build_codex_sqlite, db
+    )
+    return StreamingResponse(
+        io.BytesIO(data),
+        media_type="application/octet-stream",
+        headers={"Content-Disposition": 'attachment; filename="phonolith.codex"'},
+    )
+
+
+@app.get("/api/codex/stats")
+async def codex_stats(db: duckdb.DuckDBPyConnection = Depends(get_db)):
+    """Return headline numbers that will appear on the Codex export card."""
+    row = db.execute("""
+        SELECT COUNT(*) AS track_count,
+               COUNT(DISTINCT COALESCE(album_artist, artist)) AS artist_count,
+               COUNT(DISTINCT album) AS album_count,
+               SUM(duration_seconds) / 3600.0 AS total_hours,
+               COUNT(CASE WHEN dr_score IS NOT NULL THEN 1 END) AS dr_analyzed,
+               COUNT(CASE WHEN internal_rating IS NOT NULL THEN 1 END) AS rated_count
+        FROM tracks
+    """).fetchone()
+    pe_row = db.execute("SELECT COUNT(*) FROM play_events").fetchone()
+    return {
+        "track_count":    row[0],
+        "artist_count":   row[1],
+        "album_count":    row[2],
+        "total_hours":    round(row[3] or 0, 1),
+        "dr_analyzed":    row[4],
+        "rated_count":    row[5],
+        "play_event_count": pe_row[0],
+    }
+
+
+# --- Cathode (hardware burn-in analytics) ---
+
+@app.get("/api/cathode/summary")
+async def cathode_summary(db: duckdb.DuckDBPyConnection = Depends(get_db)):
+    """Per-endpoint play statistics: total hours, top genre, top format."""
+    rows = db.execute("""
+        SELECT
+            pe.endpoint_id,
+            he.name                                             AS endpoint_name,
+            he.type                                             AS endpoint_type,
+            he.model,
+            COUNT(*)                                            AS play_count,
+            SUM(pe.duration_played_secs) / 3600.0              AS hours_played,
+            -- most common genre on this endpoint
+            (SELECT t2.genre FROM play_events pe2
+             JOIN tracks t2 ON t2.id = pe2.blake3_hash
+             WHERE pe2.endpoint_id = pe.endpoint_id
+               AND t2.genre IS NOT NULL
+             GROUP BY t2.genre ORDER BY COUNT(*) DESC LIMIT 1) AS top_genre,
+            -- most common format
+            (SELECT pe2.format_played FROM play_events pe2
+             WHERE pe2.endpoint_id = pe.endpoint_id
+               AND pe2.format_played IS NOT NULL
+             GROUP BY pe2.format_played ORDER BY COUNT(*) DESC LIMIT 1) AS top_format,
+            MIN(pe.played_at)                                   AS first_use,
+            MAX(pe.played_at)                                   AS last_use
+        FROM play_events pe
+        LEFT JOIN hardware_endpoints he ON he.id = pe.endpoint_id
+        WHERE pe.endpoint_id IS NOT NULL
+        GROUP BY pe.endpoint_id, he.name, he.type, he.model
+        ORDER BY hours_played DESC
+    """).fetchall()
+    cols = ["endpoint_id", "endpoint_name", "endpoint_type", "model",
+            "play_count", "hours_played", "top_genre", "top_format",
+            "first_use", "last_use"]
+    return [dict(zip(cols, r)) for r in rows]
+
+
+@app.get("/api/cathode/endpoint/{endpoint_id}/genres")
+async def cathode_endpoint_genres(
+    endpoint_id: str,
+    limit: int = Query(10, ge=1, le=30),
+    db: duckdb.DuckDBPyConnection = Depends(get_db),
+):
+    """Top genres played on a specific endpoint with hour counts."""
+    rows = db.execute(
+        """SELECT t.genre,
+                  COUNT(*)                              AS play_count,
+                  SUM(pe.duration_played_secs)/3600.0  AS hours
+           FROM play_events pe
+           JOIN tracks t ON t.id = pe.blake3_hash
+           WHERE pe.endpoint_id = ? AND t.genre IS NOT NULL
+           GROUP BY t.genre
+           ORDER BY hours DESC
+           LIMIT ?""",
+        [endpoint_id, limit],
+    ).fetchall()
+    return [{"genre": r[0], "play_count": r[1], "hours": round(r[2] or 0, 2)} for r in rows]
+
+
+@app.get("/api/cathode/endpoint/{endpoint_id}/timeline")
+async def cathode_endpoint_timeline(
+    endpoint_id: str,
+    db: duckdb.DuckDBPyConnection = Depends(get_db),
+):
+    """Monthly play hours for a specific endpoint — used for burn-in chart."""
+    rows = db.execute(
+        """SELECT DATE_TRUNC('month', played_at::TIMESTAMP)::VARCHAR AS month,
+                  COUNT(*)                              AS play_count,
+                  SUM(duration_played_secs)/3600.0     AS hours
+           FROM play_events
+           WHERE endpoint_id = ?
+           GROUP BY DATE_TRUNC('month', played_at::TIMESTAMP)
+           ORDER BY month""",
+        [endpoint_id],
+    ).fetchall()
+    return [{"month": r[0], "play_count": r[1], "hours": round(r[2] or 0, 2)} for r in rows]
+
+
+# --- EQ Profiles ---
+
+class EQProfileRequest(BaseModel):
+    album_id:             Optional[str]  = None
+    blake3_hash:          Optional[str]  = None
+    label:                str
+    peq_json:             Optional[str]  = None   # JSON string of PEQ bands
+    convolution_file_path: Optional[str] = None
+    notes:                Optional[str]  = None
+
+
+@app.get("/api/eq-profiles")
+async def list_eq_profiles(
+    album_id:    Optional[str] = Query(None),
+    blake3_hash: Optional[str] = Query(None),
+    db: duckdb.DuckDBPyConnection = Depends(get_db),
+):
+    if album_id:
+        rows = db.execute(
+            "SELECT id, blake3_hash, album_id, label, peq_json, convolution_file_path, notes, created_at FROM eq_profiles WHERE album_id = ? ORDER BY created_at DESC",
+            [album_id],
+        ).fetchall()
+    elif blake3_hash:
+        rows = db.execute(
+            "SELECT id, blake3_hash, album_id, label, peq_json, convolution_file_path, notes, created_at FROM eq_profiles WHERE blake3_hash = ? ORDER BY created_at DESC",
+            [blake3_hash],
+        ).fetchall()
+    else:
+        rows = db.execute(
+            "SELECT id, blake3_hash, album_id, label, peq_json, convolution_file_path, notes, created_at FROM eq_profiles ORDER BY created_at DESC LIMIT 200"
+        ).fetchall()
+    cols = ["id", "blake3_hash", "album_id", "label", "peq_json",
+            "convolution_file_path", "notes", "created_at"]
+    return [dict(zip(cols, r)) for r in rows]
+
+
+@app.post("/api/eq-profiles", status_code=201)
+async def create_eq_profile(
+    req: EQProfileRequest,
+    db: duckdb.DuckDBPyConnection = Depends(get_db),
+):
+    import uuid
+    from datetime import datetime, timezone
+    new_id = str(uuid.uuid4())
+    # EQ profiles table lives in DuckDB — need write connection
+    wdb = duckdb.connect(DB_PATH)
+    try:
+        wdb.execute(
+            """INSERT INTO eq_profiles
+               (id, blake3_hash, album_id, label, peq_json, convolution_file_path, notes, created_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+            [new_id, req.blake3_hash, req.album_id, req.label,
+             req.peq_json, req.convolution_file_path, req.notes,
+             datetime.now(timezone.utc).isoformat()],
+        )
+    finally:
+        wdb.close()
+    return {"id": new_id}
+
+
+@app.delete("/api/eq-profiles/{profile_id}", status_code=204)
+async def delete_eq_profile(profile_id: str):
+    wdb = duckdb.connect(DB_PATH)
+    try:
+        wdb.execute("DELETE FROM eq_profiles WHERE id = ?", [profile_id])
+    finally:
+        wdb.close()
+
+
+# --- Acoustic Fingerprint Deduplication ---
+
+@app.get("/api/dedup/candidates")
+async def dedup_candidates(
+    similarity_floor: float = Query(0.998, ge=0.9, le=1.0),
+    db: duckdb.DuckDBPyConnection = Depends(get_db),
+):
+    """
+    Find pairs of tracks that are likely acoustically identical based on
+    matching duration and near-identical semantic embeddings.
+    Returns groups keyed by the track with the largest file size (preferred copy).
+    """
+    semantic_db_path = os.getenv("SEMANTIC_DB", "/data/semantic.db")
+    if not os.path.exists(semantic_db_path):
+        return []
+
+    sconn = sqlite3.connect(semantic_db_path)
+    emb_rows = sconn.execute(
+        "SELECT blake3_hash, bpm, spectral_centroid, rms_energy, duration_seconds, vector FROM embeddings"
+    ).fetchall()
+    sconn.close()
+
+    if len(emb_rows) < 2:
+        return []
+
+    # Unpack vectors
+    vectors = {}
+    meta    = {}
+    for row in emb_rows:
+        h = row[0]
+        n = (len(row[5])) // 4
+        vec = list(struct.unpack(f"{n}f", row[5]))
+        vectors[h] = vec
+        meta[h] = {"bpm": row[1], "centroid": row[2], "energy": row[3], "duration": row[4]}
+
+    hashes = list(vectors.keys())
+
+    def cosine(a, b):
+        dot = sum(x * y for x, y in zip(a, b))
+        return dot  # pre-normalised
+
+    # Compare same-duration buckets (within 2s) to limit O(n²)
+    from collections import defaultdict
+    duration_buckets: dict[int, list[str]] = defaultdict(list)
+    for h in hashes:
+        if meta[h]["duration"]:
+            bucket = round(meta[h]["duration"] / 2)
+            duration_buckets[bucket].append(h)
+
+    pairs = []
+    seen = set()
+    for bucket_hashes in duration_buckets.values():
+        for i in range(len(bucket_hashes)):
+            for j in range(i + 1, len(bucket_hashes)):
+                a, b = bucket_hashes[i], bucket_hashes[j]
+                if (a, b) in seen or (b, a) in seen:
+                    continue
+                sim = cosine(vectors[a], vectors[b])
+                if sim >= similarity_floor:
+                    pairs.append((a, b, round(sim, 6)))
+                    seen.add((a, b))
+
+    if not pairs:
+        return []
+
+    # Enrich with track info from DuckDB
+    all_hashes = list({h for p in pairs for h in (p[0], p[1])})
+    placeholders = ",".join(["?"] * len(all_hashes))
+    track_rows = db.execute(
+        f"SELECT id, title, artist, album, format, bit_depth, size_bytes, path FROM tracks WHERE id IN ({placeholders})",
+        all_hashes,
+    ).fetchall()
+    track_info = {r[0]: dict(zip(["id","title","artist","album","format","bit_depth","size_bytes","path"], r)) for r in track_rows}
+
+    results = []
+    for a, b, sim in sorted(pairs, key=lambda x: -x[2]):
+        ta = track_info.get(a, {"id": a})
+        tb = track_info.get(b, {"id": b})
+        # Preferred = larger file (more lossless)
+        preferred, duplicate = (ta, tb) if (ta.get("size_bytes") or 0) >= (tb.get("size_bytes") or 0) else (tb, ta)
+        results.append({
+            "similarity": sim,
+            "preferred":  preferred,
+            "duplicate":  duplicate,
+        })
+
+    return results[:200]

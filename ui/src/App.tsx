@@ -11,6 +11,10 @@ import Engineers from './pages/Engineers'
 import Janitor from './pages/Janitor'
 import Playlists from './pages/Playlists'
 import Polyphony from './pages/Polyphony'
+import Codex from './pages/Codex'
+import Cathode from './pages/Cathode'
+import EQProfiles from './pages/EQProfiles'
+import Dedup from './pages/Dedup'
 
 export default function App() {
   return (
@@ -21,11 +25,15 @@ export default function App() {
           <Route path="search" element={<Search />} />
           <Route path="versions" element={<Versions />} />
           <Route path="engineers" element={<Engineers />} />
-          <Route path="janitor" element={<Janitor />} />
           <Route path="playlists" element={<Playlists />} />
-          <Route path="polyphony" element={<Polyphony />} />
           <Route path="analytics" element={<Analytics />} />
           <Route path="hardware" element={<Hardware />} />
+          <Route path="cathode" element={<Cathode />} />
+          <Route path="eq-profiles" element={<EQProfiles />} />
+          <Route path="dedup" element={<Dedup />} />
+          <Route path="janitor" element={<Janitor />} />
+          <Route path="polyphony" element={<Polyphony />} />
+          <Route path="codex" element={<Codex />} />
           <Route path="vault" element={<Vault />} />
           <Route path="settings" element={<Settings />} />
         </Route>

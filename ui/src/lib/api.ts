@@ -382,3 +382,102 @@ export function decideFix(fixId: string, action: 'approve' | 'reject'): Promise<
 export function getPeers(): Promise<PeerNode[]> {
   return apiFetch('/api/polyphony/peers')
 }
+
+// --- Sonic Codex ---
+
+export interface CodexStats {
+  track_count: number
+  artist_count: number
+  album_count: number
+  total_hours: number
+  dr_analyzed: number
+  rated_count: number
+  play_event_count: number
+}
+
+export function getCodexStats(): Promise<CodexStats> {
+  return apiFetch('/api/codex/stats')
+}
+
+export function getCodexExportUrl(): string {
+  return '/api/codex/export'
+}
+
+// --- Cathode ---
+
+export interface CathodeSummary {
+  endpoint_id: string
+  endpoint_name?: string
+  endpoint_type?: string
+  model?: string
+  play_count: number
+  hours_played: number
+  top_genre?: string
+  top_format?: string
+  first_use?: string
+  last_use?: string
+}
+
+export interface CathodeGenre {
+  genre: string
+  play_count: number
+  hours: number
+}
+
+export interface CathodeTimeline {
+  month: string
+  play_count: number
+  hours: number
+}
+
+export function getCathodeSummary(): Promise<CathodeSummary[]> {
+  return apiFetch('/api/cathode/summary')
+}
+
+export function getCathodeGenres(endpointId: string): Promise<CathodeGenre[]> {
+  return apiFetch(`/api/cathode/endpoint/${encodeURIComponent(endpointId)}/genres`)
+}
+
+export function getCathodeTimeline(endpointId: string): Promise<CathodeTimeline[]> {
+  return apiFetch(`/api/cathode/endpoint/${encodeURIComponent(endpointId)}/timeline`)
+}
+
+// --- EQ Profiles ---
+
+export interface EQProfile {
+  id: string
+  blake3_hash?: string
+  album_id?: string
+  label: string
+  peq_json?: string
+  convolution_file_path?: string
+  notes?: string
+  created_at: string
+}
+
+export function getEQProfiles(albumId?: string, hash?: string): Promise<EQProfile[]> {
+  const qs = new URLSearchParams()
+  if (albumId) qs.set('album_id', albumId)
+  if (hash) qs.set('blake3_hash', hash)
+  return apiFetch(`/api/eq-profiles?${qs}`)
+}
+
+export function createEQProfile(profile: Omit<EQProfile, 'id' | 'created_at'>): Promise<{ id: string }> {
+  return apiFetch('/api/eq-profiles', { method: 'POST', body: JSON.stringify(profile) })
+}
+
+export function deleteEQProfile(id: string): Promise<void> {
+  return apiFetch(`/api/eq-profiles/${encodeURIComponent(id)}`, { method: 'DELETE' })
+}
+
+// --- Dedup ---
+
+export interface DedupPair {
+  similarity: number
+  preferred: { id: string; title?: string; artist?: string; album?: string; format?: string; bit_depth?: number; size_bytes?: number; path?: string }
+  duplicate:  { id: string; title?: string; artist?: string; album?: string; format?: string; bit_depth?: number; size_bytes?: number; path?: string }
+}
+
+export function getDedupCandidates(similarityFloor = 0.998): Promise<DedupPair[]> {
+  return apiFetch(`/api/dedup/candidates?similarity_floor=${similarityFloor}`)
+}
