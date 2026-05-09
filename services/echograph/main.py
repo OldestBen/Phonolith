@@ -216,12 +216,34 @@ async def handle(msg, conn: duckdb.DuckDBPyConnection):
     except Exception as exc:
         logger.error(f"EchoGraph error on {subject}: {exc}")
 
+STREAMS = {
+    "PHONOLITH_HASH":      ["phonolith.hash.>"],
+    "PHONOLITH_METADATA":  ["phonolith.metadata.>"],
+    "PHONOLITH_ANALYSIS":  ["phonolith.analysis.>"],
+    "PHONOLITH_PLAYBACK":  ["phonolith.playback.>"],
+    "PHONOLITH_VAULT":     ["phonolith.vault.>"],
+    "PHONOLITH_POLYPHONY": ["phonolith.polyphony.>"],
+    "PHONOLITH_HEALTH":    ["phonolith.health.>"],
+}
+
+async def ensure_streams(js) -> None:
+    """Create JetStream streams that don't exist yet. Safe to call on every start."""
+    from nats.js.errors import NotFoundError
+    for name, subjects in STREAMS.items():
+        try:
+            await js.find_stream(name)
+        except NotFoundError:
+            await js.add_stream(name=name, subjects=subjects)
+            logger.info(f"Created JetStream stream: {name}")
+
+
 async def main():
     conn = init_db()
     nc = await nats.connect(NATS_URL)
     js = nc.jetstream()
 
     logger.info("EchoGraph starting — analytics engine online (DuckDB writer)")
+    await ensure_streams(js)
 
     for subject, stream in [
         ("phonolith.hash.>",                "PHONOLITH_HASH"),
