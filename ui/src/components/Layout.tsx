@@ -7,6 +7,8 @@ import {
 import clsx from 'clsx'
 import PlayerBar from './PlayerBar'
 import OnboardingBanner from './OnboardingBanner'
+import TaskMonitor from './TaskMonitor'
+import { useTaskEvents } from '../lib/useTaskEvents'
 
 type NavGroup = {
   label: string
@@ -55,6 +57,8 @@ const navGroups: NavGroup[] = [
 ]
 
 export default function Layout() {
+  const { events, clear } = useTaskEvents()
+
   return (
     <div className="flex h-screen w-screen overflow-hidden bg-[#0c0c0e] text-zinc-100">
       {/* Sidebar */}
@@ -112,6 +116,8 @@ export default function Layout() {
         </main>
         <PlayerBar />
       </div>
+
+      <TaskMonitor events={events} onClear={clear} />
     </div>
   )
 }

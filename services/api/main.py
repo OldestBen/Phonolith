@@ -65,6 +65,7 @@ async def lifespan(app: FastAPI):
         await nc_client.subscribe("phonolith.health.smart",   cb=_on_smart)
         await nc_client.subscribe("phonolith.health.nas",     cb=_on_nas)
         await nc_client.subscribe("phonolith.resonancefs.status", cb=_on_resonancefs_status)
+        await nc_client.subscribe("phonolith.tasks.>",        cb=_on_playback)
         logger.info("Subscribed to NATS topics for WebSocket fan-out and health cache")
     except Exception as e:
         logger.warning(f"NATS connection failed (non-fatal): {e}")
@@ -277,7 +278,7 @@ async def analytics_ghost():
     conn = get_db()
     try:
         rows = conn.execute(
-            "SELECT t.hash, t.title, t.artist, t.album, t.dr_score, t.internal_rating, t.last_played_at "
+            "SELECT t.id AS hash, t.title, t.artist, t.album, t.dr_score, t.internal_rating, t.last_played_at "
             "FROM tracks t "
             "WHERE t.internal_rating >= 4 "
             "AND (t.last_played_at IS NULL OR t.last_played_at < NOW() - INTERVAL 365 DAYS) "
@@ -518,12 +519,12 @@ async def list_version_groups():
             """
             SELECT
                 COALESCE(musicbrainz_release_group_id, LOWER(TRIM(album || '|||' || COALESCE(album_artist, artist)))) AS group_key,
-                album,
-                COALESCE(album_artist, artist) AS artist,
+                ANY_VALUE(album) AS album,
+                ANY_VALUE(COALESCE(album_artist, artist)) AS artist,
                 COUNT(DISTINCT id) AS version_count
             FROM tracks
             WHERE album IS NOT NULL
-            GROUP BY group_key, album, artist
+            GROUP BY group_key
             HAVING COUNT(DISTINCT id) > 1
             ORDER BY version_count DESC, artist, album
             LIMIT 200

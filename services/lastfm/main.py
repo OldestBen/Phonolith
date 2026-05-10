@@ -131,11 +131,32 @@ def match(index: dict, artist: str, title: str) -> str | None:
 
 # ── Import logic ──────────────────────────────────────────────────────────────
 
+async def _task(nc, level: str, message: str) -> None:
+    """Publish a structured task event to phonolith.tasks.lastfm for the UI monitor."""
+    try:
+        await nc.publish(
+            "phonolith.tasks.lastfm",
+            json.dumps({
+                "service": "lastfm",
+                "level": level,
+                "message": message,
+                "ts": datetime.now(timezone.utc).isoformat(),
+            }).encode(),
+        )
+    except Exception:
+        pass
+
+
 async def import_scrobbles(nc, api_key: str, username: str, from_ts: int = 0) -> int:
+    await _task(nc, "info", f"Building library index for matching…")
     index = build_index(DB_PATH)
     if not index:
-        logger.warning("Library index is empty — is EchoGraph running and tracks ingested?")
+        msg = "Library index is empty — add a music source so Tremor can scan tracks first"
+        logger.warning(msg)
+        await _task(nc, "warning", msg)
         return from_ts
+
+    await _task(nc, "info", f"Matched against {len(index)} library tracks. Fetching scrobbles…")
 
     page, total_pages = 1, 1
     newest_ts = from_ts
@@ -181,6 +202,8 @@ async def import_scrobbles(nc, api_key: str, username: str, from_ts: int = 0) ->
             if published % BATCH_PUBLISH == 0:
                 await asyncio.sleep(0)
 
+        if total_pages > 1:
+            await _task(nc, "info", f"Page {page}/{total_pages} — {published} plays matched so far")
         logger.info(f"Last.fm import: page {page}/{total_pages} — {published} published so far")
         page += 1
         await asyncio.sleep(0.25)
@@ -191,10 +214,12 @@ async def import_scrobbles(nc, api_key: str, username: str, from_ts: int = 0) ->
             json.dumps({"blake3_hash": h, "lastfm_playcount": count}).encode(),
         )
 
-    logger.info(
-        f"Last.fm import complete: {published} plays published, "
+    summary = (
+        f"Import complete: {published} plays matched, "
         f"{unmatched} unmatched, {len(play_counts)} unique tracks updated"
     )
+    logger.info(summary)
+    await _task(nc, "success", summary)
     return newest_ts
 
 
@@ -245,6 +270,7 @@ async def main():
         from_ts = int(get_state(state, "last_import_ts", "0"))
         label = "initial import" if from_ts == 0 else f"incremental from {datetime.fromtimestamp(from_ts)}"
         logger.info(f"Starting {label}")
+        await _task(nc, "info", f"Starting {label} for @{username}")
 
         newest = await import_scrobbles(nc, api_key, username, from_ts)
         if newest > from_ts:
