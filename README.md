@@ -100,6 +100,9 @@ Tremor detects new files → Bit-Forge computes BLAKE3 hashes → EchoGraph writ
 | **waveform** | Pre-renders peak/RMS waveform arrays for the UI player |
 | **accuraterip** | Verifies rips against the AccurateRip CRC database |
 | **smart** | S.M.A.R.T. drive health monitor (requires privileged container) |
+| **dap** | DAP provisioning — syncs curated subsets to SD cards / USB drives for portable players |
+| **fingerprint** | Acoustic fingerprinting via Chromaprint — detects identical recordings across encodings |
+| **snmp** | SNMP NAS monitor — polls Synology / QNAP for disk health, temperature, RAID status |
 | **api** | FastAPI gateway — REST + WebSocket; reads DuckDB in read-only mode |
 | **ui** | React web interface served via nginx |
 
@@ -153,7 +156,27 @@ docker compose stop smart
 
 # Disable ResonanceFS (if library is locally mounted):
 docker compose stop resonancefs
+
+# Disable acoustic fingerprinting:
+docker compose stop fingerprint
+
+# Disable NAS SNMP monitoring (leave NAS_HOSTS empty or stop service):
+docker compose stop snmp
 ```
+
+### Tailscale remote access (optional)
+
+To enable the Tailscale sidecar (provides secure remote access to the UI and API):
+
+```bash
+# 1. Get an auth key from https://login.tailscale.com/admin/settings/keys
+# 2. Add to .env:  TAILSCALE_AUTHKEY=tskey-auth-...
+# 3. Start with the tailscale profile:
+docker compose --profile tailscale up -d tailscale
+```
+
+Once connected, the Phonolith UI and API are accessible from any Tailscale device
+at `http://phonolith:3000` (or whatever `TAILSCALE_HOSTNAME` you set).
 
 ---
 

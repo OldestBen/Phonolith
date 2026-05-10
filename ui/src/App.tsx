@@ -16,6 +16,8 @@ import Cathode from './pages/Cathode'
 import EQProfiles from './pages/EQProfiles'
 import Dedup from './pages/Dedup'
 import Sources from './pages/Sources'
+import Completeness from './pages/Completeness'
+import DAP from './pages/DAP'
 
 export default function App() {
   return (
@@ -38,6 +40,8 @@ export default function App() {
           <Route path="vault" element={<Vault />} />
           <Route path="settings" element={<Settings />} />
           <Route path="sources" element={<Sources />} />
+          <Route path="completeness" element={<Completeness />} />
+          <Route path="dap" element={<DAP />} />
         </Route>
       </Routes>
     </BrowserRouter>

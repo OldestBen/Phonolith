@@ -383,6 +383,42 @@ export function getPeers(): Promise<PeerNode[]> {
   return apiFetch('/api/polyphony/peers')
 }
 
+export function publishFix(
+  blake3_hash: string,
+  field: string,
+  new_value: string,
+  old_value?: string,
+): Promise<{ status: string }> {
+  return apiFetch('/api/polyphony/fixes/publish', {
+    method: 'POST',
+    body: JSON.stringify({ blake3_hash, field, new_value, old_value }),
+  })
+}
+
+export interface BountyItem {
+  id: string
+  artist: string
+  album: string
+  year?: number
+  notes?: string
+  created_at: string
+}
+
+export function getBountyList(): Promise<BountyItem[]> {
+  return apiFetch('/api/polyphony/bounty')
+}
+
+export function addBountyItem(artist: string, album: string, year?: number, notes?: string): Promise<{ id: string }> {
+  return apiFetch('/api/polyphony/bounty', {
+    method: 'POST',
+    body: JSON.stringify({ artist, album, year, notes }),
+  })
+}
+
+export function removeBountyItem(id: string): Promise<void> {
+  return apiFetch(`/api/polyphony/bounty/${encodeURIComponent(id)}`, { method: 'DELETE' })
+}
+
 // --- Sonic Codex ---
 
 export interface CodexStats {
@@ -567,4 +603,23 @@ export interface DedupPair {
 
 export function getDedupCandidates(similarityFloor = 0.998): Promise<DedupPair[]> {
   return apiFetch(`/api/dedup/candidates?similarity_floor=${similarityFloor}`)
+}
+
+// --- Acoustic Fingerprint ---
+
+export interface FingerprintCompare {
+  hash_a: string
+  hash_b: string
+  duration_a: number
+  duration_b: number
+  bit_error_rate: number
+  verdict: 'identical' | 'same_recording' | 'different'
+}
+
+export function compareFingerprints(hashA: string, hashB: string): Promise<FingerprintCompare> {
+  return apiFetch(`/api/fingerprint/compare?hash_a=${encodeURIComponent(hashA)}&hash_b=${encodeURIComponent(hashB)}`)
+}
+
+export function hasFingerprintFor(hash: string): Promise<{ blake3_hash: string; duration: number; computed_at: string }> {
+  return apiFetch(`/api/fingerprint/${encodeURIComponent(hash)}`)
 }
