@@ -10,8 +10,6 @@ export interface TaskEvent {
   ts: string
 }
 
-const MAX_EVENTS = 100
-
 const LEVEL_ICON: Record<string, React.FC<{ className?: string }>> = {
   info:    Info,
   success: CheckCircle2,

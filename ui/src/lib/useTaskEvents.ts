@@ -10,7 +10,6 @@ function nextId() { return String(++_id) }
 type Listener = (ev: TaskEvent) => void
 const _listeners = new Set<Listener>()
 let _ws: WebSocket | null = null
-let _reconnectTimer: ReturnType<typeof setTimeout> | null = null
 
 function connect() {
   if (_ws && (_ws.readyState === WebSocket.OPEN || _ws.readyState === WebSocket.CONNECTING)) return
@@ -20,7 +19,6 @@ function connect() {
   _ws.onmessage = (ev) => {
     try {
       const data = JSON.parse(ev.data)
-      // Task events have service + level + message + ts
       if (data.service && data.level && data.message) {
         const event: TaskEvent = { id: nextId(), ...data }
         _listeners.forEach(fn => fn(event))
@@ -31,7 +29,7 @@ function connect() {
   }
 
   _ws.onclose = () => {
-    _reconnectTimer = setTimeout(connect, 3000)
+    setTimeout(connect, 3000)
   }
   _ws.onerror = () => _ws?.close()
 }
