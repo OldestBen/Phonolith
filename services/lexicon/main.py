@@ -28,7 +28,7 @@ DATA_DIR       = os.getenv("DATA_DIR", "/data")
 MB_USER_AGENT  = os.getenv("MUSICBRAINZ_USER_AGENT", "Phonolith/0.1.0")
 DISCOGS_TOKEN  = os.getenv("DISCOGS_TOKEN", "")
 
-musicbrainzngs.set_useragent(*MB_USER_AGENT.split(" ", 2))
+musicbrainzngs.set_useragent("Phonolith", "1.0", MB_USER_AGENT)
 musicbrainzngs.set_rate_limit(limit_or_interval=1.0)
 
 # ── MusicBrainz helpers ───────────────────────────────────────────────────────

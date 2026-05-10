@@ -208,8 +208,6 @@ async def main():
         await js.add_stream(
             name="PHONOLITH_METADATA",
             subjects=["phonolith.metadata.>"],
-            retention="workqueue",
-            max_age=86400,
         )
     except Exception:
         pass

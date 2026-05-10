@@ -157,6 +157,7 @@ services:
     environment:
       <<: *common-env
       AIRPLAY_RECEIVER_NAME: ${AIRPLAY_RECEIVER_NAME:-Phonolith}
+      NATS_URL: nats://localhost:4222
     volumes:
       - phonolith-data:/data
     depends_on: [nats]

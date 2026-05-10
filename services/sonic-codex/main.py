@@ -25,14 +25,14 @@ def export_to_codex(output_path: str) -> dict:
     conn = duckdb.connect(DUCKDB_PATH, read_only=True)
     try:
         tracks = conn.execute(
-            "SELECT hash, path, title, artist, album, dr_score, internal_rating "
+            "SELECT id, path, title, artist, album, dr_score, internal_rating "
             "FROM tracks ORDER BY artist, album, title"
         ).fetchall()
         tag_counts = conn.execute(
-            "SELECT hash, COUNT(*) as snapshot_count FROM tag_snapshots GROUP BY hash"
-        ).fetchall() if table_exists(conn, "tag_snapshots") else []
+            "SELECT blake3_hash, COUNT(*) as snapshot_count FROM track_hashes GROUP BY blake3_hash"
+        ).fetchall() if table_exists(conn, "track_hashes") else []
         play_counts = conn.execute(
-            "SELECT hash, COUNT(*) as play_count FROM play_events GROUP BY hash"
+            "SELECT blake3_hash, COUNT(*) as play_count FROM play_events GROUP BY blake3_hash"
         ).fetchall() if table_exists(conn, "play_events") else []
     finally:
         conn.close()

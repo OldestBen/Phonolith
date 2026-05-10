@@ -2,7 +2,7 @@ import asyncio, json, os, sqlite3, struct, gzip, io, tempfile
 from contextlib import asynccontextmanager
 from typing import Optional
 from loguru import logger
-from fastapi import FastAPI, HTTPException, Query, Request, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, HTTPException, Query, Request, WebSocket, WebSocketDisconnect, Depends
 from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel
 import duckdb

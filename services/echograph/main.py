@@ -37,7 +37,11 @@ def init_db() -> duckdb.DuckDBPyConnection:
     conn = duckdb.connect(DB_PATH)
     try:
         with open(SCHEMA) as f:
-            conn.executescript(f.read())
+            sql = f.read()
+        for stmt in sql.split(";"):
+            stmt = stmt.strip()
+            if stmt:
+                conn.execute(stmt)
     except FileNotFoundError:
         logger.warning("schema.sql not found — tables may be missing")
     return conn
@@ -240,13 +244,20 @@ STREAMS = {
 
 async def ensure_streams(js) -> None:
     """Create JetStream streams that don't exist yet. Safe to call on every start."""
-    from nats.js.errors import NotFoundError
     for name, subjects in STREAMS.items():
         try:
-            await js.find_stream(name)
-        except NotFoundError:
             await js.add_stream(name=name, subjects=subjects)
-            logger.info(f"Created JetStream stream: {name}")
+            logger.info(f"Ensured JetStream stream: {name}")
+        except Exception as e:
+            # Stream exists with a different config (e.g. stale workqueue retention).
+            # Delete and recreate so multi-consumer subscriptions work correctly.
+            logger.warning(f"Stream {name} config conflict ({e}), recreating with limits retention")
+            try:
+                await js.delete_stream(name)
+                await js.add_stream(name=name, subjects=subjects)
+                logger.info(f"Recreated JetStream stream: {name}")
+            except Exception as e2:
+                logger.error(f"Failed to ensure stream {name}: {e2}")
 
 
 async def main():

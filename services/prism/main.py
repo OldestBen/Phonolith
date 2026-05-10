@@ -151,8 +151,6 @@ async def main():
         await js.add_stream(
             name="PHONOLITH_ANALYSIS",
             subjects=["phonolith.analysis.>"],
-            retention="workqueue",
-            max_age=86400,
         )
     except Exception:
         pass
