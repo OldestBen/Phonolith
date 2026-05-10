@@ -7,7 +7,7 @@ use chrono::Utc;
 use futures::StreamExt;
 use serde::{Deserialize, Serialize};
 use std::{
-    io::{Cursor, Read},
+    io::Cursor,
     path::Path,
     sync::{
         atomic::{AtomicBool, Ordering},
@@ -114,8 +114,8 @@ fn play_blocking(
     let bits = track.codec_params.bits_per_sample.unwrap_or(16);
     let bitrate_kbps = track
         .codec_params
-        .bit_rate
-        .map(|b| b / 1000)
+        .bits_per_coded_sample
+        .map(|bps| (bps as u32 * sample_rate * channels) / 1000)
         .unwrap_or(0);
     let track_id = track.id;
 
