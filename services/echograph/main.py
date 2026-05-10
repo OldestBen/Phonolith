@@ -38,10 +38,20 @@ def init_db() -> duckdb.DuckDBPyConnection:
     try:
         with open(SCHEMA) as f:
             sql = f.read()
-        for stmt in sql.split(";"):
-            stmt = stmt.strip()
-            if stmt:
-                conn.execute(stmt)
+        # Split on ; that appear before any -- comment on the same line,
+        # so semicolons inside comments don't truncate statements.
+        current: list[str] = []
+        for line in sql.splitlines(keepends=True):
+            stripped = line.strip()
+            comment_pos = stripped.find("--")
+            semi_pos = stripped.find(";")
+            has_real_semi = semi_pos >= 0 and (comment_pos < 0 or semi_pos < comment_pos)
+            current.append(line)
+            if has_real_semi:
+                stmt = "".join(current).strip()
+                if stmt:
+                    conn.execute(stmt)
+                current = []
     except FileNotFoundError:
         logger.warning("schema.sql not found — tables may be missing")
     return conn

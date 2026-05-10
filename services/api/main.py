@@ -114,6 +114,11 @@ async def list_tracks(
 ):
     conn = get_db()
     try:
+        # Verify schema is initialized; return empty list if echograph hasn't run yet
+        try:
+            conn.execute("SELECT 1 FROM tracks LIMIT 0")
+        except Exception:
+            return {"tracks": [], "total": 0, "page": page, "per_page": per_page}
         conditions = []
         params = []
         if artist:

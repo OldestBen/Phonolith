@@ -1,5 +1,5 @@
 -- Phonolith — DuckDB Analytics Schema
--- Owned exclusively by EchoGraph (writer); API reads in read-only mode.
+-- Owned exclusively by EchoGraph (writer). API reads in read-only mode.
 -- Operational state (Engram tag journal, Bit-Forge dedup index) lives in
 -- per-service SQLite files under /data/.
 
