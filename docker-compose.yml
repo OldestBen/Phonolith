@@ -12,19 +12,6 @@ x-rust-volumes: &rust-volumes
   - ${LIBRARY_PATH:-/tmp/phonolith-lib}:/library:ro
   - phonolith-data:/data
 
-# Volumes for services that must also see network-share mounts made by resonancefs.
-# The bind mount with slave propagation lets the host (and resonancefs) expose mounts
-# into these containers without each container needing its own mount capability.
-x-rust-volumes-net: &rust-volumes-net
-  - ${LIBRARY_PATH:-/tmp/phonolith-lib}:/library:ro
-  - phonolith-data:/data
-  - type: bind
-    source: /mnt/phonolith
-    target: /mnt/phonolith
-    bind:
-      propagation: slave
-      create_host_path: true
-
 services:
 
   # ── Infrastructure ─────────────────────────────────────────────────────────
@@ -49,8 +36,8 @@ services:
       <<: *common-env
       LIBRARY_PATH: /library
       RUST_LOG: tremor=info
-    volumes: *rust-volumes-net
-    depends_on: [nats, resonancefs]
+    volumes: *rust-volumes
+    depends_on: [nats]
     logging: *logging
 
   bitforge:
@@ -61,7 +48,7 @@ services:
       LIBRARY_PATH: /library
       WORKER_POOL_SIZE: ${WORKER_POOL_SIZE:-4}
       RUST_LOG: bitforge=info
-    volumes: *rust-volumes-net
+    volumes: *rust-volumes
     depends_on: [nats]
     logging: *logging
 
@@ -74,12 +61,6 @@ services:
       <<: *common-env
     volumes:
       - phonolith-data:/data
-      - type: bind
-        source: /mnt/phonolith
-        target: /mnt/phonolith
-        bind:
-          propagation: shared
-          create_host_path: true
     cap_add: [SYS_ADMIN]
     security_opt: [apparmor:unconfined]
     depends_on: [nats]
@@ -96,12 +77,6 @@ services:
     volumes:
       - ${LIBRARY_PATH:-/tmp/phonolith-lib}:/library
       - phonolith-data:/data
-      - type: bind
-        source: /mnt/phonolith
-        target: /mnt/phonolith
-        bind:
-          propagation: slave
-          create_host_path: true
     depends_on: [nats]
     logging: *logging
 
@@ -126,7 +101,7 @@ services:
       <<: *common-env
       LIBRARY_PATH: /library
       WORKER_POOL_SIZE: ${WORKER_POOL_SIZE:-4}
-    volumes: *rust-volumes-net
+    volumes: *rust-volumes
     depends_on: [nats]
     logging: *logging
 
@@ -137,7 +112,7 @@ services:
       <<: *common-env
       LIBRARY_PATH: /library
       WORKER_POOL_SIZE: ${WORKER_POOL_SIZE:-4}
-    volumes: *rust-volumes-net
+    volumes: *rust-volumes
     depends_on: [nats]
     logging: *logging
 
@@ -283,12 +258,6 @@ services:
     volumes:
       - ${LIBRARY_PATH:-/tmp/phonolith-lib}:/library:ro
       - phonolith-data:/data
-      - type: bind
-        source: /mnt/phonolith
-        target: /mnt/phonolith
-        bind:
-          propagation: slave
-          create_host_path: true
     depends_on: [nats]
     logging: *logging
 
@@ -305,12 +274,6 @@ services:
     volumes:
       - ${LIBRARY_PATH:-/tmp/phonolith-lib}:/library:ro
       - phonolith-proxies:/data/proxies
-      - type: bind
-        source: /mnt/phonolith
-        target: /mnt/phonolith
-        bind:
-          propagation: slave
-          create_host_path: true
     depends_on: [nats]
     logging: *logging
 
@@ -327,12 +290,6 @@ services:
     volumes:
       - ${LIBRARY_PATH:-/tmp/phonolith-lib}:/library:ro
       - phonolith-waveforms:/data/waveforms
-      - type: bind
-        source: /mnt/phonolith
-        target: /mnt/phonolith
-        bind:
-          propagation: slave
-          create_host_path: true
     depends_on: [nats]
     logging: *logging
 
@@ -344,12 +301,6 @@ services:
     volumes:
       - ${LIBRARY_PATH:-/tmp/phonolith-lib}:/library:ro
       - phonolith-data:/data
-      - type: bind
-        source: /mnt/phonolith
-        target: /mnt/phonolith
-        bind:
-          propagation: slave
-          create_host_path: true
     depends_on: [nats]
     logging: *logging
 
@@ -392,12 +343,6 @@ services:
     volumes:
       - ${LIBRARY_PATH:-/tmp/phonolith-lib}:/library:ro
       - phonolith-data:/data
-      - type: bind
-        source: /mnt/phonolith
-        target: /mnt/phonolith
-        bind:
-          propagation: slave
-          create_host_path: true
     depends_on: [nats]
     logging: *logging
 
@@ -455,12 +400,6 @@ services:
       - phonolith-data:/data
       - phonolith-waveforms:/data/waveforms:ro
       - phonolith-proxies:/data/proxies:ro
-      - type: bind
-        source: /mnt/phonolith
-        target: /mnt/phonolith
-        bind:
-          propagation: slave
-          create_host_path: true
     depends_on: [nats]
     logging: *logging
 
