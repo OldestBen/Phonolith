@@ -248,21 +248,24 @@ async fn main() -> Result<()> {
     })
     .await?;
 
-    let consumer = js
-        .get_or_create_consumer(
-            "PHONOLITH_FS",
-            jetstream::consumer::pull::Config {
-                durable_name: Some("bitforge".into()),
-                filter_subjects: vec![
-                    "phonolith.fs.created".into(),
-                    "phonolith.fs.modified".into(),
-                    "phonolith.fs.deleted".into(),
-                    "phonolith.fs.renamed".into(),
-                ],
-                ..Default::default()
-            },
-        )
-        .await?;
+    let fs_stream = js.get_stream("PHONOLITH_FS").await?;
+
+    let consumer: async_nats::jetstream::consumer::Consumer<jetstream::consumer::pull::Config> =
+        fs_stream
+            .get_or_create_consumer(
+                "bitforge",
+                jetstream::consumer::pull::Config {
+                    durable_name: Some("bitforge".into()),
+                    filter_subjects: vec![
+                        "phonolith.fs.created".into(),
+                        "phonolith.fs.modified".into(),
+                        "phonolith.fs.deleted".into(),
+                        "phonolith.fs.renamed".into(),
+                    ],
+                    ..Default::default()
+                },
+            )
+            .await?;
 
     info!("Bit-Forge listening for filesystem events");
 
