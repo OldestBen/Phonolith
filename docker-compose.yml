@@ -319,6 +319,68 @@ services:
     depends_on: [nats]
     logging: *logging
 
+  # ── DAP Provisioning ──────────────────────────────────────────────────────
+
+  dap:
+    build: ./services/dap
+    restart: unless-stopped
+    environment:
+      <<: *common-env
+      LIBRARY_PATH: /library
+    volumes:
+      - ${LIBRARY_PATH:-/tmp/phonolith-lib}:/library:ro
+      - phonolith-data:/data
+      - ${DAP_MOUNT_ROOT:-/tmp/phonolith-dap}:/dap
+    depends_on: [nats]
+    logging: *logging
+
+  # ── Acoustic Fingerprint ───────────────────────────────────────────────────
+
+  fingerprint:
+    build: ./services/fingerprint
+    restart: unless-stopped
+    environment:
+      <<: *common-env
+      LIBRARY_PATH: /library
+    volumes:
+      - ${LIBRARY_PATH:-/tmp/phonolith-lib}:/library:ro
+      - phonolith-data:/data
+    depends_on: [nats]
+    logging: *logging
+
+  # ── SNMP NAS Monitoring ────────────────────────────────────────────────────
+
+  snmp:
+    build: ./services/snmp
+    restart: unless-stopped
+    environment:
+      <<: *common-env
+      NAS_HOSTS: ${NAS_HOSTS:-}
+      SNMP_COMMUNITY: ${SNMP_COMMUNITY:-public}
+      SNMP_POLL_INTERVAL_SECS: ${SNMP_POLL_INTERVAL_SECS:-300}
+    depends_on: [nats]
+    logging: *logging
+
+  # ── Tailscale (optional — enable with: docker compose --profile tailscale up) ──
+
+  tailscale:
+    image: tailscale/tailscale:latest
+    restart: unless-stopped
+    profiles: [tailscale]
+    hostname: ${TAILSCALE_HOSTNAME:-phonolith}
+    environment:
+      TS_AUTHKEY: ${TAILSCALE_AUTHKEY:-}
+      TS_STATE_DIR: /var/lib/tailscale
+      TS_USERSPACE: "false"
+    volumes:
+      - tailscale-state:/var/lib/tailscale
+      - /dev/net/tun:/dev/net/tun
+    cap_add:
+      - NET_ADMIN
+      - NET_RAW
+    network_mode: host
+    logging: *logging
+
   # ── API Gateway ────────────────────────────────────────────────────────────
 
   api:
@@ -359,3 +421,4 @@ volumes:
   polyphony-keys:
   phonolith-waveforms:
   phonolith-proxies:
+  tailscale-state:

@@ -17,6 +17,9 @@ export interface SignalPathState {
   hash_verified: boolean
   state: 'playing' | 'stopped' | 'error'
   timestamp: string
+  // optional playback position emitted by Lucid/Flux on a cadence
+  position_seconds?: number
+  duration_seconds?: number
 }
 
 export function usePlayback() {

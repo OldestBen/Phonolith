@@ -47,6 +47,7 @@ async def lifespan(app: FastAPI):
         await nc_client.subscribe("phonolith.flux.endpoints", cb=_on_playback)
         await nc_client.subscribe("phonolith.flux.zones",     cb=_on_playback)
         await nc_client.subscribe("phonolith.health.smart",   cb=_on_smart)
+        await nc_client.subscribe("phonolith.health.nas",     cb=_on_nas)
         logger.info("Subscribed to NATS topics for WebSocket fan-out and health cache")
     except Exception as e:
         logger.warning(f"NATS connection failed (non-fatal): {e}")
@@ -716,6 +717,17 @@ async def playback_play(req: PlayRequest):
     return {"status": "queued", "hash": req.hash}
 
 
+class SeekRequest(BaseModel):
+    seconds: float
+
+@app.post("/api/playback/seek", status_code=202)
+async def playback_seek(req: SeekRequest):
+    if not nc_client or not nc_client.is_connected:
+        raise HTTPException(status_code=503, detail="NATS unavailable")
+    await nc_client.publish("phonolith.lucid.seek", json.dumps({"seconds": req.seconds}).encode())
+    return {"status": "queued"}
+
+
 @app.websocket("/api/playback/ws")
 async def playback_ws(websocket: WebSocket):
     await websocket.accept()
@@ -1154,6 +1166,86 @@ async def decide_fix(req: FixDecisionRequest):
     payload = {"fix_id": req.fix_id, "action": req.action}
     await nc_client.publish("phonolith.polyphony.fix.decision", json.dumps(payload).encode())
     return {"status": "queued", "fix_id": req.fix_id, "action": req.action}
+
+
+class PublishFixRequest(BaseModel):
+    blake3_hash: str
+    field: str
+    new_value: str
+    old_value: Optional[str] = None
+
+@app.post("/api/polyphony/fixes/publish", status_code=202)
+async def publish_fix(req: PublishFixRequest):
+    """Ask the Polyphony service to sign and broadcast a metadata fix to peers."""
+    if not nc_client or not nc_client.is_connected:
+        raise HTTPException(status_code=503, detail="NATS unavailable")
+    payload = {
+        "blake3_hash": req.blake3_hash,
+        "field": req.field,
+        "new_value": req.new_value,
+        "old_value": req.old_value,
+    }
+    await nc_client.publish("phonolith.polyphony.fix.publish", json.dumps(payload).encode())
+    return {"status": "queued"}
+
+
+class BountyRequest(BaseModel):
+    artist: str
+    album: str
+    year: Optional[int] = None
+    notes: Optional[str] = None
+
+@app.get("/api/polyphony/bounty")
+async def list_bounty():
+    conn = _open_polyphony_db()
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS bounty_list (
+            id TEXT PRIMARY KEY,
+            artist TEXT NOT NULL,
+            album TEXT NOT NULL,
+            year INTEGER,
+            notes TEXT,
+            created_at TEXT NOT NULL
+        )
+    """)
+    conn.commit()
+    rows = conn.execute(
+        "SELECT id, artist, album, year, notes, created_at FROM bounty_list ORDER BY created_at DESC"
+    ).fetchall()
+    conn.close()
+    cols = ["id", "artist", "album", "year", "notes", "created_at"]
+    return [dict(zip(cols, r)) for r in rows]
+
+@app.post("/api/polyphony/bounty", status_code=201)
+async def add_bounty(req: BountyRequest):
+    import uuid as _uuid
+    conn = _open_polyphony_db()
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS bounty_list (
+            id TEXT PRIMARY KEY,
+            artist TEXT NOT NULL,
+            album TEXT NOT NULL,
+            year INTEGER,
+            notes TEXT,
+            created_at TEXT NOT NULL
+        )
+    """)
+    item_id = str(_uuid.uuid4())
+    from datetime import datetime, timezone as _tz
+    conn.execute(
+        "INSERT INTO bounty_list (id, artist, album, year, notes, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+        [item_id, req.artist, req.album, req.year, req.notes, datetime.now(_tz.utc).isoformat()],
+    )
+    conn.commit()
+    conn.close()
+    return {"id": item_id}
+
+@app.delete("/api/polyphony/bounty/{item_id}", status_code=204)
+async def remove_bounty(item_id: str):
+    conn = _open_polyphony_db()
+    conn.execute("DELETE FROM bounty_list WHERE id = ?", [item_id])
+    conn.commit()
+    conn.close()
 
 
 @app.get("/api/polyphony/peers")
@@ -1672,3 +1764,413 @@ async def system_status():
         "source_count": source_count,
         "first_boot": track_count == 0 and source_count == 0,
     }
+
+
+# --- Completeness Matrix ---
+
+@app.get("/api/completeness")
+async def completeness_matrix(
+    limit: int = Query(50, ge=1, le=200),
+    db: duckdb.DuckDBPyConnection = Depends(get_db),
+):
+    """
+    For each artist that has a MusicBrainz artist ID in the library, query MusicBrainz
+    for all official album release groups and diff against what's owned locally.
+    Results are cached for 24 hours to avoid hammering the MB API.
+    """
+    import time, hashlib
+    cache_dir = os.path.join(DATA_DIR, "completeness_cache")
+    os.makedirs(cache_dir, exist_ok=True)
+
+    # Get artists with mb IDs from DuckDB
+    try:
+        rows = db.execute(
+            """SELECT DISTINCT artist, musicbrainz_artist_id
+               FROM tracks
+               WHERE artist IS NOT NULL AND musicbrainz_artist_id IS NOT NULL
+               ORDER BY artist
+               LIMIT ?""",
+            [limit],
+        ).fetchall()
+    except Exception:
+        rows = []
+
+    # Get local album set
+    try:
+        local_albums = db.execute(
+            "SELECT DISTINCT artist, album FROM tracks WHERE artist IS NOT NULL AND album IS NOT NULL"
+        ).fetchall()
+    except Exception:
+        local_albums = []
+
+    owned: dict[str, set] = {}
+    for artist, album in local_albums:
+        owned.setdefault(artist, set()).add(album.lower().strip() if album else '')
+
+    results = []
+    for artist, mb_id in rows:
+        cache_file = os.path.join(cache_dir, f"{mb_id}.json")
+        cached_data = None
+        if os.path.exists(cache_file):
+            age = time.time() - os.path.getmtime(cache_file)
+            if age < 86400:
+                try:
+                    with open(cache_file) as f:
+                        cached_data = json.load(f)
+                except Exception:
+                    pass
+
+        if cached_data is None:
+            try:
+                import urllib.request
+                url = (
+                    f"https://musicbrainz.org/ws/2/release-group"
+                    f"?artist={mb_id}&type=album&fmt=json&limit=100"
+                )
+                req = urllib.request.Request(url, headers={
+                    "User-Agent": os.getenv("MUSICBRAINZ_USER_AGENT", "Phonolith/0.1.0"),
+                })
+                with urllib.request.urlopen(req, timeout=8) as resp:
+                    cached_data = json.loads(resp.read())
+                with open(cache_file, "w") as f:
+                    json.dump(cached_data, f)
+                await asyncio.sleep(1.1)  # respect MB rate limit: 1 req/sec
+            except Exception:
+                cached_data = {"release-groups": []}
+
+        release_groups = cached_data.get("release-groups", [])
+        total_albums = len(release_groups)
+        artist_owned = owned.get(artist, set())
+
+        owned_count = 0
+        missing = []
+        for rg in release_groups:
+            title = rg.get("title", "")
+            if title.lower().strip() in artist_owned:
+                owned_count += 1
+            else:
+                year = (rg.get("first-release-date") or "")[:4]
+                missing.append({"title": title, "year": year or None})
+
+        results.append({
+            "artist": artist,
+            "mb_artist_id": mb_id,
+            "total_albums": total_albums,
+            "owned_albums": owned_count,
+            "missing": missing[:10],  # cap to avoid huge payload
+            "completeness_pct": round(owned_count / total_albums * 100) if total_albums else 100,
+        })
+
+    results.sort(key=lambda r: r["completeness_pct"])
+    return results
+
+
+# --- Ghost Library import ---
+
+GHOST_DIR = os.path.join(DATA_DIR, "ghost_libraries")
+
+@app.get("/api/ghost/libraries")
+async def list_ghost_libraries():
+    os.makedirs(GHOST_DIR, exist_ok=True)
+    libs = []
+    for fname in os.listdir(GHOST_DIR):
+        if not fname.endswith(".db"):
+            continue
+        lib_id = fname[:-3]
+        meta_file = os.path.join(GHOST_DIR, f"{lib_id}.meta.json")
+        meta = {"id": lib_id, "name": lib_id, "imported_at": None, "track_count": 0}
+        if os.path.exists(meta_file):
+            with open(meta_file) as f:
+                meta.update(json.load(f))
+        # quick track count
+        try:
+            gconn = sqlite3.connect(os.path.join(GHOST_DIR, fname))
+            meta["track_count"] = gconn.execute("SELECT COUNT(*) FROM tracks").fetchone()[0]
+            gconn.close()
+        except Exception:
+            pass
+        libs.append(meta)
+    return libs
+
+
+@app.post("/api/ghost/import", status_code=201)
+async def import_ghost_library(request: Request):
+    """
+    Accept a multipart upload of a .codex file (gzip-compressed SQLite),
+    extract it, and register it as a read-only ghost library overlay.
+    """
+    import gzip, uuid as _uuid
+    from datetime import datetime, timezone as _tz
+    from fastapi import UploadFile, File, Form
+
+    form = await request.form()
+    name = form.get("name", "imported")
+    codex_file = form.get("file")
+
+    if codex_file is None:
+        raise HTTPException(status_code=400, detail="No file provided")
+
+    raw = await codex_file.read()
+    try:
+        db_bytes = gzip.decompress(raw)
+    except Exception:
+        db_bytes = raw  # might already be uncompressed SQLite
+
+    os.makedirs(GHOST_DIR, exist_ok=True)
+    lib_id = str(_uuid.uuid4())[:8]
+    db_path = os.path.join(GHOST_DIR, f"{lib_id}.db")
+    with open(db_path, "wb") as f:
+        f.write(db_bytes)
+
+    # Validate it's a usable SQLite with a tracks table
+    try:
+        gconn = sqlite3.connect(db_path)
+        count = gconn.execute("SELECT COUNT(*) FROM tracks").fetchone()[0]
+        gconn.close()
+    except Exception:
+        os.unlink(db_path)
+        raise HTTPException(status_code=422, detail="Not a valid .codex database")
+
+    meta = {
+        "id": lib_id,
+        "name": str(name),
+        "imported_at": datetime.now(_tz.utc).isoformat(),
+        "track_count": count,
+    }
+    with open(os.path.join(GHOST_DIR, f"{lib_id}.meta.json"), "w") as f:
+        json.dump(meta, f)
+
+    return meta
+
+
+@app.get("/api/ghost/{lib_id}/tracks")
+async def ghost_library_tracks(
+    lib_id: str,
+    page: int = Query(1, ge=1),
+    per_page: int = Query(50, ge=1, le=200),
+    search: Optional[str] = None,
+):
+    db_path = os.path.join(GHOST_DIR, f"{lib_id}.db")
+    if not os.path.exists(db_path):
+        raise HTTPException(status_code=404, detail="Ghost library not found")
+    gconn = sqlite3.connect(db_path)
+    gconn.row_factory = sqlite3.Row
+    where = ""
+    params: list = []
+    if search:
+        where = "WHERE (title LIKE ? OR artist LIKE ? OR album LIKE ?)"
+        like = f"%{search}%"
+        params = [like, like, like]
+    offset = (page - 1) * per_page
+    try:
+        total = gconn.execute(f"SELECT COUNT(*) FROM tracks {where}", params).fetchone()[0]
+        rows = gconn.execute(
+            f"SELECT * FROM tracks {where} ORDER BY artist, album, track_number LIMIT ? OFFSET ?",
+            params + [per_page, offset],
+        ).fetchall()
+    except Exception as e:
+        gconn.close()
+        raise HTTPException(status_code=500, detail=str(e))
+    gconn.close()
+    tracks = [dict(r) for r in rows]
+    return {"tracks": tracks, "total": total}
+
+
+@app.delete("/api/ghost/{lib_id}", status_code=204)
+async def delete_ghost_library(lib_id: str):
+    db_path = os.path.join(GHOST_DIR, f"{lib_id}.db")
+    meta_path = os.path.join(GHOST_DIR, f"{lib_id}.meta.json")
+    for p in (db_path, meta_path):
+        if os.path.exists(p):
+            os.unlink(p)
+
+
+# --- DAP Provisioning ---
+
+DAP_DB = os.path.join(DATA_DIR, "dap.db")
+
+def _dap_db() -> sqlite3.Connection:
+    conn = sqlite3.connect(DAP_DB)
+    conn.row_factory = sqlite3.Row
+    return conn
+
+def _ensure_dap_schema(conn):
+    conn.executescript("""
+        CREATE TABLE IF NOT EXISTS dap_profiles (
+            id              TEXT PRIMARY KEY,
+            name            TEXT NOT NULL,
+            target_path     TEXT NOT NULL,
+            storage_limit_gb REAL NOT NULL DEFAULT 32,
+            max_bit_depth   INTEGER,
+            max_sample_rate INTEGER,
+            filter_genre    TEXT,
+            filter_min_rating REAL,
+            filter_lossless_only INTEGER NOT NULL DEFAULT 0,
+            rotation_policy TEXT NOT NULL DEFAULT 'keep',
+            created_at      TEXT NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS dap_sync_log (
+            id          TEXT PRIMARY KEY,
+            profile_id  TEXT NOT NULL,
+            started_at  TEXT NOT NULL,
+            finished_at TEXT,
+            status      TEXT NOT NULL DEFAULT 'running',
+            files_copied INTEGER NOT NULL DEFAULT 0,
+            files_removed INTEGER NOT NULL DEFAULT 0,
+            bytes_used  INTEGER NOT NULL DEFAULT 0,
+            error       TEXT
+        );
+    """)
+    conn.commit()
+
+class DapProfileRequest(BaseModel):
+    name: str
+    target_path: str
+    storage_limit_gb: float = 32.0
+    max_bit_depth: Optional[int] = None
+    max_sample_rate: Optional[int] = None
+    filter_genre: Optional[str] = None
+    filter_min_rating: Optional[float] = None
+    filter_lossless_only: bool = False
+    rotation_policy: str = "keep"
+
+@app.get("/api/dap/profiles")
+async def list_dap_profiles():
+    conn = _dap_db()
+    _ensure_dap_schema(conn)
+    rows = conn.execute("SELECT * FROM dap_profiles ORDER BY created_at DESC").fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+@app.post("/api/dap/profiles", status_code=201)
+async def create_dap_profile(req: DapProfileRequest):
+    import uuid as _uuid
+    from datetime import datetime, timezone as _tz
+    conn = _dap_db()
+    _ensure_dap_schema(conn)
+    profile_id = str(_uuid.uuid4())
+    conn.execute(
+        """INSERT INTO dap_profiles
+           (id, name, target_path, storage_limit_gb, max_bit_depth, max_sample_rate,
+            filter_genre, filter_min_rating, filter_lossless_only, rotation_policy, created_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+        [profile_id, req.name, req.target_path, req.storage_limit_gb,
+         req.max_bit_depth, req.max_sample_rate,
+         req.filter_genre, req.filter_min_rating,
+         1 if req.filter_lossless_only else 0,
+         req.rotation_policy, datetime.now(_tz.utc).isoformat()],
+    )
+    conn.commit()
+    conn.close()
+    return {"id": profile_id}
+
+@app.delete("/api/dap/profiles/{profile_id}", status_code=204)
+async def delete_dap_profile(profile_id: str):
+    conn = _dap_db()
+    conn.execute("DELETE FROM dap_profiles WHERE id = ?", [profile_id])
+    conn.commit()
+    conn.close()
+
+@app.post("/api/dap/profiles/{profile_id}/sync", status_code=202)
+async def trigger_dap_sync(profile_id: str):
+    if not nc_client or not nc_client.is_connected:
+        raise HTTPException(status_code=503, detail="NATS unavailable")
+    await nc_client.publish("phonolith.dap.sync", json.dumps({"profile_id": profile_id}).encode())
+    return {"status": "queued"}
+
+@app.get("/api/dap/profiles/{profile_id}/log")
+async def get_dap_log(profile_id: str, limit: int = Query(10, ge=1, le=50)):
+    conn = _dap_db()
+    _ensure_dap_schema(conn)
+    rows = conn.execute(
+        "SELECT * FROM dap_sync_log WHERE profile_id = ? ORDER BY started_at DESC LIMIT ?",
+        [profile_id, limit],
+    ).fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+
+# --- Acoustic Fingerprint ---
+
+FINGERPRINT_DB = os.path.join(DATA_DIR, "fingerprints.db")
+
+@app.get("/api/fingerprint/compare")
+async def fingerprint_compare(hash_a: str, hash_b: str):
+    """
+    Compare the acoustic fingerprints of two tracks.
+    Returns bit_error_rate (0 = identical, >0.35 = different recording).
+    """
+    if not os.path.exists(FINGERPRINT_DB):
+        raise HTTPException(status_code=503, detail="Fingerprint DB not ready; fingerprint service may not be running")
+
+    fconn = sqlite3.connect(FINGERPRINT_DB)
+    row_a = fconn.execute("SELECT fingerprint, duration FROM fingerprints WHERE blake3_hash = ?", [hash_a]).fetchone()
+    row_b = fconn.execute("SELECT fingerprint, duration FROM fingerprints WHERE blake3_hash = ?", [hash_b]).fetchone()
+    fconn.close()
+
+    if row_a is None:
+        raise HTTPException(status_code=404, detail=f"No fingerprint for {hash_a[:16]}… — run fingerprint service")
+    if row_b is None:
+        raise HTTPException(status_code=404, detail=f"No fingerprint for {hash_b[:16]}… — run fingerprint service")
+
+    fp_a, dur_a = row_a
+    fp_b, dur_b = row_b
+
+    import struct, base64
+
+    def fp_to_ints(s):
+        raw = base64.b64decode(s)
+        n = len(raw) // 4
+        return list(struct.unpack(f"<{n}I", raw[:n * 4]))
+
+    ints_a = fp_to_ints(fp_a)
+    ints_b = fp_to_ints(fp_b)
+    min_len = min(len(ints_a), len(ints_b))
+    if min_len == 0:
+        ber = 1.0
+    else:
+        errors = sum(bin(a ^ b).count("1") for a, b in zip(ints_a[:min_len], ints_b[:min_len]))
+        ber = errors / (min_len * 32)
+
+    verdict = "identical" if ber < 0.1 else "same_recording" if ber < 0.35 else "different"
+
+    return {
+        "hash_a": hash_a,
+        "hash_b": hash_b,
+        "duration_a": dur_a,
+        "duration_b": dur_b,
+        "bit_error_rate": round(ber, 4),
+        "verdict": verdict,
+    }
+
+
+@app.get("/api/fingerprint/{hash}")
+async def get_fingerprint(hash: str):
+    """Check if a fingerprint exists for a track."""
+    if not os.path.exists(FINGERPRINT_DB):
+        raise HTTPException(status_code=503, detail="Fingerprint service not running")
+    fconn = sqlite3.connect(FINGERPRINT_DB)
+    row = fconn.execute(
+        "SELECT duration, computed_at FROM fingerprints WHERE blake3_hash = ?", [hash]
+    ).fetchone()
+    fconn.close()
+    if row is None:
+        raise HTTPException(status_code=404, detail="No fingerprint computed yet")
+    return {"blake3_hash": hash, "duration": row[0], "computed_at": row[1]}
+
+
+# --- NAS Health ---
+
+_nas_reports: dict[str, dict] = {}
+
+async def _on_nas(msg) -> None:
+    try:
+        data = json.loads(msg.data.decode())
+        host = data.get("host", "unknown")
+        _nas_reports[host] = data
+    except Exception:
+        pass
+
+@app.get("/api/health/nas")
+async def health_nas():
+    return list(_nas_reports.values())

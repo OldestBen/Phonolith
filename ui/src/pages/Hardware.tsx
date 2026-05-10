@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState } from 'react'
-import { useMutation, useQueryClient } from '@tanstack/react-query'
-import { Wifi, WifiOff, Radio, Plus, Trash2, Layers, Play, Square } from 'lucide-react'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { Wifi, WifiOff, Radio, Plus, Trash2, Layers, Play, Square, Server, AlertTriangle, CheckCircle2 } from 'lucide-react'
 import clsx from 'clsx'
-import { createZone, deleteZone, stopZone, type AirPlayZone } from '../lib/api'
+import { createZone, deleteZone, stopZone, getSmartReports, type AirPlayZone, type SmartReport, apiFetch } from '../lib/api'
 
 interface AirPlayEndpoint {
   endpoint_id: string
@@ -186,18 +186,115 @@ function ZoneBuilder({ endpoints }: { endpoints: AirPlayEndpoint[] }) {
   )
 }
 
+interface NasReport {
+  host: string
+  vendor?: string
+  model?: string
+  reachable: boolean
+  temperature_c?: number
+  fan_rpm?: number
+  system_status?: string
+  disks: { index: number; model: string; status: string; temperature_c?: number }[]
+  warnings: string[]
+  polled_at: string
+}
+
+function NasCard({ report }: { report: NasReport }) {
+  const healthy = report.reachable && report.warnings.length === 0
+
+  return (
+    <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-4 flex flex-col gap-3">
+      <div className="flex items-start justify-between gap-2">
+        <div className="flex items-center gap-2">
+          <Server className="w-4 h-4 text-zinc-500 flex-shrink-0" />
+          <div>
+            <p className="text-sm font-medium text-zinc-200">{report.model ?? report.host}</p>
+            <p className="text-xs text-zinc-500 font-mono">{report.host}</p>
+          </div>
+        </div>
+        {healthy
+          ? <CheckCircle2 className="w-4 h-4 text-green-500 flex-shrink-0" />
+          : <AlertTriangle className="w-4 h-4 text-amber-400 flex-shrink-0" />}
+      </div>
+
+      <div className="flex flex-wrap gap-1.5 text-[10px] font-mono">
+        {report.temperature_c != null && (
+          <span className="bg-zinc-800 text-zinc-400 px-2 py-0.5 rounded">{report.temperature_c}°C</span>
+        )}
+        {report.fan_rpm != null && (
+          <span className="bg-zinc-800 text-zinc-400 px-2 py-0.5 rounded">{report.fan_rpm} RPM</span>
+        )}
+        {report.system_status && (
+          <span className={`px-2 py-0.5 rounded ${
+            report.system_status === 'Normal' ? 'bg-green-900/30 text-green-400' : 'bg-amber-900/30 text-amber-400'
+          }`}>{report.system_status}</span>
+        )}
+        {report.vendor && (
+          <span className="bg-zinc-800 text-zinc-500 px-2 py-0.5 rounded capitalize">{report.vendor}</span>
+        )}
+      </div>
+
+      {report.disks.length > 0 && (
+        <div className="flex flex-col gap-1">
+          {report.disks.map(d => (
+            <div key={d.index} className="flex items-center justify-between text-xs">
+              <span className="text-zinc-400 truncate max-w-[160px]">{d.model}</span>
+              <div className="flex items-center gap-2">
+                {d.temperature_c != null && (
+                  <span className="font-mono text-zinc-600">{d.temperature_c}°C</span>
+                )}
+                <span className={d.status === 'Normal' ? 'text-green-400' : 'text-amber-400'}>
+                  {d.status}
+                </span>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {report.warnings.length > 0 && (
+        <div className="text-xs text-amber-400 flex flex-col gap-0.5">
+          {report.warnings.map((w, i) => <p key={i}>{w}</p>)}
+        </div>
+      )}
+
+      <p className="text-[9px] text-zinc-700 font-mono">
+        Polled {new Date(report.polled_at).toLocaleString()}
+      </p>
+    </div>
+  )
+}
+
 export default function Hardware() {
   const { endpoints, zones } = useFluxState()
   const [selectMode, setSelectMode] = useState(false)
 
   const { mutate: removeZone } = useMutation({ mutationFn: deleteZone })
 
+  const { data: nasReports = [] } = useQuery<NasReport[]>({
+    queryKey: ['nas-health'],
+    queryFn: () => apiFetch('/api/health/nas'),
+    staleTime: 60_000,
+    refetchInterval: 120_000,
+  })
+
   return (
     <div className="flex flex-col gap-8">
       <div>
         <h1 className="text-lg font-semibold text-zinc-100">Hardware</h1>
-        <p className="text-xs text-zinc-500 mt-1">Live AirPlay endpoints and zone groups. Zones fan a stream to multiple speakers simultaneously.</p>
+        <p className="text-xs text-zinc-500 mt-1">Live AirPlay endpoints, zone groups, and NAS health.</p>
       </div>
+
+      {/* NAS */}
+      {nasReports.length > 0 && (
+        <div>
+          <h2 className="text-sm font-semibold text-zinc-400 mb-1">NAS Appliances</h2>
+          <p className="text-xs text-zinc-600 mb-4">Polled via SNMP · configure NAS_HOSTS in .env</p>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            {nasReports.map(r => <NasCard key={r.host} report={r} />)}
+          </div>
+        </div>
+      )}
 
       {/* Endpoints */}
       <div>

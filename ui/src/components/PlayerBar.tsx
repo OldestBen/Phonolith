@@ -5,6 +5,8 @@ import {
   FileAudio, Cpu, Sliders, Wifi, Speaker,
 } from 'lucide-react'
 import clsx from 'clsx'
+import WaveformViewer from './WaveformViewer'
+import { apiFetch } from '../lib/api'
 
 // ── Chain node ────────────────────────────────────────────────────────────────
 
@@ -63,6 +65,12 @@ function transportColor(transport: string, is_bit_perfect: boolean): NodeColor {
   if (/airplay/i.test(transport)) return 'amber'   // AirPlay = mandatory downsampling
   if (/alsa/i.test(transport)) return 'violet'
   return 'zinc'
+}
+
+function fmtTime(secs: number) {
+  const m = Math.floor(secs / 60)
+  const s = Math.floor(secs % 60)
+  return `${m}:${String(s).padStart(2, '0')}`
 }
 
 // ── PlayerBar ─────────────────────────────────────────────────────────────────
@@ -136,8 +144,35 @@ export default function PlayerBar() {
       </div>
 
       {/* ── Expanded signal chain ─────────────────────────────────────────── */}
+      {expanded && signal.blake3_hash && (
+        <div className="border-t border-zinc-800/60 px-6 pt-3 pb-1">
+          <WaveformViewer
+            hash={signal.blake3_hash}
+            height={48}
+            position={
+              signal.position_seconds != null && signal.duration_seconds
+                ? signal.position_seconds / signal.duration_seconds
+                : undefined
+            }
+            onSeek={async (fraction) => {
+              if (!signal.duration_seconds) return
+              await apiFetch('/api/playback/seek', {
+                method: 'POST',
+                body: JSON.stringify({ seconds: fraction * signal.duration_seconds }),
+              }).catch(() => {})
+            }}
+          />
+          {signal.position_seconds != null && signal.duration_seconds && (
+            <div className="flex justify-between text-[9px] font-mono text-zinc-600 mt-0.5">
+              <span>{fmtTime(signal.position_seconds)}</span>
+              <span>{fmtTime(signal.duration_seconds)}</span>
+            </div>
+          )}
+        </div>
+      )}
+
       {expanded && (
-        <div className="flex flex-wrap items-center gap-2 border-t border-zinc-800/60 px-6 py-3">
+        <div className="flex flex-wrap items-center gap-2 px-6 pb-3">
           <ChainNode
             icon={FileAudio}
             label="Source"

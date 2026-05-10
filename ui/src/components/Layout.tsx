@@ -2,7 +2,7 @@ import { NavLink, Outlet } from 'react-router-dom'
 import {
   Waves, Music, BarChart3, Cpu, Shield, Settings, SearchCode,
   GitCompare, Mic2, Trash2, ListMusic, Network, BookOpen,
-  Headphones, SlidersHorizontal, Copy, FolderOpen,
+  Headphones, SlidersHorizontal, Copy, FolderOpen, PieChart, HardDrive,
 } from 'lucide-react'
 import clsx from 'clsx'
 import PlayerBar from './PlayerBar'
@@ -28,7 +28,8 @@ const navGroups: NavGroup[] = [
     items: [
       { to: '/analytics',   label: 'Analytics',   icon: BarChart3 },
       { to: '/engineers',   label: 'Engineers',   icon: Mic2 },
-      { to: '/cathode',     label: 'Cathode',     icon: Headphones },
+      { to: '/cathode',       label: 'Cathode',       icon: Headphones },
+      { to: '/completeness',  label: 'Completeness',  icon: PieChart },
     ],
   },
   {
@@ -43,6 +44,7 @@ const navGroups: NavGroup[] = [
     label: 'System',
     items: [
       { to: '/sources',   label: 'Sources',     icon: FolderOpen },
+      { to: '/dap',       label: 'DAP',         icon: HardDrive },
       { to: '/hardware',  label: 'Hardware',    icon: Cpu },
       { to: '/polyphony', label: 'Polyphony',   icon: Network },
       { to: '/vault',     label: 'Vault',       icon: Shield },
