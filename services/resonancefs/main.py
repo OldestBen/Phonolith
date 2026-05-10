@@ -110,7 +110,10 @@ async def main():
     nc = await nats.connect(NATS_URL)
     logger.info("Connected to NATS")
 
-    await nc.subscribe("phonolith.resonancefs.mount", cb=lambda msg: asyncio.create_task(handle_mount_request(msg, nc)))
+    async def _cb_mount(msg):
+        await handle_mount_request(msg, nc)
+
+    await nc.subscribe("phonolith.resonancefs.mount", cb=_cb_mount)
     logger.info("Subscribed to phonolith.resonancefs.mount")
 
     await check_mounts_loop(nc)

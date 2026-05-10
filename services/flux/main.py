@@ -353,34 +353,21 @@ async def main():
     nc_global = await nats.connect(NATS_URL)
     logger.info(f"Connected to NATS at {NATS_URL}")
 
-    await nc_global.subscribe(
-        "phonolith.flux.stream",
-        cb=lambda msg: asyncio.create_task(handle_stream(msg)),
-    )
-    await nc_global.subscribe(
-        "phonolith.flux.stop",
-        cb=lambda msg: asyncio.create_task(handle_stop(msg)),
-    )
-    await nc_global.subscribe(
-        "phonolith.flux.route",
-        cb=lambda msg: asyncio.create_task(handle_route_command(msg)),
-    )
-    await nc_global.subscribe(
-        "phonolith.flux.zone.create",
-        cb=lambda msg: asyncio.create_task(handle_zone_create(msg)),
-    )
-    await nc_global.subscribe(
-        "phonolith.flux.zone.delete",
-        cb=lambda msg: asyncio.create_task(handle_zone_delete(msg)),
-    )
-    await nc_global.subscribe(
-        "phonolith.flux.zone.stream",
-        cb=lambda msg: asyncio.create_task(handle_zone_stream(msg)),
-    )
-    await nc_global.subscribe(
-        "phonolith.flux.zone.stop",
-        cb=lambda msg: asyncio.create_task(handle_zone_stop(msg)),
-    )
+    async def _cb_stream(msg): await handle_stream(msg)
+    async def _cb_stop(msg): await handle_stop(msg)
+    async def _cb_route(msg): await handle_route_command(msg)
+    async def _cb_zone_create(msg): await handle_zone_create(msg)
+    async def _cb_zone_delete(msg): await handle_zone_delete(msg)
+    async def _cb_zone_stream(msg): await handle_zone_stream(msg)
+    async def _cb_zone_stop(msg): await handle_zone_stop(msg)
+
+    await nc_global.subscribe("phonolith.flux.stream", cb=_cb_stream)
+    await nc_global.subscribe("phonolith.flux.stop", cb=_cb_stop)
+    await nc_global.subscribe("phonolith.flux.route", cb=_cb_route)
+    await nc_global.subscribe("phonolith.flux.zone.create", cb=_cb_zone_create)
+    await nc_global.subscribe("phonolith.flux.zone.delete", cb=_cb_zone_delete)
+    await nc_global.subscribe("phonolith.flux.zone.stream", cb=_cb_zone_stream)
+    await nc_global.subscribe("phonolith.flux.zone.stop", cb=_cb_zone_stop)
     logger.info("Subscribed to phonolith.flux.{stream,stop,route,zone.*}")
 
     zc = Zeroconf()

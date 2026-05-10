@@ -140,11 +140,8 @@ async def main():
 
     logger.info("Lexicon starting — deep metadata resolver online")
 
-    await js.subscribe(
-        "phonolith.metadata.snapshot",
-        durable="lexicon",
-        cb=lambda m: asyncio.create_task(handle_snapshot(m, js)),
-    )
+    async def _cb_snapshot(m): await handle_snapshot(m, js)
+    await js.subscribe("phonolith.metadata.snapshot", durable="lexicon", cb=_cb_snapshot)
 
     logger.info("Lexicon listening for snapshot events")
     await asyncio.Event().wait()

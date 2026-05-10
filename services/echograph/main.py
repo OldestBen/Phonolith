@@ -266,11 +266,8 @@ async def main():
         ("phonolith.polyphony.fix.approved","PHONOLITH_POLYPHONY"),
     ]:
         durable = "echograph-" + subject.replace(".", "-").replace(">", "all")
-        await js.subscribe(
-            subject,
-            durable=durable,
-            cb=lambda m, c=conn: asyncio.create_task(handle(m, c)),
-        )
+        async def _cb(m, _conn=conn): await handle(m, _conn)
+        await js.subscribe(subject, durable=durable, cb=_cb)
 
     logger.info("EchoGraph listening on all pipeline topics")
     await asyncio.Event().wait()

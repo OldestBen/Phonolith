@@ -214,22 +214,17 @@ async def main():
     except Exception:
         pass
 
-    await js.subscribe(
-        "phonolith.hash.created",
-        durable="engram-created",
-        cb=lambda m: asyncio.create_task(handle_hash_event(m, js, db)),
-    )
-    await js.subscribe(
-        "phonolith.hash.modified",
-        durable="engram-modified",
-        cb=lambda m: asyncio.create_task(handle_hash_event(m, js, db)),
-    )
+    async def _cb_hash(m):
+        await handle_hash_event(m, js, db)
+
+    async def _cb_restore(m):
+        await handle_restore_request(m, db)
+
+    await js.subscribe("phonolith.hash.created", durable="engram-created", cb=_cb_hash)
+    await js.subscribe("phonolith.hash.modified", durable="engram-modified", cb=_cb_hash)
 
     # Restore requests arrive as core NATS (not JetStream) for low latency
-    await nc.subscribe(
-        "phonolith.engram.restore",
-        cb=lambda m: asyncio.create_task(handle_restore_request(m, db)),
-    )
+    await nc.subscribe("phonolith.engram.restore", cb=_cb_restore)
 
     logger.info("Engram ready — tag journal armed, restore endpoint live")
     await asyncio.Event().wait()

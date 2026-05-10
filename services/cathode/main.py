@@ -104,14 +104,14 @@ async def main():
     nc = await nats.connect(NATS_URL)
     logger.info("Connected to NATS")
 
-    await nc.subscribe(
-        "phonolith.playback.started",
-        cb=lambda msg: asyncio.create_task(handle_playback_started(msg, endpoint_stats)),
-    )
-    await nc.subscribe(
-        "phonolith.playback.stopped",
-        cb=lambda msg: asyncio.create_task(handle_playback_stopped(msg, endpoint_stats)),
-    )
+    async def _cb_started(msg):
+        await handle_playback_started(msg, endpoint_stats)
+
+    async def _cb_stopped(msg):
+        await handle_playback_stopped(msg, endpoint_stats)
+
+    await nc.subscribe("phonolith.playback.started", cb=_cb_started)
+    await nc.subscribe("phonolith.playback.stopped", cb=_cb_stopped)
     logger.info("Subscribed to phonolith.playback.started and phonolith.playback.stopped")
 
     # Keep alive

@@ -157,11 +157,8 @@ async def main():
     except Exception:
         pass
 
-    await js.subscribe(
-        "phonolith.hash.created",
-        durable="prism",
-        cb=lambda m: asyncio.create_task(handle_hash_event(m, js, executor)),
-    )
+    async def _cb_hash(m): await handle_hash_event(m, js, executor)
+    await js.subscribe("phonolith.hash.created", durable="prism", cb=_cb_hash)
 
     logger.info("Prism listening for hash events")
     await asyncio.Event().wait()

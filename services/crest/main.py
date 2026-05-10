@@ -115,11 +115,10 @@ async def main():
 
     executor = ProcessPoolExecutor(max_workers=WORKERS)
 
-    await js.subscribe(
-        "phonolith.hash.created",
-        durable="crest",
-        cb=lambda m: asyncio.create_task(handle_hash_event(m, js, executor)),
-    )
+    async def _cb_hash(m):
+        await handle_hash_event(m, js, executor)
+
+    await js.subscribe("phonolith.hash.created", durable="crest", cb=_cb_hash)
 
     logger.info("Crest listening for hash events")
     await asyncio.Event().wait()

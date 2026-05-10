@@ -322,26 +322,26 @@ async def main():
     nc = await nats.connect(NATS_URL)
     logger.info("Connected to NATS")
 
-    await nc.subscribe(
-        "phonolith.polyphony.peer.handshake",
-        cb=lambda msg: asyncio.create_task(handle_handshake(msg, nc, private_key)),
-    )
-    await nc.subscribe(
-        "phonolith.polyphony.diff.request",
-        cb=lambda msg: asyncio.create_task(handle_diff_request(msg, nc)),
-    )
-    await nc.subscribe(
-        "phonolith.polyphony.fix.receive",
-        cb=lambda msg: asyncio.create_task(handle_fix_receive(msg, nc)),
-    )
-    await nc.subscribe(
-        "phonolith.polyphony.fix.publish",
-        cb=lambda msg: asyncio.create_task(handle_fix_publish(msg, nc, private_key)),
-    )
-    await nc.subscribe(
-        "phonolith.polyphony.fix.decision",
-        cb=lambda msg: asyncio.create_task(handle_fix_decision(msg, nc)),
-    )
+    async def _cb_handshake(msg):
+        await handle_handshake(msg, nc, private_key)
+
+    async def _cb_diff(msg):
+        await handle_diff_request(msg, nc)
+
+    async def _cb_fix_receive(msg):
+        await handle_fix_receive(msg, nc)
+
+    async def _cb_fix_publish(msg):
+        await handle_fix_publish(msg, nc, private_key)
+
+    async def _cb_fix_decision(msg):
+        await handle_fix_decision(msg, nc)
+
+    await nc.subscribe("phonolith.polyphony.peer.handshake", cb=_cb_handshake)
+    await nc.subscribe("phonolith.polyphony.diff.request", cb=_cb_diff)
+    await nc.subscribe("phonolith.polyphony.fix.receive", cb=_cb_fix_receive)
+    await nc.subscribe("phonolith.polyphony.fix.publish", cb=_cb_fix_publish)
+    await nc.subscribe("phonolith.polyphony.fix.decision", cb=_cb_fix_decision)
     logger.info("Polyphony ready — listening for handshake, diff, and fix messages")
 
     while True:

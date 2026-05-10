@@ -124,8 +124,11 @@ async def main():
     nc = await nats.connect(NATS_URL)
     logger.info("Connected to NATS")
 
-    await nc.subscribe("phonolith.codex.export", cb=lambda msg: asyncio.create_task(handle_export(msg, nc)))
-    await nc.subscribe("phonolith.codex.import", cb=lambda msg: asyncio.create_task(handle_import(msg, nc)))
+    async def _cb_export(msg): await handle_export(msg, nc)
+    async def _cb_import(msg): await handle_import(msg, nc)
+
+    await nc.subscribe("phonolith.codex.export", cb=_cb_export)
+    await nc.subscribe("phonolith.codex.import", cb=_cb_import)
     logger.info("Sonic Codex ready — listening for export/import commands")
 
     while True:

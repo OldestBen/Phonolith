@@ -240,14 +240,14 @@ async def main():
     nc = await nats.connect(NATS_URL)
     logger.info("Connected to NATS")
 
-    await nc.subscribe(
-        "phonolith.hash.created",
-        cb=lambda m: asyncio.create_task(handle_hash_created(m, nc, db)),
-    )
-    await nc.subscribe(
-        "phonolith.accuraterip.verify",
-        cb=lambda m: asyncio.create_task(handle_verify_request(m, nc, db)),
-    )
+    async def _cb_hash_created(m):
+        await handle_hash_created(m, nc, db)
+
+    async def _cb_verify(m):
+        await handle_verify_request(m, nc, db)
+
+    await nc.subscribe("phonolith.hash.created", cb=_cb_hash_created)
+    await nc.subscribe("phonolith.accuraterip.verify", cb=_cb_verify)
 
     logger.info("AccurateRip service ready — computing CRC32 v1 for new lossless tracks")
     await asyncio.Event().wait()

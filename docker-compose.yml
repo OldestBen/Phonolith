@@ -147,9 +147,6 @@ services:
       LIBRARY_PATH: /library
       RUST_LOG: lucid=info
     volumes: *rust-volumes
-    devices:
-      - /dev/snd:/dev/snd
-    group_add: [audio]
     depends_on: [nats]
     logging: *logging
 
