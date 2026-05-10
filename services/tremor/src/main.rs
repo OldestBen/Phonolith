@@ -184,8 +184,9 @@ async fn main() -> Result<()> {
 
     {
         let reload_tx = Arc::clone(&reload_tx);
+        let client_sub = client.clone();
         tokio::spawn(async move {
-            if let Ok(mut sub) = client.subscribe("phonolith.config.sources").await {
+            if let Ok(mut sub) = client_sub.subscribe("phonolith.config.sources").await {
                 use futures::StreamExt;
                 while let Some(_msg) = sub.next().await {
                     info!("Source config update received — reloading watchers");
