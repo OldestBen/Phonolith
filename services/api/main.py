@@ -1,4 +1,4 @@
-import asyncio, json, os, sqlite3, struct, gzip, io, tempfile
+import asyncio, json, os, sqlite3, struct, gzip, io, tempfile, time
 from contextlib import asynccontextmanager
 from typing import Optional
 from loguru import logger
@@ -61,7 +61,14 @@ app = FastAPI(title="Phonolith API", version="0.1.0", lifespan=lifespan)
 
 
 def get_db():
-    return duckdb.connect(DB_PATH, read_only=True)
+    """Open a read-only DuckDB connection, retrying briefly if echograph is mid-write."""
+    for attempt in range(6):
+        try:
+            return duckdb.connect(DB_PATH, read_only=True)
+        except Exception:
+            if attempt == 5:
+                raise
+            time.sleep(0.1 * (attempt + 1))  # 100ms, 200ms, 300ms, 400ms, 500ms
 
 
 def get_engram_db():

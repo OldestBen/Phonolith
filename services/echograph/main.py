@@ -33,7 +33,10 @@ SCHEMA   = "/app/schema.sql"
 
 # ── DB init ───────────────────────────────────────────────────────────────────
 
-def init_db() -> duckdb.DuckDBPyConnection:
+_db_lock = asyncio.Lock()
+
+def init_db() -> None:
+    """Create schema via a short-lived write connection, then close it."""
     conn = duckdb.connect(DB_PATH)
     try:
         with open(SCHEMA) as f:
@@ -54,7 +57,18 @@ def init_db() -> duckdb.DuckDBPyConnection:
                 current = []
     except FileNotFoundError:
         logger.warning("schema.sql not found — tables may be missing")
-    return conn
+    finally:
+        conn.close()
+
+
+def _run_write(handler, data: dict) -> None:
+    """Open a write connection, run handler, commit, and close immediately."""
+    conn = duckdb.connect(DB_PATH)
+    try:
+        handler(conn, data)
+        conn.commit()
+    finally:
+        conn.close()
 
 # ── Event handlers ────────────────────────────────────────────────────────────
 
@@ -231,14 +245,17 @@ HANDLERS = {
     "phonolith.analysis.accuraterip":   apply_accuraterip,
 }
 
-async def handle(msg, conn: duckdb.DuckDBPyConnection):
+async def handle(msg):
     subject = msg.subject
     await msg.ack()
     try:
         data = json.loads(msg.data)
         handler = HANDLERS.get(subject)
         if handler:
-            await asyncio.get_event_loop().run_in_executor(None, handler, conn, data)
+            async with _db_lock:
+                await asyncio.get_event_loop().run_in_executor(
+                    None, _run_write, handler, data
+                )
     except Exception as exc:
         logger.error(f"EchoGraph error on {subject}: {exc}")
 
@@ -271,7 +288,7 @@ async def ensure_streams(js) -> None:
 
 
 async def main():
-    conn = init_db()
+    init_db()
     nc = await nats.connect(NATS_URL)
     js = nc.jetstream()
 
@@ -287,7 +304,7 @@ async def main():
         ("phonolith.polyphony.fix.approved","PHONOLITH_POLYPHONY"),
     ]:
         durable = "echograph-" + subject.replace(".", "-").replace(">", "all")
-        async def _cb(m, _conn=conn): await handle(m, _conn)
+        async def _cb(m): await handle(m)
         await js.subscribe(subject, durable=durable, cb=_cb)
 
     logger.info("EchoGraph listening on all pipeline topics")
