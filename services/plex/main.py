@@ -30,6 +30,16 @@ PLEX_URL       = os.getenv("PLEX_URL", "").rstrip("/")
 PLEX_TOKEN     = os.getenv("PLEX_TOKEN", "")
 SYNC_INTERVAL  = int(os.getenv("PLEX_SYNC_INTERVAL_HOURS", "1")) * 3600
 
+async def _task(nc, level: str, message: str) -> None:
+    try:
+        await nc.publish(
+            "phonolith.tasks.plex",
+            json.dumps({"service": "plex", "level": level, "message": message,
+                        "ts": datetime.now(timezone.utc).isoformat()}).encode(),
+        )
+    except Exception:
+        pass
+
 HEADERS = {
     "X-Plex-Token": PLEX_TOKEN,
     "Accept": "application/json",
@@ -146,16 +156,20 @@ async def sync(nc, state: sqlite3.Connection) -> None:
     sections  = get_music_sections()
     if not sections:
         logger.warning("No music library sections found in Plex")
+        await _task(nc, "warning", "No music library sections found in Plex")
         return
 
+    await _task(nc, "info", f"Syncing {len(sections)} Plex section(s)…")
     path_idx, title_idx = build_index(DB_PATH)
     now = int(datetime.now(timezone.utc).timestamp())
 
     matched = 0
     for section in sections:
-        key = section["key"]
+        key    = section["key"]
         tracks = get_all_tracks(key)
-        logger.info(f"Plex section '{section.get('title')}': {len(tracks)} tracks")
+        title  = section.get("title", key)
+        logger.info(f"Plex section '{title}': {len(tracks)} tracks")
+        await _task(nc, "info", f"Section '{title}': {len(tracks)} tracks found")
 
         for t in tracks:
             h = resolve_hash(path_idx, title_idx, t)
@@ -163,41 +177,31 @@ async def sync(nc, state: sqlite3.Connection) -> None:
                 continue
 
             matched += 1
-            view_count  = t.get("viewCount", 0)
-            last_viewed = t.get("lastViewedAt")  # unix timestamp
-            plex_rating = t.get("userRating")    # 0-10 Plex scale → 0-5 stars
+            last_viewed = t.get("lastViewedAt")
+            plex_rating = t.get("userRating")
 
-            # Publish rating update
             meta: dict = {"blake3_hash": h}
             if plex_rating is not None:
-                meta["plex_rating"] = round(plex_rating / 2, 1)   # 0–5
+                meta["plex_rating"] = round(plex_rating / 2, 1)
             if meta.keys() - {"blake3_hash"}:
-                await nc.publish(
-                    "phonolith.metadata.enriched",
-                    json.dumps(meta).encode(),
-                )
+                await nc.publish("phonolith.metadata.enriched", json.dumps(meta).encode())
 
-            # Publish a single play event for the last played date
-            # (avoid re-importing plays already imported)
             if last_viewed and last_viewed > last_sync:
                 event = {
                     "blake3_hash": h,
-                    "timestamp": datetime.fromtimestamp(
-                        last_viewed, tz=timezone.utc
-                    ).isoformat(),
+                    "timestamp": datetime.fromtimestamp(last_viewed, tz=timezone.utc).isoformat(),
                     "source": "plex",
                     "endpoint_id": None,
                     "format": None,
                 }
-                await nc.publish(
-                    "phonolith.playback.started",
-                    json.dumps(event).encode(),
-                )
+                await nc.publish("phonolith.playback.started", json.dumps(event).encode())
 
-            await asyncio.sleep(0)   # yield frequently
+            await asyncio.sleep(0)
 
     set_state(state, "last_sync_ts", str(now))
-    logger.info(f"Plex sync complete: {matched} tracks matched across {len(sections)} section(s)")
+    summary = f"Plex sync complete: {matched} tracks matched across {len(sections)} section(s)"
+    logger.info(summary)
+    await _task(nc, "success", summary)
 
 
 # ── Main ──────────────────────────────────────────────────────────────────────

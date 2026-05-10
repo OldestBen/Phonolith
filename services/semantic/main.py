@@ -175,6 +175,15 @@ async def process(path: str, blake3_hash: str, pool: ProcessPoolExecutor, conn: 
     }
     await nc.publish("phonolith.analysis.semantic", json.dumps(event).encode())
 
+    from datetime import datetime as _dt, timezone as _tz
+    key_name = ['C','C#','D','D#','E','F','F#','G','G#','A','A#','B'][feats["key_index"]]
+    await nc.publish(
+        "phonolith.tasks.semantic",
+        json.dumps({"service": "semantic", "level": "info",
+                    "message": f"Embedded: {Path(path).name} (BPM {feats['bpm']:.0f}, key {key_name})",
+                    "ts": _dt.now(_tz.utc).isoformat()}).encode(),
+    )
+
 
 # ── Main ─────────────────────────────────────────────────────────────────────
 

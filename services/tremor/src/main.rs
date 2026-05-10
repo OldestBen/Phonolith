@@ -42,6 +42,18 @@ struct FsEvent {
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
+async fn publish_task(nc: &async_nats::Client, level: &str, message: &str) {
+    let ts = chrono::Utc::now().to_rfc3339();
+    if let Ok(payload) = serde_json::to_vec(&serde_json::json!({
+        "service": "tremor",
+        "level": level,
+        "message": message,
+        "ts": ts,
+    })) {
+        nc.publish("phonolith.tasks.tremor", payload.into()).await.ok();
+    }
+}
+
 fn is_audio(path: &str) -> bool {
     let lower = path.to_lowercase();
     AUDIO_EXTENSIONS.iter().any(|ext| lower.ends_with(&format!(".{ext}")))
@@ -195,6 +207,18 @@ async fn main() -> Result<()> {
                         if let Err(e) = js.publish(subject.clone(), payload.into()).await {
                             error!("Failed to publish {subject}: {e}");
                         } else {
+                            let filename = std::path::Path::new(&ev.path)
+                                .file_name()
+                                .map(|n| n.to_string_lossy().to_string())
+                                .unwrap_or_else(|| ev.path.clone());
+                            let msg = match ev.event_type.as_str() {
+                                "created"  => format!("New file: {filename}"),
+                                "modified" => format!("Modified: {filename}"),
+                                "deleted"  => format!("Removed: {filename}"),
+                                "renamed"  => format!("Renamed: {filename}"),
+                                other      => format!("{other}: {filename}"),
+                            };
+                            publish_task(&client, "info", &msg).await;
                             info!("▶ {} → {}", ev.event_type, ev.path);
                         }
                     }

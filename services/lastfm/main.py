@@ -148,20 +148,16 @@ async def _task(nc, level: str, message: str) -> None:
 
 
 async def import_scrobbles(nc, api_key: str, username: str, from_ts: int = 0) -> int:
-    await _task(nc, "info", f"Building library index for matching…")
     index = build_index(DB_PATH)
-    if not index:
-        msg = "Library index is empty — add a music source so Tremor can scan tracks first"
-        logger.warning(msg)
-        await _task(nc, "warning", msg)
-        return from_ts
-
-    await _task(nc, "info", f"Matched against {len(index)} library tracks. Fetching scrobbles…")
+    if index:
+        await _task(nc, "info", f"Library index ready ({len(index)} tracks). Fetching scrobbles…")
+    else:
+        await _task(nc, "info", "No local library yet — importing all scrobbles unmatched. They will link automatically once music is scanned.")
 
     page, total_pages = 1, 1
     newest_ts = from_ts
-    published = 0
-    unmatched = 0
+    stored = 0
+    matched = 0
     play_counts: dict[str, int] = {}
 
     while page <= total_pages:
@@ -177,34 +173,44 @@ async def import_scrobbles(nc, api_key: str, username: str, from_ts: int = 0) ->
 
             artist = t.get("artist", {}).get("#text", "")
             title  = t.get("name", "")
+            album  = t.get("album", {}).get("#text") or None
             ts     = int(t["date"].get("uts", 0))
 
             if ts > newest_ts:
                 newest_ts = ts
 
-            h = match(index, artist, title)
-            if not h:
-                unmatched += 1
-                continue
+            h = match(index, artist, title) if index else None
 
-            play_counts[h] = play_counts.get(h, 0) + 1
-
-            event = {
-                "blake3_hash": h,
+            # Always store the raw scrobble
+            scrobble = {
+                "artist": artist,
+                "title": title,
+                "album": album,
                 "timestamp": datetime.fromtimestamp(ts, tz=timezone.utc).isoformat(),
-                "source": "lastfm_import",
-                "endpoint_id": None,
-                "format": None,
+                "blake3_hash": h,
             }
-            await nc.publish("phonolith.playback.started", json.dumps(event).encode())
-            published += 1
+            await nc.publish("phonolith.lastfm.scrobble", json.dumps(scrobble).encode())
+            stored += 1
 
-            if published % BATCH_PUBLISH == 0:
+            # Also record as a playback event when we have a local match
+            if h:
+                play_counts[h] = play_counts.get(h, 0) + 1
+                event = {
+                    "blake3_hash": h,
+                    "timestamp": scrobble["timestamp"],
+                    "source": "lastfm_import",
+                    "endpoint_id": None,
+                    "format": None,
+                }
+                await nc.publish("phonolith.playback.started", json.dumps(event).encode())
+                matched += 1
+
+            if stored % BATCH_PUBLISH == 0:
                 await asyncio.sleep(0)
 
         if total_pages > 1:
-            await _task(nc, "info", f"Page {page}/{total_pages} — {published} plays matched so far")
-        logger.info(f"Last.fm import: page {page}/{total_pages} — {published} published so far")
+            await _task(nc, "info", f"Page {page}/{total_pages} — {stored} scrobbles stored, {matched} matched to library")
+        logger.info(f"Last.fm import: page {page}/{total_pages} — {stored} stored, {matched} matched")
         page += 1
         await asyncio.sleep(0.25)
 
@@ -215,8 +221,8 @@ async def import_scrobbles(nc, api_key: str, username: str, from_ts: int = 0) ->
         )
 
     summary = (
-        f"Import complete: {published} plays matched, "
-        f"{unmatched} unmatched, {len(play_counts)} unique tracks updated"
+        f"Import complete: {stored} scrobbles saved"
+        + (f", {matched} matched to local library ({len(play_counts)} unique tracks)" if matched else "")
     )
     logger.info(summary)
     await _task(nc, "success", summary)

@@ -146,6 +146,25 @@ CREATE TABLE IF NOT EXISTS play_events (
     bitrate_played         INTEGER
 );
 
+-- ── Last.fm raw scrobble store ───────────────────────────────────────────────
+-- All scrobbles imported from Last.fm, matched or not.
+-- blake3_hash is NULL when no local file matches the scrobble.
+
+CREATE TABLE IF NOT EXISTS lastfm_scrobbles (
+    id           VARCHAR PRIMARY KEY,
+    artist       VARCHAR NOT NULL,
+    title        VARCHAR NOT NULL,
+    album        VARCHAR,
+    scrobbled_at TIMESTAMPTZ NOT NULL,
+    blake3_hash  VARCHAR,
+    imported_at  TIMESTAMPTZ NOT NULL,
+    UNIQUE (artist, title, scrobbled_at)
+);
+
+CREATE INDEX IF NOT EXISTS idx_scrobbles_artist ON lastfm_scrobbles(artist);
+CREATE INDEX IF NOT EXISTS idx_scrobbles_time   ON lastfm_scrobbles(scrobbled_at);
+CREATE INDEX IF NOT EXISTS idx_scrobbles_hash   ON lastfm_scrobbles(blake3_hash);
+
 -- ── Cathode: hardware endpoints ──────────────────────────────────────────────
 
 CREATE TABLE IF NOT EXISTS hardware_endpoints (

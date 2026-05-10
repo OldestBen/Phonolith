@@ -30,6 +30,17 @@ from loguru import logger
 import nats
 
 NATS_URL     = os.getenv("NATS_URL", "nats://localhost:4222")
+
+async def _task(nc, level: str, message: str) -> None:
+    try:
+        from datetime import datetime, timezone
+        await nc.publish(
+            "phonolith.tasks.prism",
+            json.dumps({"service": "prism", "level": level, "message": message,
+                        "ts": datetime.now(timezone.utc).isoformat()}).encode(),
+        )
+    except Exception:
+        pass
 DATA_DIR     = os.getenv("DATA_DIR", "/data")
 WORKERS      = int(os.getenv("WORKER_POOL_SIZE", "4"))
 SPEC_DIR     = os.path.join(DATA_DIR, "spectrograms")
@@ -103,7 +114,7 @@ def analyse_file(path: str, declared_sample_rate: int) -> dict:
 
 # ── Message handler ───────────────────────────────────────────────────────────
 
-async def handle_hash_event(msg, js, executor: ProcessPoolExecutor):
+async def handle_hash_event(msg, js, nc, executor: ProcessPoolExecutor):
     await msg.ack()
     try:
         data = json.loads(msg.data)
@@ -112,8 +123,7 @@ async def handle_hash_event(msg, js, executor: ProcessPoolExecutor):
         if not path or not blake3_hash:
             return
 
-        # Infer declared sample rate from mutagen (best effort)
-        declared_sr = 96_000  # conservative default
+        declared_sr = 96_000
         try:
             import mutagen
             audio = mutagen.File(path, easy=False)
@@ -134,7 +144,16 @@ async def handle_hash_event(msg, js, executor: ProcessPoolExecutor):
             **result,
         }
         await js.publish("phonolith.analysis.prism", json.dumps(event).encode())
-        logger.info(f"Prism: {Path(path).name} → {result['status']}")
+
+        name = Path(path).name
+        status = result["status"]
+        if status == "suspect":
+            await _task(nc, "warning", f"Suspect upscale: {name} — {result.get('fraud_reason', '')}")
+        elif status == "error":
+            await _task(nc, "error", f"Analysis failed: {name}")
+        else:
+            await _task(nc, "info", f"Analysed: {name} ({status})")
+        logger.info(f"Prism: {name} → {status}")
     except Exception as exc:
         logger.error(f"handle_hash_event error: {exc}")
 
@@ -155,7 +174,7 @@ async def main():
     except Exception:
         pass
 
-    async def _cb_hash(m): await handle_hash_event(m, js, executor)
+    async def _cb_hash(m): await handle_hash_event(m, js, nc, executor)
     await js.subscribe("phonolith.hash.created", durable="prism", cb=_cb_hash)
 
     logger.info("Prism listening for hash events")

@@ -164,6 +164,21 @@ def record_play(conn, data: dict):
         [data.get("timestamp"), data.get("blake3_hash")],
     )
 
+def record_scrobble(conn, data: dict):
+    conn.execute(
+        """INSERT INTO lastfm_scrobbles
+           (id, artist, title, album, scrobbled_at, blake3_hash, imported_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?)
+           ON CONFLICT (artist, title, scrobbled_at) DO NOTHING""",
+        [str(uuid.uuid4()),
+         data.get("artist", ""),
+         data.get("title", ""),
+         data.get("album"),
+         data.get("timestamp"),
+         data.get("blake3_hash"),
+         datetime.now(timezone.utc).isoformat()],
+    )
+
 def record_vault(conn, data: dict):
     conn.execute(
         """INSERT INTO vault_objects
@@ -240,6 +255,7 @@ HANDLERS = {
     "phonolith.analysis.crest":         apply_crest,
     "phonolith.analysis.semantic":      apply_semantic,
     "phonolith.playback.started":       record_play,
+    "phonolith.lastfm.scrobble":        record_scrobble,
     "phonolith.vault.uploaded":         record_vault,
     "phonolith.polyphony.fix.approved": apply_polyphony_fix,
     "phonolith.analysis.accuraterip":   apply_accuraterip,
@@ -264,6 +280,7 @@ STREAMS = {
     "PHONOLITH_METADATA":  ["phonolith.metadata.>"],
     "PHONOLITH_ANALYSIS":  ["phonolith.analysis.>"],
     "PHONOLITH_PLAYBACK":  ["phonolith.playback.>"],
+    "PHONOLITH_LASTFM":    ["phonolith.lastfm.>"],
     "PHONOLITH_VAULT":     ["phonolith.vault.>"],
     "PHONOLITH_POLYPHONY": ["phonolith.polyphony.>"],
     "PHONOLITH_HEALTH":    ["phonolith.health.>"],
@@ -300,6 +317,7 @@ async def main():
         ("phonolith.metadata.enriched",     "PHONOLITH_METADATA"),
         ("phonolith.analysis.>",            "PHONOLITH_ANALYSIS"),
         ("phonolith.playback.started",      "PHONOLITH_PLAYBACK"),
+        ("phonolith.lastfm.scrobble",       "PHONOLITH_LASTFM"),
         ("phonolith.vault.uploaded",        "PHONOLITH_VAULT"),
         ("phonolith.polyphony.fix.approved","PHONOLITH_POLYPHONY"),
     ]:

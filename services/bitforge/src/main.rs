@@ -70,6 +70,18 @@ fn hash_file(path: &str) -> Result<(String, u64)> {
     Ok((hasher.finalize().to_hex().to_string(), total))
 }
 
+async fn publish_task(nc: &async_nats::Client, level: &str, message: &str) {
+    let ts = Utc::now().to_rfc3339();
+    if let Ok(payload) = serde_json::to_vec(&serde_json::json!({
+        "service": "bitforge",
+        "level": level,
+        "message": message,
+        "ts": ts,
+    })) {
+        nc.publish("phonolith.tasks.bitforge", payload.into()).await.ok();
+    }
+}
+
 async fn publish(js: &jetstream::Context, event: &HashEvent) -> Result<()> {
     let subject = format!("phonolith.hash.{}", event.event_type);
     let payload = serde_json::to_vec(event)?;
@@ -87,6 +99,7 @@ async fn publish(js: &jetstream::Context, event: &HashEvent) -> Result<()> {
 async fn process_fs_event(
     payload: bytes::Bytes,
     js: jetstream::Context,
+    nc: async_nats::Client,
     db: Db,
 ) -> Result<()> {
     let ev: FsEvent = serde_json::from_slice(&payload)?;
@@ -159,12 +172,12 @@ async fn process_fs_event(
                 )
                 .await?;
             } else {
-                hash_and_publish(&ev.path, "created", &js, &db, &now).await?;
+                hash_and_publish(&ev.path, "created", &js, &nc, &db, &now).await?;
             }
         }
 
         "created" | "modified" => {
-            hash_and_publish(&ev.path, &ev.event_type, &js, &db, &now).await?;
+            hash_and_publish(&ev.path, &ev.event_type, &js, &nc, &db, &now).await?;
         }
 
         other => warn!("Unknown event type: {other}"),
@@ -177,6 +190,7 @@ async fn hash_and_publish(
     path: &str,
     event_type: &str,
     js: &jetstream::Context,
+    nc: &async_nats::Client,
     db: &Db,
     now: &str,
 ) -> Result<()> {
@@ -204,6 +218,17 @@ async fn hash_and_publish(
             params![hash, path, size as i64, now, now, event_type],
         )?;
     }
+
+    let filename = std::path::Path::new(path)
+        .file_name()
+        .map(|n| n.to_string_lossy().to_string())
+        .unwrap_or_else(|| path.to_string());
+    let msg = if is_duplicate {
+        format!("Duplicate: {filename}")
+    } else {
+        format!("Hashed: {filename}")
+    };
+    publish_task(nc, "info", &msg).await;
 
     publish(
         js,
@@ -236,8 +261,8 @@ async fn main() -> Result<()> {
     info!("Bit-Forge starting");
 
     let db = Arc::new(Mutex::new(init_db(&data_dir)?));
-    let client = async_nats::connect(&nats_url).await?;
-    let js = jetstream::new(client);
+    let nc = async_nats::connect(&nats_url).await?;
+    let js = jetstream::new(nc.clone());
 
     js.get_or_create_stream(jetstream::stream::Config {
         name: "PHONOLITH_HASH".into(),
@@ -275,10 +300,11 @@ async fn main() -> Result<()> {
             Ok(msg) => {
                 let payload = msg.payload.clone();
                 let js = js.clone();
+                let nc = nc.clone();
                 let db = db.clone();
                 msg.ack().await.ok();
                 task::spawn(async move {
-                    if let Err(e) = process_fs_event(payload, js, db).await {
+                    if let Err(e) = process_fs_event(payload, js, nc, db).await {
                         error!("Error: {e}");
                     }
                 });

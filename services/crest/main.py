@@ -25,6 +25,17 @@ from loguru import logger
 import nats
 
 NATS_URL = os.getenv("NATS_URL", "nats://localhost:4222")
+
+async def _task(nc, level: str, message: str) -> None:
+    try:
+        from datetime import datetime, timezone
+        await nc.publish(
+            "phonolith.tasks.crest",
+            json.dumps({"service": "crest", "level": level, "message": message,
+                        "ts": datetime.now(timezone.utc).isoformat()}).encode(),
+        )
+    except Exception:
+        pass
 DATA_DIR = os.getenv("DATA_DIR", "/data")
 WORKERS  = int(os.getenv("WORKER_POOL_SIZE", "4"))
 BLOCK_SECS = 3.0
@@ -78,7 +89,7 @@ def compute_dr(path: str) -> dict:
     return result
 
 
-async def handle_hash_event(msg, js, executor):
+async def handle_hash_event(msg, js, nc, executor):
     await msg.ack()
     try:
         data = json.loads(msg.data)
@@ -99,8 +110,13 @@ async def handle_hash_event(msg, js, executor):
         await js.publish("phonolith.analysis.crest", json.dumps(event).encode())
 
         score = dr.get("dr_score")
+        name  = Path(path).name
+        if dr.get("error"):
+            await _task(nc, "error", f"DR failed: {name} — {dr['error']}")
+        else:
+            await _task(nc, "info", f"DR{score}: {name}")
         logger.info(
-            f"Crest: {Path(path).name} → DR{score} "
+            f"Crest: {name} → DR{score} "
             f"(peak:{dr.get('peak_dbfs')} dBFS, rms:{dr.get('rms_dbfs')} dBFS)"
         )
     except Exception as exc:
@@ -116,7 +132,7 @@ async def main():
     executor = ProcessPoolExecutor(max_workers=WORKERS)
 
     async def _cb_hash(m):
-        await handle_hash_event(m, js, executor)
+        await handle_hash_event(m, js, nc, executor)
 
     await js.subscribe("phonolith.hash.created", durable="crest", cb=_cb_hash)
 
