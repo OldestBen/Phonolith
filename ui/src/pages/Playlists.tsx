@@ -1,4 +1,4 @@
-import { useState, useCallback } from 'react'
+import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { getPlaylistPreview, getPlaylistM3uUrl, playTrack, type PlaylistFilters, type PlaylistTrack } from '../lib/api'
 import { Download, Play, ListMusic, SlidersHorizontal } from 'lucide-react'
@@ -219,7 +219,7 @@ export default function Playlists() {
                   </tr>
                 </thead>
                 <tbody>
-                  {tracks.map((t: PlaylistTrack, i: number) => (
+                  {tracks.map((t: PlaylistTrack) => (
                     <tr
                       key={t.hash}
                       className="group border-b border-zinc-800/30 hover:bg-zinc-800/20 transition-colors"

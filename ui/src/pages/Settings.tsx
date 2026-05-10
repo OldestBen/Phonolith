@@ -16,7 +16,6 @@ function SmartStatusIcon({ status }: { status: string }) {
 }
 
 function DriveCard({ report }: { report: SmartReport }) {
-  const isHealthy = report.status === 'healthy'
   return (
     <div className={clsx(
       'bg-zinc-900 border rounded-xl p-4 flex flex-col gap-3',

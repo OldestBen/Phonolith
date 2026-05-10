@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { apiFetch } from '../lib/api'
 import {
-  HardDrive, Play, Plus, Trash2, CheckCircle, XCircle, Clock, RefreshCw,
+  HardDrive, Play, Plus, Trash2, CheckCircle, XCircle, RefreshCw,
 } from 'lucide-react'
 import clsx from 'clsx'
 

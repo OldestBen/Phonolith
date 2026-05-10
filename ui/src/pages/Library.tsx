@@ -115,9 +115,9 @@ export default function Library() {
                         {t.sample_rate ? `/${Math.round(t.sample_rate / 1000)}k` : ''}
                       </span>
                     </td>
-                    <td className="px-4 py-2.5"><DrBadge score={t.dr_score} /></td>
-                    <td className="px-4 py-2.5 font-mono text-zinc-400 text-xs">{fmt(t.duration_seconds)}</td>
-                    <td className="px-4 py-2.5 text-center"><PrismBadge status={t.prism_status} /></td>
+                    <td className="px-4 py-2.5"><DrBadge score={t.dr_score ?? null} /></td>
+                    <td className="px-4 py-2.5 font-mono text-zinc-400 text-xs">{fmt(t.duration_seconds ?? null)}</td>
+                    <td className="px-4 py-2.5 text-center"><PrismBadge status={t.prism_status ?? null} /></td>
                   </tr>
                   {t.hash === selected && (
                     <TrackDetail key={`detail-${t.hash}`} hash={t.hash} colSpan={COL_COUNT} />

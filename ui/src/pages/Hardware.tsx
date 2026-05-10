@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { Wifi, WifiOff, Radio, Plus, Trash2, Layers, Play, Square, Server, AlertTriangle, CheckCircle2 } from 'lucide-react'
+import { Wifi, WifiOff, Radio, Plus, Trash2, Layers, Square, Server, AlertTriangle, CheckCircle2 } from 'lucide-react'
 import clsx from 'clsx'
-import { createZone, deleteZone, stopZone, getSmartReports, type AirPlayZone, type SmartReport, apiFetch } from '../lib/api'
+import { createZone, deleteZone, stopZone, type AirPlayZone, apiFetch } from '../lib/api'
 
 interface AirPlayEndpoint {
   endpoint_id: string
@@ -126,7 +126,10 @@ function ZoneBuilder({ endpoints }: { endpoints: AirPlayEndpoint[] }) {
       name,
       endpoint_ids: [...selected],
     }),
-    onSuccess: () => { setShowForm(false); setName(''); setSelected(new Set()) },
+    onSuccess: () => {
+      setShowForm(false); setName(''); setSelected(new Set())
+      qc.invalidateQueries({ queryKey: ['flux-zones'] })
+    },
   })
 
   function toggle(id: string) {
@@ -267,7 +270,6 @@ function NasCard({ report }: { report: NasReport }) {
 
 export default function Hardware() {
   const { endpoints, zones } = useFluxState()
-  const [selectMode, setSelectMode] = useState(false)
 
   const { mutate: removeZone } = useMutation({ mutationFn: deleteZone })
 

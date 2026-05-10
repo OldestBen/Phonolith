@@ -4,8 +4,7 @@ import {
   getCathodeSummary, getCathodeGenres, getCathodeTimeline,
   type CathodeSummary, type CathodeGenre, type CathodeTimeline,
 } from '../lib/api'
-import { Cpu, Clock, ChevronDown, ChevronRight, Headphones, Speaker, Radio } from 'lucide-react'
-import clsx from 'clsx'
+import { Cpu, ChevronDown, ChevronRight, Headphones, Speaker, Radio } from 'lucide-react'
 
 function EndpointIcon({ type }: { type?: string }) {
   if (type === 'airplay' || type === 'airplay2') return <Radio className="w-4 h-4 text-blue-400" />

@@ -1,10 +1,7 @@
 import { useQuery } from '@tanstack/react-query'
-import { getTrack, getSnapshots, getWaveform, playTrack, streamToAirPlay } from '../lib/api'
+import { getTrack, getSnapshots, getWaveform, playTrack } from '../lib/api'
 import WaveformViewer from './WaveformViewer'
-import { Play, RotateCcw, Radio, CheckCircle, AlertTriangle } from 'lucide-react'
-import clsx from 'clsx'
-
-const KEY_NAMES = ['C','C#','D','D#','E','F','F#','G','G#','A','A#','B']
+import { Play, RotateCcw } from 'lucide-react'
 
 function Row({ label, value }: { label: string; value?: string | number | null }) {
   if (value == null || value === '') return null
@@ -121,15 +118,12 @@ export default function TrackDetail({ hash, colSpan }: Props) {
                         <RotateCcw className="w-3 h-3 text-zinc-500 flex-shrink-0" />
                         <div className="flex-1 min-w-0">
                           <p className="text-[10px] text-zinc-400 truncate">
-                            {s.triggered_by ?? 'manual'}
+                            {s.snapshot_type}
                           </p>
                           <p className="text-[10px] text-zinc-600">
-                            {new Date(s.snapshot_at).toLocaleString()}
+                            {new Date(s.captured_at).toLocaleString()}
                           </p>
                         </div>
-                        {s.is_restore_point && (
-                          <span className="text-[9px] text-violet-400 font-mono">restore point</span>
-                        )}
                       </div>
                     ))}
                   </div>
