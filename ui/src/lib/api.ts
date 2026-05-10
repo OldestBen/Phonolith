@@ -623,3 +623,53 @@ export function compareFingerprints(hashA: string, hashB: string): Promise<Finge
 export function hasFingerprintFor(hash: string): Promise<{ blake3_hash: string; duration: number; computed_at: string }> {
   return apiFetch(`/api/fingerprint/${encodeURIComponent(hash)}`)
 }
+
+// --- Service Configuration ---
+
+export type ConfigMap = Record<string, string>
+
+export function getConfig(): Promise<ConfigMap> {
+  return apiFetch('/api/config')
+}
+
+export function updateConfig(updates: Record<string, string>): Promise<{ status: string }> {
+  return apiFetch('/api/config', { method: 'POST', body: JSON.stringify({ updates }) })
+}
+
+export function triggerLastfmSync(): Promise<{ status: string }> {
+  return apiFetch('/api/config/lastfm/sync', { method: 'POST' })
+}
+
+// --- Network Mounts ---
+
+export interface NetworkMount {
+  id: string
+  protocol: string
+  host: string
+  share: string
+  mount_point: string
+  username: string
+  added_at: string
+  status?: string
+  alive?: boolean | null
+}
+
+export interface MountRequest {
+  protocol: string
+  host: string
+  share: string
+  username?: string
+  password?: string
+}
+
+export function getMounts(): Promise<NetworkMount[]> {
+  return apiFetch('/api/mounts')
+}
+
+export function addMount(body: MountRequest): Promise<{ status: string; id: string; mount_point: string }> {
+  return apiFetch('/api/mounts', { method: 'POST', body: JSON.stringify(body) })
+}
+
+export function deleteMount(id: string): Promise<void> {
+  return apiFetch(`/api/mounts/${encodeURIComponent(id)}`, { method: 'DELETE' })
+}

@@ -11,6 +11,11 @@ the local DuckDB library. Unmatched scrobbles are logged but not persisted.
 
 After the initial import, the service polls every SYNC_INTERVAL_HOURS for new
 scrobbles since the last recorded timestamp.
+
+Configuration is read from phonolith_config.db (set via the Settings UI) with
+env vars as fallback. The service subscribes to phonolith.config.changed and
+phonolith.lastfm.sync so credentials and manual triggers take effect without
+a container restart.
 """
 
 import asyncio, json, os, re, sqlite3, time
@@ -19,21 +24,41 @@ from pathlib import Path
 import duckdb, nats, requests
 from loguru import logger
 
-NATS_URL        = os.getenv("NATS_URL", "nats://localhost:4222")
-DATA_DIR        = os.getenv("DATA_DIR", "/data")
-DB_PATH         = os.path.join(DATA_DIR, "phonolith.duckdb")
-STATE_DB        = os.path.join(DATA_DIR, "lastfm_state.sqlite")
-
-API_KEY         = os.getenv("LASTFM_API_KEY", "")
-API_SECRET      = os.getenv("LASTFM_API_SECRET", "")
-USERNAME        = os.getenv("LASTFM_USERNAME", "")
-SYNC_INTERVAL   = int(os.getenv("LASTFM_SYNC_INTERVAL_HOURS", "6")) * 3600
-BATCH_PUBLISH   = 50   # NATS publish batch size (yield between batches)
+NATS_URL      = os.getenv("NATS_URL", "nats://localhost:4222")
+DATA_DIR      = os.getenv("DATA_DIR", "/data")
+DB_PATH       = os.path.join(DATA_DIR, "phonolith.duckdb")
+STATE_DB      = os.path.join(DATA_DIR, "lastfm_state.sqlite")
+CONFIG_DB     = os.path.join(DATA_DIR, "phonolith_config.db")
+BATCH_PUBLISH = 50
 
 BASE_URL = "https://ws.audioscrobbler.com/2.0/"
 
 
-# ── State persistence ─────────────────────────────────────────────────────────
+# ── Config helpers ─────────────────────────────────────────────────────────────
+
+def _read_cfg_db() -> dict:
+    """Read service_config table from the shared config DB."""
+    try:
+        c = sqlite3.connect(CONFIG_DB)
+        rows = c.execute("SELECT key, value FROM service_config").fetchall()
+        c.close()
+        return {r[0]: r[1] for r in rows}
+    except Exception:
+        return {}
+
+
+def load_config() -> tuple[str, str, str, int]:
+    """Return (api_key, api_secret, username, interval_secs).
+    Config DB overrides env vars."""
+    cfg = _read_cfg_db()
+    api_key  = cfg.get("lastfm.api_key")  or os.getenv("LASTFM_API_KEY",  "")
+    secret   = cfg.get("lastfm.api_secret") or os.getenv("LASTFM_API_SECRET", "")
+    username = cfg.get("lastfm.username") or os.getenv("LASTFM_USERNAME", "")
+    interval = int(cfg.get("lastfm.sync_interval_hours") or os.getenv("LASTFM_SYNC_INTERVAL_HOURS", "6")) * 3600
+    return api_key, secret, username, interval
+
+
+# ── State persistence ──────────────────────────────────────────────────────────
 
 def open_state() -> sqlite3.Connection:
     c = sqlite3.connect(STATE_DB)
@@ -53,16 +78,15 @@ def set_state(c: sqlite3.Connection, key: str, value: str):
 # ── Last.fm API ───────────────────────────────────────────────────────────────
 
 def _norm(s: str) -> str:
-    """Normalise artist/title for fuzzy matching."""
     s = s.lower().strip()
     s = re.sub(r"[^\w\s]", "", s)
     return re.sub(r"\s+", " ", s)
 
-def fetch_page(page: int, from_ts: int = 0) -> dict:
+def fetch_page(api_key: str, username: str, page: int, from_ts: int = 0) -> dict:
     params = {
         "method": "user.getRecentTracks",
-        "user": USERNAME,
-        "api_key": API_KEY,
+        "user": username,
+        "api_key": api_key,
         "format": "json",
         "limit": 200,
         "page": page,
@@ -82,19 +106,23 @@ def fetch_page(page: int, from_ts: int = 0) -> dict:
 # ── Track matching ────────────────────────────────────────────────────────────
 
 def build_index(db_path: str) -> dict[tuple, str]:
-    """Return dict of (norm_artist, norm_title) → blake3_hash from DuckDB."""
     index: dict[tuple, str] = {}
-    try:
-        conn = duckdb.connect(db_path, read_only=True)
-        rows = conn.execute(
-            "SELECT id, artist, title FROM tracks WHERE artist IS NOT NULL AND title IS NOT NULL"
-        ).fetchall()
-        conn.close()
-        for h, artist, title in rows:
-            index[(_norm(artist), _norm(title))] = h
-        logger.info(f"Built match index: {len(index)} tracks")
-    except Exception as e:
-        logger.error(f"Could not read DuckDB: {e}")
+    for attempt in range(6):
+        try:
+            conn = duckdb.connect(db_path, read_only=True)
+            rows = conn.execute(
+                "SELECT id, artist, title FROM tracks WHERE artist IS NOT NULL AND title IS NOT NULL"
+            ).fetchall()
+            conn.close()
+            for h, artist, title in rows:
+                index[(_norm(artist), _norm(title))] = h
+            logger.info(f"Built match index: {len(index)} tracks")
+            return index
+        except Exception as e:
+            if attempt == 5:
+                logger.error(f"Could not read DuckDB after retries: {e}")
+                return {}
+            time.sleep(0.2 * (attempt + 1))
     return index
 
 def match(index: dict, artist: str, title: str) -> str | None:
@@ -103,10 +131,7 @@ def match(index: dict, artist: str, title: str) -> str | None:
 
 # ── Import logic ──────────────────────────────────────────────────────────────
 
-async def import_scrobbles(nc, from_ts: int = 0) -> int:
-    """Fetch all scrobbles (optionally since from_ts) and publish matched ones.
-    Returns the unix timestamp of the newest scrobble seen."""
-
+async def import_scrobbles(nc, api_key: str, username: str, from_ts: int = 0) -> int:
     index = build_index(DB_PATH)
     if not index:
         logger.warning("Library index is empty — is EchoGraph running and tracks ingested?")
@@ -116,17 +141,16 @@ async def import_scrobbles(nc, from_ts: int = 0) -> int:
     newest_ts = from_ts
     published = 0
     unmatched = 0
-    play_counts: dict[str, int] = {}  # hash → count of scrobbles this run
+    play_counts: dict[str, int] = {}
 
     while page <= total_pages:
-        data = fetch_page(page, from_ts)
+        data = fetch_page(api_key, username, page, from_ts)
         rt = data.get("recenttracks", {})
         attr = rt.get("@attr", {})
         total_pages = int(attr.get("totalPages", 1))
         tracks = rt.get("track", [])
 
         for t in tracks:
-            # Skip "now playing" pseudo-entries (no date)
             if not isinstance(t.get("date"), dict):
                 continue
 
@@ -151,20 +175,16 @@ async def import_scrobbles(nc, from_ts: int = 0) -> int:
                 "endpoint_id": None,
                 "format": None,
             }
-            await nc.publish(
-                "phonolith.playback.started",
-                json.dumps(event).encode(),
-            )
+            await nc.publish("phonolith.playback.started", json.dumps(event).encode())
             published += 1
 
             if published % BATCH_PUBLISH == 0:
-                await asyncio.sleep(0)   # yield to event loop
+                await asyncio.sleep(0)
 
         logger.info(f"Last.fm import: page {page}/{total_pages} — {published} published so far")
         page += 1
-        await asyncio.sleep(0.25)   # respect Last.fm rate limit (5 req/s)
+        await asyncio.sleep(0.25)
 
-    # Publish playcount updates so the analytics dashboard shows last.fm plays
     for h, count in play_counts.items():
         await nc.publish(
             "phonolith.metadata.enriched",
@@ -181,29 +201,62 @@ async def import_scrobbles(nc, from_ts: int = 0) -> int:
 # ── Main ──────────────────────────────────────────────────────────────────────
 
 async def main():
-    if not API_KEY or not USERNAME:
-        logger.warning(
-            "LASTFM_API_KEY / LASTFM_USERNAME not set — Last.fm service idle. "
-            "Set these in .env to enable scrobble import."
-        )
-        await asyncio.Event().wait()
-        return
-
     state = open_state()
     nc = await nats.connect(NATS_URL)
-    logger.info(f"Last.fm import service started for user '{USERNAME}'")
+
+    # Signal fired by phonolith.config.changed or phonolith.lastfm.sync
+    _trigger = asyncio.Event()
+
+    async def _on_config_changed(msg):
+        try:
+            data = json.loads(msg.data.decode())
+            changed = data.get("keys", [])
+            if any(k.startswith("lastfm.") for k in changed):
+                logger.info("Last.fm config changed — restarting sync loop")
+                _trigger.set()
+        except Exception:
+            pass
+
+    async def _on_sync_trigger(msg):
+        logger.info("Manual Last.fm sync triggered")
+        _trigger.set()
+
+    await nc.subscribe("phonolith.config.changed", cb=_on_config_changed)
+    await nc.subscribe("phonolith.lastfm.sync",    cb=_on_sync_trigger)
 
     while True:
+        api_key, _, username, interval = load_config()
+
+        if not api_key or not username:
+            logger.info(
+                "LASTFM_API_KEY / LASTFM_USERNAME not configured. "
+                "Set them in Settings → Last.fm. Waiting for config…"
+            )
+            _trigger.clear()
+            # Wake when config changes or every 60 s to re-check
+            try:
+                await asyncio.wait_for(_trigger.wait(), timeout=60)
+            except asyncio.TimeoutError:
+                pass
+            _trigger.clear()
+            continue
+
+        logger.info(f"Last.fm sync starting for user '{username}'")
         from_ts = int(get_state(state, "last_import_ts", "0"))
         label = "initial import" if from_ts == 0 else f"incremental from {datetime.fromtimestamp(from_ts)}"
         logger.info(f"Starting {label}")
 
-        newest = await import_scrobbles(nc, from_ts)
+        newest = await import_scrobbles(nc, api_key, username, from_ts)
         if newest > from_ts:
             set_state(state, "last_import_ts", str(newest))
 
-        logger.info(f"Next sync in {SYNC_INTERVAL // 3600}h")
-        await asyncio.sleep(SYNC_INTERVAL)
+        logger.info(f"Next sync in {interval // 3600}h (or when manually triggered)")
+        _trigger.clear()
+        try:
+            await asyncio.wait_for(_trigger.wait(), timeout=float(interval))
+        except asyncio.TimeoutError:
+            pass
+        _trigger.clear()
 
 
 if __name__ == "__main__":

@@ -30,6 +30,22 @@ async def _broadcast(data: str) -> None:
     _ws_clients.difference_update(dead)
 
 
+_resonancefs_status: dict[str, dict] = {}
+
+
+async def _on_resonancefs_status(msg) -> None:
+    try:
+        data = json.loads(msg.data.decode())
+        # Status can be a single mount event or a health batch
+        if "mounts" in data:
+            for m in data["mounts"]:
+                _resonancefs_status[m["mount_point"]] = m
+        elif "mount_point" in data:
+            _resonancefs_status[data["mount_point"]] = data
+    except Exception:
+        pass
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     global nc_client
@@ -48,6 +64,7 @@ async def lifespan(app: FastAPI):
         await nc_client.subscribe("phonolith.flux.zones",     cb=_on_playback)
         await nc_client.subscribe("phonolith.health.smart",   cb=_on_smart)
         await nc_client.subscribe("phonolith.health.nas",     cb=_on_nas)
+        await nc_client.subscribe("phonolith.resonancefs.status", cb=_on_resonancefs_status)
         logger.info("Subscribed to NATS topics for WebSocket fan-out and health cache")
     except Exception as e:
         logger.warning(f"NATS connection failed (non-fatal): {e}")
@@ -1713,6 +1730,20 @@ def _config_db() -> sqlite3.Connection:
         path      TEXT NOT NULL,
         created_at TEXT DEFAULT (datetime('now'))
     )""")
+    c.execute("""CREATE TABLE IF NOT EXISTS service_config (
+        key TEXT PRIMARY KEY,
+        value TEXT NOT NULL,
+        updated_at TEXT DEFAULT (datetime('now'))
+    )""")
+    c.execute("""CREATE TABLE IF NOT EXISTS network_mounts (
+        id TEXT PRIMARY KEY,
+        protocol TEXT NOT NULL,
+        host TEXT NOT NULL,
+        share TEXT NOT NULL,
+        mount_point TEXT NOT NULL,
+        username TEXT DEFAULT '',
+        added_at TEXT DEFAULT (datetime('now'))
+    )""")
     c.commit()
     return c
 
@@ -2186,3 +2217,160 @@ async def _on_nas(msg) -> None:
 @app.get("/api/health/nas")
 async def health_nas():
     return list(_nas_reports.values())
+
+
+# ── Service Configuration ────────────────────────────────────────────────────
+
+_CONFIG_DEFAULTS = {
+    "lastfm.api_key":             "",
+    "lastfm.api_secret":          "",
+    "lastfm.username":            "",
+    "lastfm.sync_interval_hours": "6",
+    "discogs.token":              "",
+    "musicbrainz.user_agent":     "",
+    "plex.url":                   "http://localhost:32400",
+    "plex.token":                 "",
+    "plex.sync_interval_hours":   "1",
+    "s3.endpoint":                "https://s3.amazonaws.com",
+    "s3.bucket":                  "",
+    "s3.access_key":              "",
+    "s3.secret_key":              "",
+    "s3.region":                  "us-east-1",
+    "s3.worm_retention_days":     "0",
+    "airplay.receiver_name":      "Phonolith",
+    "polyphony.node_alias":       "my-phonolith-node",
+    "smart.devices":              "",
+    "smart.poll_interval_secs":   "3600",
+    "snmp.nas_hosts":             "",
+    "snmp.community":             "public",
+}
+
+_ENV_SEEDS = {
+    "lastfm.api_key":             "LASTFM_API_KEY",
+    "lastfm.api_secret":          "LASTFM_API_SECRET",
+    "lastfm.username":            "LASTFM_USERNAME",
+    "lastfm.sync_interval_hours": "LASTFM_SYNC_INTERVAL_HOURS",
+    "discogs.token":              "DISCOGS_TOKEN",
+    "musicbrainz.user_agent":     "MUSICBRAINZ_USER_AGENT",
+    "plex.url":                   "PLEX_URL",
+    "plex.token":                 "PLEX_TOKEN",
+    "plex.sync_interval_hours":   "PLEX_SYNC_INTERVAL_HOURS",
+    "s3.endpoint":                "S3_ENDPOINT",
+    "s3.bucket":                  "S3_BUCKET",
+    "s3.access_key":              "S3_ACCESS_KEY",
+    "s3.secret_key":              "S3_SECRET_KEY",
+    "s3.region":                  "S3_REGION",
+    "s3.worm_retention_days":     "WORM_RETENTION_DAYS",
+    "airplay.receiver_name":      "AIRPLAY_RECEIVER_NAME",
+    "polyphony.node_alias":       "POLYPHONY_NODE_ALIAS",
+    "smart.devices":              "SMART_DEVICES",
+    "smart.poll_interval_secs":   "SMART_POLL_INTERVAL_SECS",
+    "snmp.nas_hosts":             "NAS_HOSTS",
+    "snmp.community":             "SNMP_COMMUNITY",
+}
+
+
+@app.get("/api/config")
+async def get_config():
+    c = _config_db()
+    rows = c.execute("SELECT key, value FROM service_config").fetchall()
+    stored = {r[0]: r[1] for r in rows}
+    # Priority: DB > env var > default
+    result = {}
+    for key, default in _CONFIG_DEFAULTS.items():
+        env_var = _ENV_SEEDS.get(key)
+        env_val = os.getenv(env_var, "") if env_var else ""
+        result[key] = stored.get(key, env_val if env_val else default)
+    return result
+
+
+class ConfigUpdate(BaseModel):
+    updates: dict[str, str]
+
+
+@app.post("/api/config")
+async def update_config(body: ConfigUpdate):
+    c = _config_db()
+    for key, value in body.updates.items():
+        if key in _CONFIG_DEFAULTS:
+            c.execute(
+                "INSERT OR REPLACE INTO service_config (key, value, updated_at) VALUES (?, ?, datetime('now'))",
+                [key, value],
+            )
+    c.commit()
+    if nc_client:
+        await nc_client.publish(
+            "phonolith.config.changed",
+            json.dumps({"keys": list(body.updates.keys())}).encode(),
+        )
+    return {"status": "ok", "updated": len(body.updates)}
+
+
+@app.post("/api/config/lastfm/sync", status_code=202)
+async def trigger_lastfm_sync():
+    if not nc_client:
+        raise HTTPException(status_code=503, detail="NATS unavailable")
+    await nc_client.publish("phonolith.lastfm.sync", b"{}")
+    return {"status": "sync_triggered"}
+
+
+# ── Network Mounts (ResonanceFS) ──────────────────────────────────────────────
+
+class MountRequest(BaseModel):
+    protocol: str = "smb"
+    host: str
+    share: str
+    username: str = ""
+    password: str = ""
+
+
+@app.post("/api/mounts", status_code=202)
+async def add_mount(body: MountRequest):
+    if not nc_client or not nc_client.is_connected:
+        raise HTTPException(status_code=503, detail="NATS unavailable")
+    import uuid as _uuid
+    mid = str(_uuid.uuid4())
+    mount_point = f"/mnt/phonolith/{body.host}/{body.share}".replace("//", "/")
+    c = _config_db()
+    c.execute(
+        "INSERT INTO network_mounts (id, protocol, host, share, mount_point, username) VALUES (?,?,?,?,?,?)",
+        [mid, body.protocol, body.host, body.share, mount_point, body.username],
+    )
+    c.commit()
+    payload = {
+        "protocol": body.protocol,
+        "host": body.host,
+        "share": body.share,
+        "mount_point": mount_point,
+        "username": body.username,
+        "password": body.password,
+    }
+    await nc_client.publish("phonolith.resonancefs.mount", json.dumps(payload).encode())
+    return {"status": "mount_requested", "id": mid, "mount_point": mount_point}
+
+
+@app.get("/api/mounts")
+async def list_mounts():
+    c = _config_db()
+    rows = c.execute(
+        "SELECT id, protocol, host, share, mount_point, username, added_at FROM network_mounts ORDER BY added_at"
+    ).fetchall()
+    cols = ["id", "protocol", "host", "share", "mount_point", "username", "added_at"]
+    result = []
+    for r in rows:
+        d = dict(zip(cols, r))
+        status_info = _resonancefs_status.get(d["mount_point"], {})
+        d["status"] = status_info.get("status", "unknown")
+        d["alive"] = status_info.get("alive", None)
+        result.append(d)
+    return result
+
+
+@app.delete("/api/mounts/{mount_id}", status_code=204)
+async def delete_mount(mount_id: str):
+    c = _config_db()
+    row = c.execute("SELECT mount_point FROM network_mounts WHERE id=?", [mount_id]).fetchone()
+    if not row:
+        raise HTTPException(status_code=404, detail="Mount not found")
+    c.execute("DELETE FROM network_mounts WHERE id=?", [mount_id])
+    c.commit()
