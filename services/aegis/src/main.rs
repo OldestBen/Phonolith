@@ -7,7 +7,7 @@ use async_nats::jetstream;
 use aws_sdk_s3::{
     config::Region,
     primitives::ByteStream,
-    types::{ObjectLockMode, ObjectLockRetention},
+    types::ObjectLockMode,
     Client as S3Client,
 };
 use blake3::Hasher;
@@ -325,19 +325,22 @@ async fn main() -> Result<()> {
     })
     .await?;
 
-    let consumer = js
-        .get_or_create_consumer(
-            "PHONOLITH_HASH",
-            jetstream::consumer::pull::Config {
-                durable_name: Some("aegis".into()),
-                filter_subjects: vec![
-                    "phonolith.hash.created".into(),
-                    "phonolith.hash.modified".into(),
-                ],
-                ..Default::default()
-            },
-        )
-        .await?;
+    let hash_stream = js.get_stream("PHONOLITH_HASH").await?;
+
+    let consumer: async_nats::jetstream::consumer::Consumer<jetstream::consumer::pull::Config> =
+        hash_stream
+            .get_or_create_consumer(
+                "aegis",
+                jetstream::consumer::pull::Config {
+                    durable_name: Some("aegis".into()),
+                    filter_subjects: vec![
+                        "phonolith.hash.created".into(),
+                        "phonolith.hash.modified".into(),
+                    ],
+                    ..Default::default()
+                },
+            )
+            .await?;
 
     if worm_days > 0 {
         info!("WORM / Object Lock enabled — retention={worm_days} days (Compliance mode)");
