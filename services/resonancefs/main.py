@@ -10,6 +10,17 @@ DATA_DIR = os.getenv("DATA_DIR", "/data")
 active_mounts: dict[str, dict] = {}
 
 
+async def _task(nc, level: str, message: str) -> None:
+    try:
+        await nc.publish(
+            "phonolith.tasks.resonancefs",
+            json.dumps({"service": "resonancefs", "level": level, "message": message,
+                        "ts": datetime.now(timezone.utc).isoformat()}).encode(),
+        )
+    except Exception:
+        pass
+
+
 def mount_smb(host: str, share: str, username: str, password: str, mount_point: str) -> bool:
     """Mount an SMB share using mount.cifs via subprocess."""
     os.makedirs(mount_point, exist_ok=True)
@@ -66,11 +77,15 @@ async def handle_mount_request(msg, nc):
         else:
             logger.warning(f"Unsupported protocol: {protocol}")
 
+        share_label = f"{host}/{share}"
         if success:
             active_mounts[mount_point] = {
                 "protocol": protocol, "host": host, "share": share,
                 "mounted_at": datetime.now(timezone.utc).isoformat(),
             }
+            await _task(nc, "success", f"Mounted {protocol.upper()} {share_label} — authentication OK")
+        else:
+            await _task(nc, "error", f"Failed to mount {protocol.upper()} {share_label} — check credentials / host reachability")
 
         status = {
             "mount_point": mount_point,
@@ -83,6 +98,7 @@ async def handle_mount_request(msg, nc):
         await nc.publish("phonolith.resonancefs.status", json.dumps(status).encode())
     except Exception as e:
         logger.exception(f"Error handling mount request: {e}")
+        await _task(nc, "error", f"Internal error processing mount request: {e}")
 
 
 async def check_mounts_loop(nc):
@@ -93,7 +109,9 @@ async def check_mounts_loop(nc):
         for mount_point, info in list(active_mounts.items()):
             alive = is_mount_alive(mount_point)
             if not alive:
+                label = f"{info['host']}/{info['share']}"
                 logger.warning(f"Mount {mount_point} is no longer alive")
+                await _task(nc, "warning", f"Network share lost: {label} — will retry on next sync")
             health.append({"mount_point": mount_point, "alive": alive, **info})
         event = {
             "timestamp": datetime.now(timezone.utc).isoformat(),

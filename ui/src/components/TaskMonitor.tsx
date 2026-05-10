@@ -25,17 +25,18 @@ const LEVEL_COLOR: Record<string, string> = {
 }
 
 const SERVICE_LABEL: Record<string, string> = {
-  lastfm:   'Last.fm',
-  plex:     'Plex',
-  tremor:   'Scanner',
-  bitforge: 'Hasher',
-  prism:    'Prism',
-  crest:    'Crest DR',
-  semantic: 'Semantic',
-  echograph:'EchoGraph',
-  aegis:    'Vault',
-  polyphony:'Polyphony',
-  dap:      'DAP Sync',
+  lastfm:      'Last.fm',
+  plex:        'Plex',
+  tremor:      'Scanner',
+  bitforge:    'Hasher',
+  prism:       'Prism',
+  crest:       'Crest DR',
+  semantic:    'Semantic',
+  echograph:   'EchoGraph',
+  aegis:       'Vault',
+  polyphony:   'Polyphony',
+  dap:         'DAP Sync',
+  resonancefs: 'Network FS',
 }
 
 function fmtTs(iso: string) {
