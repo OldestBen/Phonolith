@@ -1,4 +1,4 @@
-FROM rust:1.88-slim AS builder
+FROM rust:1.92-slim AS builder
 WORKDIR /build
 RUN apt-get update && apt-get install -y pkg-config libssl-dev libasound2-dev && rm -rf /var/lib/apt/lists/*
 COPY Cargo.toml .

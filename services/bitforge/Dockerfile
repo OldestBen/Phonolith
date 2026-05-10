@@ -1,4 +1,4 @@
-FROM rust:1.88-slim AS builder
+FROM rust:1.92-slim AS builder
 WORKDIR /build
 RUN apt-get update && apt-get install -y build-essential pkg-config libssl-dev && rm -rf /var/lib/apt/lists/*
 COPY Cargo.toml .
