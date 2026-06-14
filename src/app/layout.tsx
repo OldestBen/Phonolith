@@ -2,6 +2,7 @@ import type { Metadata } from 'next'
 import { Inter, Playfair_Display } from 'next/font/google'
 import './globals.css'
 import Sidebar from '@/components/Sidebar'
+import Notifications from '@/components/Notifications'
 
 const inter = Inter({
   variable: '--font-geist-sans',
@@ -28,6 +29,7 @@ export default function RootLayout({
     <html lang="en">
       <body className={`${inter.variable} ${playfair.variable} font-sans`}>
         <Sidebar />
+        <Notifications />
         <main className="ml-16">
           {children}
         </main>
