@@ -179,19 +179,23 @@ const TYPE_BADGE: Record<string, string> = {
 
 function SourceRow({ source, onDeleted, onScanned }: { source: LibrarySource; onDeleted: () => void; onScanned: () => void }) {
   const [testing, setTesting] = useState<'idle' | 'testing' | 'ok' | 'fail'>('idle')
+  const [testError, setTestError] = useState<string | null>(null)
   const [scanning, setScanning] = useState(false)
   const [deleting, setDeleting] = useState(false)
 
   const handleTest = async () => {
     setTesting('testing')
+    setTestError(null)
     try {
       const r = await fetch(`/api/library/sources/${source.id}/test`, { method: 'POST' })
       const d = await r.json()
       setTesting(d.ok ? 'ok' : 'fail')
+      if (!d.ok && d.error) setTestError(d.error)
     } catch {
       setTesting('fail')
+      setTestError('Could not reach analyst sidecar')
     }
-    setTimeout(() => setTesting('idle'), 5000)
+    setTimeout(() => { setTesting('idle'); setTestError(null) }, 12000)
   }
 
   const handleScan = async () => {
@@ -215,44 +219,55 @@ function SourceRow({ source, onDeleted, onScanned }: { source: LibrarySource; on
     : source.config.path ?? ''
 
   return (
-    <div className="flex items-center gap-3 py-3 border-b border-border/50 last:border-0">
-      <div className="flex-1 min-w-0">
-        <div className="flex items-center gap-2 mb-0.5">
-          <span className="text-text-primary text-sm font-medium">{source.name}</span>
-          <span className={`text-[10px] uppercase font-semibold px-1.5 py-0.5 rounded border ${TYPE_BADGE[source.type] ?? TYPE_BADGE.local}`}>
-            {source.type}
-          </span>
+    <div className="py-3 border-b border-border/50 last:border-0">
+      <div className="flex items-center gap-3">
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-2 mb-0.5">
+            <span className="text-text-primary text-sm font-medium">{source.name}</span>
+            <span className={`text-[10px] uppercase font-semibold px-1.5 py-0.5 rounded border ${TYPE_BADGE[source.type] ?? TYPE_BADGE.local}`}>
+              {source.type}
+            </span>
+          </div>
+          <p className="text-text-muted text-xs font-mono truncate">{sourceDesc}</p>
+          {source.last_scanned_at && (
+            <p className="text-text-muted text-[10px] mt-0.5">
+              Last scanned {new Date(source.last_scanned_at).toLocaleString()}
+            </p>
+          )}
         </div>
-        <p className="text-text-muted text-xs font-mono truncate">{sourceDesc}</p>
-        {source.last_scanned_at && (
-          <p className="text-text-muted text-[10px] mt-0.5">
-            Last scanned {new Date(source.last_scanned_at).toLocaleString()}
-          </p>
-        )}
+        <div className="flex items-center gap-1.5 shrink-0">
+          <button
+            onClick={handleTest}
+            disabled={testing === 'testing'}
+            className={`px-2.5 py-1.5 rounded-lg border text-xs transition-colors disabled:opacity-50 ${
+              testing === 'ok'
+                ? 'bg-success/10 border-success/20 text-success'
+                : testing === 'fail'
+                ? 'bg-danger/10 border-danger/20 text-danger'
+                : 'bg-surface-2 border-border text-text-muted hover:text-text-primary hover:border-accent/30'
+            }`}
+          >
+            {testing === 'testing' ? '…' : testing === 'ok' ? '✓ OK' : testing === 'fail' ? '✗ Fail' : 'Test'}
+          </button>
+          <button
+            onClick={handleScan}
+            disabled={scanning}
+            className="px-2.5 py-1.5 rounded-lg bg-accent/10 border border-accent/20 text-accent text-xs hover:bg-accent/20 transition-colors disabled:opacity-50"
+          >
+            {scanning ? 'Scanning…' : 'Scan'}
+          </button>
+          <button
+            onClick={handleDelete}
+            disabled={deleting}
+            className="px-2.5 py-1.5 rounded-lg border border-border text-danger/60 text-xs hover:text-danger hover:border-danger/30 transition-colors disabled:opacity-50"
+          >
+            ×
+          </button>
+        </div>
       </div>
-      <div className="flex items-center gap-1.5 shrink-0">
-        <button
-          onClick={handleTest}
-          disabled={testing === 'testing'}
-          className="px-2.5 py-1.5 rounded-lg bg-surface-2 border border-border text-text-muted text-xs hover:text-text-primary hover:border-accent/30 transition-colors disabled:opacity-50"
-        >
-          {testing === 'testing' ? '…' : testing === 'ok' ? '✓ OK' : testing === 'fail' ? '✗ Fail' : 'Test'}
-        </button>
-        <button
-          onClick={handleScan}
-          disabled={scanning}
-          className="px-2.5 py-1.5 rounded-lg bg-accent/10 border border-accent/20 text-accent text-xs hover:bg-accent/20 transition-colors disabled:opacity-50"
-        >
-          {scanning ? 'Scanning…' : 'Scan'}
-        </button>
-        <button
-          onClick={handleDelete}
-          disabled={deleting}
-          className="px-2.5 py-1.5 rounded-lg border border-border text-danger/60 text-xs hover:text-danger hover:border-danger/30 transition-colors disabled:opacity-50"
-        >
-          ×
-        </button>
-      </div>
+      {testError && (
+        <p className="text-danger text-xs mt-1.5 font-mono break-all">{testError}</p>
+      )}
     </div>
   )
 }

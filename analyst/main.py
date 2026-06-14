@@ -1,10 +1,13 @@
 import asyncio
+import logging
 import os
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 import uvicorn
+
+log = logging.getLogger("analyst")
 
 from scanner import scan_library, scan_source_config, get_file_record, FILE_DB
 from watcher import start_watcher, stop_watcher
@@ -157,6 +160,7 @@ def _test_source_sync(src_type: str, config: dict) -> dict:
             entries = list(smbclient.scandir(smb_path))
             return {"ok": True, "files_found": len(entries)}
         except Exception as e:
+            log.exception("SMB test failed for %s\\%s", host, share)
             return {"ok": False, "error": f"Auth/share error: {e}"}
 
     return {"ok": False, "error": f"Unknown source type: {src_type}"}
