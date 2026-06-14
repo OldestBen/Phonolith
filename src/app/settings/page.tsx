@@ -15,11 +15,58 @@ function Section({ title, children }: { title: string; children: React.ReactNode
   )
 }
 
-function ApiKeyField({ label, testEndpoint }: { label: string; testEndpoint?: string }) {
+function ApiKeyField({ label, settingKey, testEndpoint }: {
+  label: string
+  settingKey: string
+  testEndpoint?: string
+}) {
   const [value, setValue] = useState('')
   const [show, setShow] = useState(false)
+  const [meta, setMeta] = useState<{ source: 'db' | 'env' | 'unset'; masked: string } | null>(null)
+  const [saving, setSaving] = useState(false)
+  const [saveMsg, setSaveMsg] = useState<string | null>(null)
   const [testStatus, setTestStatus] = useState<'idle' | 'testing' | 'ok' | 'fail'>('idle')
   const [testError, setTestError] = useState<string | null>(null)
+
+  useEffect(() => {
+    fetch(`/api/settings/keys?key=${settingKey}`)
+      .then(r => r.ok ? r.json() : null)
+      .then(d => { if (d) setMeta({ source: d.source, masked: d.masked }) })
+      .catch(() => {})
+  }, [settingKey])
+
+  const handleSave = async () => {
+    if (!value.trim()) return
+    setSaving(true)
+    setSaveMsg(null)
+    try {
+      const r = await fetch('/api/settings/keys', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ key: settingKey, value: value.trim() }),
+      })
+      if (r.ok) {
+        setSaveMsg('Saved — takes effect immediately')
+        setValue('')
+        setMeta({ source: 'db', masked: '•••••' + value.trim().slice(-4) })
+      } else {
+        const d = await r.json()
+        setSaveMsg(d.error ?? 'Save failed')
+      }
+    } catch {
+      setSaveMsg('Save failed')
+    } finally {
+      setSaving(false)
+      setTimeout(() => setSaveMsg(null), 5000)
+    }
+  }
+
+  const handleClear = async () => {
+    await fetch(`/api/settings/keys?key=${settingKey}`, { method: 'DELETE' })
+    setMeta(m => m ? { ...m, source: 'unset', masked: '' } : null)
+    setSaveMsg('Cleared — using environment variable if set')
+    setTimeout(() => setSaveMsg(null), 5000)
+  }
 
   const handleTest = async () => {
     if (!testEndpoint) return
@@ -29,7 +76,6 @@ function ApiKeyField({ label, testEndpoint }: { label: string; testEndpoint?: st
       const r = await fetch(testEndpoint)
       const ct = r.headers.get('content-type') ?? ''
       const data = ct.includes('json') ? await r.json() : null
-      // Our custom endpoints return {ok: bool, error?: string}
       const passed = data !== null ? data.ok === true : r.ok
       setTestStatus(passed ? 'ok' : 'fail')
       if (!passed && data?.error) setTestError(data.error)
@@ -41,15 +87,42 @@ function ApiKeyField({ label, testEndpoint }: { label: string; testEndpoint?: st
   }
 
   return (
-    <div className="mb-4">
-      <label className="text-text-muted text-xs uppercase tracking-widest block mb-1.5">{label}</label>
+    <div className="mb-5">
+      <div className="flex items-center justify-between mb-1.5">
+        <label className="text-text-muted text-xs uppercase tracking-widest">{label}</label>
+        {meta && (
+          <div className="flex items-center gap-2">
+            {meta.source === 'db' && (
+              <>
+                <span className="text-accent text-[10px] font-medium">Saved in database</span>
+                <button onClick={handleClear} className="text-text-muted text-[10px] hover:text-danger transition-colors">Clear</button>
+              </>
+            )}
+            {meta.source === 'env' && (
+              <span className="text-success text-[10px] font-medium">Set via environment</span>
+            )}
+            {meta.source === 'unset' && (
+              <span className="text-warning text-[10px] font-medium">Not configured</span>
+            )}
+          </div>
+        )}
+      </div>
+
+      {/* Current value display */}
+      {meta && meta.source !== 'unset' && (
+        <div className="bg-background border border-border rounded-lg px-3 py-2 mb-2 font-mono text-xs text-text-muted">
+          {meta.masked || '(empty)'}
+        </div>
+      )}
+
+      {/* New value input */}
       <div className="flex gap-2">
         <div className="relative flex-1">
           <input
             type={show ? 'text' : 'password'}
             value={value}
             onChange={e => setValue(e.target.value)}
-            placeholder={`Enter ${label}…`}
+            placeholder={meta?.source === 'unset' ? `Enter ${label}…` : `Enter new ${label} to override…`}
             className="bg-background border border-border text-text-primary text-sm rounded-lg px-3 py-2 w-full pr-10 focus:outline-none focus:border-accent transition-colors"
           />
           <button
@@ -60,6 +133,13 @@ function ApiKeyField({ label, testEndpoint }: { label: string; testEndpoint?: st
             {show ? '🙈' : '👁'}
           </button>
         </div>
+        <button
+          onClick={handleSave}
+          disabled={saving || !value.trim()}
+          className="px-3 py-2 rounded-lg bg-accent text-white text-sm font-medium hover:bg-accent/80 transition-colors disabled:opacity-40 shrink-0"
+        >
+          {saving ? '…' : 'Save'}
+        </button>
         {testEndpoint && (
           <button
             onClick={handleTest}
@@ -70,9 +150,10 @@ function ApiKeyField({ label, testEndpoint }: { label: string; testEndpoint?: st
           </button>
         )}
       </div>
+      {saveMsg && <p className="text-text-muted text-xs mt-1">{saveMsg}</p>}
       {testStatus === 'ok' && <p className="text-success text-xs mt-1">Connection successful</p>}
       {testStatus === 'fail' && (
-        <p className="text-danger text-xs mt-1">{testError ?? 'Connection failed — check your key'}</p>
+        <p className="text-danger text-xs mt-1">{testError ?? 'Connection failed'}</p>
       )}
     </div>
   )
@@ -268,12 +349,9 @@ export default function SettingsPage() {
       <h1 className="text-text-primary text-xl font-bold mb-8">Settings</h1>
 
       <Section title="API Keys">
-        <ApiKeyField label="Genius Access Token" testEndpoint="/api/settings/genius" />
-        <ApiKeyField label="Discogs User Token" />
-        <ApiKeyField label="AcoustID API Key" />
-        <p className="text-text-muted text-xs mt-2">
-          API keys are read from environment variables. Entering them here is for testing only — they are not persisted.
-        </p>
+        <ApiKeyField label="Genius Access Token" settingKey="GENIUS_ACCESS_TOKEN" testEndpoint="/api/settings/genius" />
+        <ApiKeyField label="Discogs User Token" settingKey="DISCOGS_USER_TOKEN" />
+        <ApiKeyField label="AcoustID API Key" settingKey="ACOUSTID_API_KEY" />
       </Section>
 
       <Section title="Library Sources">

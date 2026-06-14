@@ -1,11 +1,12 @@
 export const dynamic = 'force-dynamic'
 
 import { NextResponse } from 'next/server'
+import { getSetting } from '@/lib/settings'
 
 export async function GET() {
-  const token = process.env.GENIUS_ACCESS_TOKEN
+  const token = await getSetting('GENIUS_ACCESS_TOKEN')
   if (!token) {
-    return NextResponse.json({ ok: false, error: 'GENIUS_ACCESS_TOKEN is not set in environment' })
+    return NextResponse.json({ ok: false, error: 'GENIUS_ACCESS_TOKEN is not set in environment or database' })
   }
   try {
     const r = await fetch('https://api.genius.com/search?q=test', {

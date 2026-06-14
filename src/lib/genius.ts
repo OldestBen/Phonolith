@@ -1,10 +1,12 @@
 import axios from 'axios'
 import * as cheerio from 'cheerio'
+import { getSetting } from './settings'
 
 const BASE_URL = 'https://api.genius.com'
 
-function headers() {
-  return { Authorization: `Bearer ${process.env.GENIUS_ACCESS_TOKEN}` }
+async function apiHeaders() {
+  const token = await getSetting('GENIUS_ACCESS_TOKEN')
+  return { Authorization: `Bearer ${token ?? ''}` }
 }
 
 export interface GeniusArtist {
@@ -45,7 +47,7 @@ export interface GeniusSong {
 
 export async function searchArtists(query: string): Promise<GeniusArtist[]> {
   const res = await axios.get(`${BASE_URL}/search`, {
-    headers: headers(),
+    headers: await apiHeaders(),
     params: { q: query, per_page: 20 },
   })
   const hits = res.data.response.hits as Array<{ type: string; result: { primary_artist: GeniusArtist } }>
@@ -63,7 +65,7 @@ export async function searchArtists(query: string): Promise<GeniusArtist[]> {
 }
 
 export async function getArtist(id: number): Promise<GeniusArtist> {
-  const res = await axios.get(`${BASE_URL}/artists/${id}`, { headers: headers() })
+  const res = await axios.get(`${BASE_URL}/artists/${id}`, { headers: await apiHeaders() })
   const a = res.data.response.artist
   return {
     id: a.id,
@@ -80,7 +82,7 @@ export async function getAllSongs(artistId: number): Promise<GeniusSong[]> {
   let page = 1
   while (page <= 30) {
     const res = await axios.get(`${BASE_URL}/artists/${artistId}/songs`, {
-      headers: headers(),
+      headers: await apiHeaders(),
       params: { per_page: 50, page, sort: 'release_date' },
     })
     const batch = res.data.response.songs as GeniusSong[]
@@ -94,7 +96,7 @@ export async function getAllSongs(artistId: number): Promise<GeniusSong[]> {
 
 export async function getSongs(artistId: number, page = 1): Promise<GeniusSong[]> {
   const res = await axios.get(`${BASE_URL}/artists/${artistId}/songs`, {
-    headers: headers(),
+    headers: await apiHeaders(),
     params: { per_page: 50, page, sort: 'release_date' },
   })
   return res.data.response.songs as GeniusSong[]
@@ -102,7 +104,7 @@ export async function getSongs(artistId: number, page = 1): Promise<GeniusSong[]
 
 export async function getSong(id: number): Promise<GeniusSong> {
   const res = await axios.get(`${BASE_URL}/songs/${id}`, {
-    headers: headers(),
+    headers: await apiHeaders(),
     params: { text_format: 'plain' },
   })
   const s = res.data.response.song
