@@ -37,7 +37,7 @@ services:
       - LIBRARY_PATH=/music
       - ACOUSTID_API_KEY=${ACOUSTID_API_KEY:-}
     volumes:
-      - ${LIBRARY_PATH:-/tmp/music}:/music:ro
+      - ${LIBRARY_PATH:-./music}:/music:ro
       - waveforms:/waveforms
     depends_on:
       - redis
