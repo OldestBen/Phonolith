@@ -19,7 +19,7 @@ export async function POST(req: NextRequest) {
 
   const rows = await sql`
     INSERT INTO library_sources (name, type, config)
-    VALUES (${body.name.trim()}, ${body.type}, ${JSON.stringify(body.config ?? {})})
+    VALUES (${body.name.trim()}, ${body.type}, ${sql.json(body.config ?? {})})
     RETURNING *
   `
   return NextResponse.json(rows[0], { status: 201 })

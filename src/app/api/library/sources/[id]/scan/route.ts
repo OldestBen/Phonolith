@@ -11,13 +11,14 @@ export async function POST(_req: NextRequest, { params }: { params: { id: string
   if (rows.length === 0) return NextResponse.json({ error: 'Not found' }, { status: 404 })
 
   const source = rows[0]
+  const config = typeof source.config === 'string' ? JSON.parse(source.config) : source.config
   const analystUrl = process.env.ANALYST_URL || 'http://analyst:8000'
 
   try {
     const res = await fetch(`${analystUrl}/scan-source`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ source_id: source.id, type: source.type, config: source.config, name: source.name }),
+      body: JSON.stringify({ source_id: source.id, type: source.type, config, name: source.name }),
     })
     const data = await res.json()
     await sql`UPDATE library_sources SET last_scanned_at = NOW() WHERE id = ${id}`
