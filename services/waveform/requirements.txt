@@ -1,4 +1,0 @@
-nats-py>=2.6.0
-numpy>=1.26.0
-soundfile>=0.12.1
-loguru>=0.7.0
