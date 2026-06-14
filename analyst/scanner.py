@@ -214,7 +214,10 @@ def scan_smb(config: dict, waveform_path: str, progress_cb: ProgressCb = None) -
     domain = config.get("domain") or None
     subfolder = config.get("subfolder", "").strip("/\\")
 
-    smbclient.register_session(host, username=username, password=password, domain=domain)
+    effective_user = username
+    if effective_user and domain:
+        effective_user = f"{domain}\\{effective_user}"
+    smbclient.register_session(host, username=effective_user, password=password)
     smb_root = rf"\\{host}\{share}"
     if subfolder:
         smb_root = rf"{smb_root}\{subfolder}"

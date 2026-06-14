@@ -154,8 +154,10 @@ def _test_source_sync(src_type: str, config: dict) -> dict:
             return {"ok": False, "error": f"Cannot reach {host}:445 — is the host online and SMB enabled?"}
         # Step 2: SMB auth + listing
         try:
-            smbclient.register_session(host, username=username or None,
-                                       password=password or None, domain=domain or None)
+            effective_user = username or None
+            if effective_user and domain:
+                effective_user = f"{domain}\\{effective_user}"
+            smbclient.register_session(host, username=effective_user, password=password or None)
             smb_path = rf"\\{host}\{share}"
             entries = list(smbclient.scandir(smb_path))
             return {"ok": True, "files_found": len(entries)}
