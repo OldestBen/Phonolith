@@ -6,32 +6,63 @@ from fastapi.responses import FileResponse
 from pydantic import BaseModel
 import uvicorn
 
-from scanner import scan_library, get_file_record, FILE_DB
+from scanner import scan_library, scan_source_config, get_file_record, FILE_DB
 from watcher import start_watcher, stop_watcher
 
 LIBRARY_PATH = os.environ.get("LIBRARY_PATH", "/music")
 WAVEFORM_PATH = os.environ.get("WAVEFORM_PATH", "/waveforms")
-STATUS = {"files_indexed": 0, "last_scan": None, "watching": False}
+
+STATUS = {
+    "files_indexed": 0,
+    "last_scan": None,
+    "watching": False,
+    "scanning": False,
+    "scan_progress": {
+        "total": 0,
+        "done": 0,
+        "current_file": None,
+        "errors": [],
+        "source_name": None,
+    },
+}
+
+
+def make_progress_cb(source_name: str = ""):
+    def cb(total: int, done: int, current: str | None, error: str | None = None):
+        STATUS["scan_progress"]["total"] = total
+        STATUS["scan_progress"]["done"] = done
+        STATUS["scan_progress"]["current_file"] = current
+        STATUS["scan_progress"]["source_name"] = source_name
+        if error:
+            STATUS["scan_progress"]["errors"].append(error)
+    return cb
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     os.makedirs(WAVEFORM_PATH, exist_ok=True)
-    start_watcher(LIBRARY_PATH, on_file_changed=schedule_scan)
-    STATUS["watching"] = True
+    if os.path.isdir(LIBRARY_PATH):
+        start_watcher(LIBRARY_PATH, on_file_changed=schedule_scan)
+        STATUS["watching"] = True
     yield
     stop_watcher()
 
 
 def schedule_scan():
-    asyncio.create_task(run_scan(LIBRARY_PATH))
+    asyncio.create_task(run_scan(LIBRARY_PATH, ""))
 
 
-async def run_scan(path: str):
+async def run_scan(path: str, source_name: str):
     from datetime import datetime, timezone
-    indexed = await asyncio.to_thread(scan_library, path, WAVEFORM_PATH)
-    STATUS["files_indexed"] = indexed
-    STATUS["last_scan"] = datetime.now(timezone.utc).isoformat()
+    STATUS["scanning"] = True
+    STATUS["scan_progress"]["errors"] = []
+    cb = make_progress_cb(source_name)
+    try:
+        indexed = await asyncio.to_thread(scan_library, path, WAVEFORM_PATH, cb)
+        STATUS["files_indexed"] = indexed
+        STATUS["last_scan"] = datetime.now(timezone.utc).isoformat()
+    finally:
+        STATUS["scanning"] = False
 
 
 app = FastAPI(title="Phonolith Analyst", lifespan=lifespan)
@@ -53,8 +84,86 @@ class ScanRequest(BaseModel):
 
 @app.post("/scan")
 async def scan(req: ScanRequest):
-    asyncio.create_task(run_scan(req.path))
+    asyncio.create_task(run_scan(req.path, ""))
     return {"message": "Scan started"}
+
+
+class SourceConfig(BaseModel):
+    type: str
+    config: dict
+    name: str = ""
+
+
+@app.post("/test-source")
+async def test_source(req: SourceConfig):
+    try:
+        result = await asyncio.to_thread(_test_source_sync, req.type, req.config)
+        return result
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+
+
+def _test_source_sync(src_type: str, config: dict) -> dict:
+    from pathlib import Path
+    from scanner import AUDIO_EXTENSIONS
+
+    if src_type in ("local", "nfs", "iscsi"):
+        path = config.get("path", "")
+        if not path or not os.path.isdir(path):
+            return {"ok": False, "error": f"Path not found: {path}"}
+        count = sum(
+            1 for root, _, files in os.walk(path)
+            for f in files if Path(f).suffix.lower() in AUDIO_EXTENSIONS
+        )
+        return {"ok": True, "files_found": count}
+
+    elif src_type == "smb":
+        import smbclient
+        host = config.get("host", "")
+        share = config.get("share", "")
+        username = config.get("username", "")
+        password = config.get("password", "")
+        domain = config.get("domain", "")
+        if not host or not share:
+            return {"ok": False, "error": "Host and share name are required"}
+        try:
+            smbclient.register_session(host, username=username or None,
+                                       password=password or None, domain=domain or None)
+            smb_path = rf"\\{host}\{share}"
+            entries = list(smbclient.scandir(smb_path))
+            return {"ok": True, "files_found": len(entries)}
+        except Exception as e:
+            return {"ok": False, "error": str(e)}
+
+    return {"ok": False, "error": f"Unknown source type: {src_type}"}
+
+
+class ScanSourceRequest(BaseModel):
+    source_id: int | None = None
+    type: str
+    config: dict
+    name: str = ""
+
+
+@app.post("/scan-source")
+async def scan_source(req: ScanSourceRequest):
+    if STATUS["scanning"]:
+        return {"message": "Scan already in progress", "ok": False}
+    asyncio.create_task(_run_source_scan(req))
+    return {"message": "Scan started", "ok": True}
+
+
+async def _run_source_scan(req: ScanSourceRequest):
+    from datetime import datetime, timezone
+    STATUS["scanning"] = True
+    STATUS["scan_progress"]["errors"] = []
+    cb = make_progress_cb(req.name)
+    try:
+        indexed = await asyncio.to_thread(scan_source_config, req.type, req.config, WAVEFORM_PATH, cb)
+        STATUS["files_indexed"] = STATUS.get("files_indexed", 0) + indexed
+        STATUS["last_scan"] = datetime.now(timezone.utc).isoformat()
+    finally:
+        STATUS["scanning"] = False
 
 
 @app.get("/file/{hash}")
