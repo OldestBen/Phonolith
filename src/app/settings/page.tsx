@@ -19,17 +19,25 @@ function ApiKeyField({ label, testEndpoint }: { label: string; testEndpoint?: st
   const [value, setValue] = useState('')
   const [show, setShow] = useState(false)
   const [testStatus, setTestStatus] = useState<'idle' | 'testing' | 'ok' | 'fail'>('idle')
+  const [testError, setTestError] = useState<string | null>(null)
 
   const handleTest = async () => {
     if (!testEndpoint) return
     setTestStatus('testing')
+    setTestError(null)
     try {
       const r = await fetch(testEndpoint)
-      setTestStatus(r.ok ? 'ok' : 'fail')
+      const ct = r.headers.get('content-type') ?? ''
+      const data = ct.includes('json') ? await r.json() : null
+      // Our custom endpoints return {ok: bool, error?: string}
+      const passed = data !== null ? data.ok === true : r.ok
+      setTestStatus(passed ? 'ok' : 'fail')
+      if (!passed && data?.error) setTestError(data.error)
     } catch {
       setTestStatus('fail')
+      setTestError('Request failed')
     }
-    setTimeout(() => setTestStatus('idle'), 4000)
+    setTimeout(() => { setTestStatus('idle'); setTestError(null) }, 6000)
   }
 
   return (
@@ -63,7 +71,9 @@ function ApiKeyField({ label, testEndpoint }: { label: string; testEndpoint?: st
         )}
       </div>
       {testStatus === 'ok' && <p className="text-success text-xs mt-1">Connection successful</p>}
-      {testStatus === 'fail' && <p className="text-danger text-xs mt-1">Connection failed — check your key</p>}
+      {testStatus === 'fail' && (
+        <p className="text-danger text-xs mt-1">{testError ?? 'Connection failed — check your key'}</p>
+      )}
     </div>
   )
 }
@@ -258,7 +268,7 @@ export default function SettingsPage() {
       <h1 className="text-text-primary text-xl font-bold mb-8">Settings</h1>
 
       <Section title="API Keys">
-        <ApiKeyField label="Genius Access Token" testEndpoint="/api/search?q=test" />
+        <ApiKeyField label="Genius Access Token" testEndpoint="/api/settings/genius" />
         <ApiKeyField label="Discogs User Token" />
         <ApiKeyField label="AcoustID API Key" />
         <p className="text-text-muted text-xs mt-2">

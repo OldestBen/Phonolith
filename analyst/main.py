@@ -88,6 +88,23 @@ async def scan(req: ScanRequest):
     return {"message": "Scan started"}
 
 
+class PingRequest(BaseModel):
+    host: str
+    port: int = 445
+
+
+@app.post("/ping")
+async def ping(req: PingRequest):
+    import socket, time
+    start = time.monotonic()
+    try:
+        with socket.create_connection((req.host, req.port), timeout=5):
+            latency_ms = round((time.monotonic() - start) * 1000)
+            return {"reachable": True, "latency_ms": latency_ms, "port": req.port}
+    except OSError as e:
+        return {"reachable": False, "error": str(e), "port": req.port}
+
+
 class SourceConfig(BaseModel):
     type: str
     config: dict
@@ -118,7 +135,7 @@ def _test_source_sync(src_type: str, config: dict) -> dict:
         return {"ok": True, "files_found": count}
 
     elif src_type == "smb":
-        import smbclient
+        import socket, smbclient
         host = config.get("host", "")
         share = config.get("share", "")
         username = config.get("username", "")
@@ -126,6 +143,13 @@ def _test_source_sync(src_type: str, config: dict) -> dict:
         domain = config.get("domain", "")
         if not host or not share:
             return {"ok": False, "error": "Host and share name are required"}
+        # Step 1: TCP reachability
+        try:
+            with socket.create_connection((host, 445), timeout=5):
+                pass
+        except OSError:
+            return {"ok": False, "error": f"Cannot reach {host}:445 — is the host online and SMB enabled?"}
+        # Step 2: SMB auth + listing
         try:
             smbclient.register_session(host, username=username or None,
                                        password=password or None, domain=domain or None)
@@ -133,7 +157,7 @@ def _test_source_sync(src_type: str, config: dict) -> dict:
             entries = list(smbclient.scandir(smb_path))
             return {"ok": True, "files_found": len(entries)}
         except Exception as e:
-            return {"ok": False, "error": str(e)}
+            return {"ok": False, "error": f"Auth/share error: {e}"}
 
     return {"ok": False, "error": f"Unknown source type: {src_type}"}
 

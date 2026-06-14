@@ -22,14 +22,53 @@ function Field({ label, hint, children }: { label: string; hint?: string; childr
   )
 }
 
+type PingStatus = 'idle' | 'pinging' | 'reachable' | 'unreachable'
+
 export default function AddLibrarySource({ onClose, onSaved }: Props) {
   const [type, setType] = useState<SourceType>('local')
   const [name, setName] = useState('')
   const [config, setConfig] = useState<Record<string, string>>({})
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [pingStatus, setPingStatus] = useState<PingStatus>('idle')
+  const [pingMsg, setPingMsg] = useState('')
 
   const set = (key: string, val: string) => setConfig(c => ({ ...c, [key]: val }))
+
+  const parseUnc = (val: string) => {
+    // Accept \\host\share\subfolder or //host/share/subfolder
+    const norm = val.trim().replace(/\\/g, '/')
+    const match = norm.match(/^\/\/([^/]+)\/([^/]+)(?:\/(.+))?$/)
+    if (match) {
+      const [, host, share, subfolder] = match
+      setConfig(c => ({ ...c, host: host.trim(), share: share.trim(), subfolder: (subfolder ?? '').trim() }))
+    }
+  }
+
+  const handlePing = async () => {
+    if (!config.host) return
+    setPingStatus('pinging')
+    setPingMsg('')
+    try {
+      const r = await fetch('/api/library/ping', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ host: config.host }),
+      })
+      const d = await r.json()
+      if (d.reachable) {
+        setPingStatus('reachable')
+        setPingMsg(`Port 445 open · ${d.latency_ms}ms`)
+      } else {
+        setPingStatus('unreachable')
+        setPingMsg(d.error ?? 'Not reachable')
+      }
+    } catch {
+      setPingStatus('unreachable')
+      setPingMsg('Request failed')
+    }
+    setTimeout(() => { setPingStatus('idle'); setPingMsg('') }, 8000)
+  }
 
   const handleSave = async () => {
     if (!name.trim()) { setError('Name is required'); return }
@@ -115,6 +154,14 @@ export default function AddLibrarySource({ onClose, onSaved }: Props) {
 
           {type === 'smb' && (
             <>
+              <Field label="UNC Path" hint="Paste to auto-fill — e.g. \\192.168.1.10\Music\FLAC">
+                <input
+                  type="text"
+                  placeholder={String.raw`\\192.168.1.10\Music\FLAC`}
+                  onChange={e => parseUnc(e.target.value)}
+                  className={INPUT}
+                />
+              </Field>
               <div className="grid grid-cols-2 gap-3">
                 <Field label="Host / IP">
                   <input type="text" value={config.host ?? ''} onChange={e => set('host', e.target.value)} placeholder="192.168.1.10" className={INPUT} />
@@ -123,6 +170,25 @@ export default function AddLibrarySource({ onClose, onSaved }: Props) {
                   <input type="text" value={config.share ?? ''} onChange={e => set('share', e.target.value)} placeholder="Music" className={INPUT} />
                 </Field>
               </div>
+              {/* Network test */}
+              {config.host && (
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={handlePing}
+                    disabled={pingStatus === 'pinging'}
+                    className="px-3 py-1.5 rounded-lg bg-surface-2 border border-border text-text-muted text-xs hover:text-text-primary hover:border-accent/30 transition-colors disabled:opacity-50"
+                  >
+                    {pingStatus === 'pinging' ? 'Testing…' : `Ping ${config.host}`}
+                  </button>
+                  {pingStatus === 'reachable' && (
+                    <span className="text-success text-xs">✓ {pingMsg}</span>
+                  )}
+                  {pingStatus === 'unreachable' && (
+                    <span className="text-danger text-xs">✗ {pingMsg}</span>
+                  )}
+                </div>
+              )}
               <div className="grid grid-cols-2 gap-3">
                 <Field label="Username">
                   <input type="text" value={config.username ?? ''} onChange={e => set('username', e.target.value)} placeholder="user" className={INPUT} autoComplete="off" />
