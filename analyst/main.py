@@ -21,6 +21,7 @@ STATUS = {
     "watching": False,
     "scanning": False,
     "scan_progress": {
+        "phase": "idle",
         "total": 0,
         "done": 0,
         "current_file": None,
@@ -32,12 +33,19 @@ STATUS = {
 
 def make_progress_cb(source_name: str = ""):
     def cb(total: int, done: int, current: str | None, error: str | None = None):
-        STATUS["scan_progress"]["total"] = total
-        STATUS["scan_progress"]["done"] = done
-        STATUS["scan_progress"]["current_file"] = current
-        STATUS["scan_progress"]["source_name"] = source_name
+        p = STATUS["scan_progress"]
+        if total == -1:
+            p["phase"] = "discovering"
+            p["done"] = done
+            p["total"] = 0
+        else:
+            p["phase"] = "indexing"
+            p["total"] = total
+            p["done"] = done
+        p["current_file"] = current
+        p["source_name"] = source_name
         if error:
-            STATUS["scan_progress"]["errors"].append(error)
+            p["errors"].append(error)
     return cb
 
 
@@ -59,6 +67,7 @@ async def run_scan(path: str, source_name: str):
     from datetime import datetime, timezone
     STATUS["scanning"] = True
     STATUS["scan_progress"]["errors"] = []
+    STATUS["scan_progress"]["phase"] = "indexing"
     cb = make_progress_cb(source_name)
     try:
         indexed = await asyncio.to_thread(scan_library, path, WAVEFORM_PATH, cb)
@@ -66,6 +75,7 @@ async def run_scan(path: str, source_name: str):
         STATUS["last_scan"] = datetime.now(timezone.utc).isoformat()
     finally:
         STATUS["scanning"] = False
+        STATUS["scan_progress"]["phase"] = "idle"
 
 
 app = FastAPI(title="Phonolith Analyst", lifespan=lifespan)
@@ -187,6 +197,7 @@ async def _run_source_scan(req: ScanSourceRequest):
     from datetime import datetime, timezone
     STATUS["scanning"] = True
     STATUS["scan_progress"]["errors"] = []
+    STATUS["scan_progress"]["phase"] = "discovering" if req.type == "smb" else "indexing"
     cb = make_progress_cb(req.name)
     try:
         indexed = await asyncio.to_thread(scan_source_config, req.type, req.config, WAVEFORM_PATH, cb)
@@ -194,6 +205,7 @@ async def _run_source_scan(req: ScanSourceRequest):
         STATUS["last_scan"] = datetime.now(timezone.utc).isoformat()
     finally:
         STATUS["scanning"] = False
+        STATUS["scan_progress"]["phase"] = "idle"
 
 
 @app.get("/file/{hash}")

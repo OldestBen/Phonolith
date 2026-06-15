@@ -1,7 +1,8 @@
-import os
 import hashlib
-import json
-import tempfile
+import io
+import os
+import threading
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Callable
 import httpx
@@ -15,26 +16,33 @@ FILE_DB: dict[str, dict] = {}
 ProgressCb = Callable[[int, int, str | None, str | None], None] | None
 
 
-def blake3_hash(path: str) -> str:
+def _hash_file(path: str) -> str:
     try:
-        import blake3
-        h = blake3.blake3()
-        with open(path, "rb") as f:
-            while chunk := f.read(65536):
-                h.update(chunk)
-        return h.hexdigest()
+        import blake3 as _b3
+        h = _b3.blake3()
     except ImportError:
         h = hashlib.sha256()
-        with open(path, "rb") as f:
-            while chunk := f.read(65536):
-                h.update(chunk)
-        return h.hexdigest()
+    with open(path, "rb") as f:
+        while chunk := f.read(65536):
+            h.update(chunk)
+    return h.hexdigest()
 
 
-def read_tags(path: str) -> dict:
+def _hash_fileobj(fileobj) -> str:
+    try:
+        import blake3 as _b3
+        h = _b3.blake3()
+    except ImportError:
+        h = hashlib.sha256()
+    while chunk := fileobj.read(65536):
+        h.update(chunk)
+    return h.hexdigest()
+
+
+def _read_tags(fileobj_or_path) -> dict:
     try:
         from mutagen import File as MutagenFile
-        audio = MutagenFile(path, easy=True)
+        audio = MutagenFile(fileobj_or_path, easy=True)
         if not audio:
             return {}
         info = audio.info
@@ -52,40 +60,33 @@ def read_tags(path: str) -> dict:
         return {}
 
 
-def detect_format(path: str) -> str:
-    ext = Path(path).suffix.lower().lstrip(".")
-    return ext or "unknown"
-
-
-def detect_bit_depth(path: str) -> int | None:
+def _detect_bit_depth(path: str) -> int | None:
     try:
         from mutagen.flac import FLAC
         if path.lower().endswith(".flac"):
-            audio = FLAC(path)
-            return audio.info.bits_per_sample
+            return FLAC(path).info.bits_per_sample
     except Exception:
         pass
     return None
 
 
-def compute_dr_score(path: str) -> float | None:
+def _compute_dr(path: str) -> float | None:
     try:
         import numpy as np
         import librosa
-        y, sr = librosa.load(path, sr=None, mono=True, duration=60)
+        y, _ = librosa.load(path, sr=None, mono=True, duration=60)
         if len(y) == 0:
             return None
-        rms = np.sqrt(np.mean(y ** 2))
-        peak = np.max(np.abs(y))
+        rms = float(np.sqrt(np.mean(y ** 2)))
+        peak = float(np.max(np.abs(y)))
         if rms < 1e-10:
             return None
-        crest = 20 * np.log10(peak / rms)
-        return round(float(crest), 2)
+        return round(20 * np.log10(peak / rms), 2)
     except Exception:
         return None
 
 
-def detect_upscale(path: str) -> bool | None:
+def _detect_upscale(path: str) -> bool | None:
     try:
         import numpy as np
         import librosa
@@ -98,28 +99,26 @@ def detect_upscale(path: str) -> bool | None:
         mask_lo = (freqs > 1000) & (freqs < 18000)
         if mask_hi.sum() == 0 or mask_lo.sum() == 0:
             return None
-        energy_hi = np.mean(fft[mask_hi] ** 2)
-        energy_lo = np.mean(fft[mask_lo] ** 2)
-        ratio = energy_hi / (energy_lo + 1e-12)
+        ratio = float(np.mean(fft[mask_hi] ** 2)) / (float(np.mean(fft[mask_lo] ** 2)) + 1e-12)
         return ratio > 1e-6
     except Exception:
         return None
 
 
-def render_waveform(path: str, hash: str, waveform_path: str) -> str | None:
-    output = os.path.join(waveform_path, f"{hash}.png")
+def _render_waveform(path: str, file_hash: str, waveform_path: str) -> str | None:
+    output = os.path.join(waveform_path, f"{file_hash}.png")
     if os.path.exists(output):
         return output
     try:
         import numpy as np
         import librosa
         from PIL import Image, ImageDraw
-        y, sr = librosa.load(path, sr=None, mono=True, duration=120)
+        y, _ = librosa.load(path, sr=None, mono=True, duration=120)
         W, H = 1200, 200
         img = Image.new("RGB", (W, H), "#08080a")
         draw = ImageDraw.Draw(img)
         chunk = max(1, len(y) // W)
-        peaks = [float(np.max(np.abs(y[i*chunk:(i+1)*chunk]))) for i in range(W)]
+        peaks = [float(np.max(np.abs(y[i * chunk:(i + 1) * chunk]))) for i in range(W)]
         max_peak = max(peaks) or 1
         for x, peak in enumerate(peaks):
             h = int((peak / max_peak) * (H // 2 - 2))
@@ -131,16 +130,7 @@ def render_waveform(path: str, hash: str, waveform_path: str) -> str | None:
         return None
 
 
-def get_fingerprint_data(path: str) -> str | None:
-    try:
-        import acoustid
-        duration, fp = acoustid.fingerprint_file(path)
-        return fp.decode() if isinstance(fp, bytes) else fp
-    except Exception:
-        return None
-
-
-def post_to_app(data: dict) -> None:
+def _post_to_app(data: dict) -> None:
     try:
         httpx.post(f"{APP_URL}/api/library/ingest", json=data, timeout=10)
     except Exception:
@@ -148,15 +138,21 @@ def post_to_app(data: dict) -> None:
 
 
 def index_file(path: str, waveform_path: str, display_path: str | None = None) -> dict | None:
+    """Full analysis: hash + tags + librosa DR + waveform. Used for local sources."""
     try:
-        h = blake3_hash(path)
-        tags = read_tags(path)
-        fmt = detect_format(display_path or path)
-        bit_depth = detect_bit_depth(path)
-        dr = compute_dr_score(path)
-        spectral_ok = detect_upscale(path)
-        waveform = render_waveform(path, h, waveform_path)
-        fp = get_fingerprint_data(path)
+        h = _hash_file(path)
+        tags = _read_tags(path)
+        fmt = Path(display_path or path).suffix.lower().lstrip(".")
+        bit_depth = _detect_bit_depth(path)
+        dr = _compute_dr(path)
+        spectral_ok = _detect_upscale(path)
+        waveform = _render_waveform(path, h, waveform_path)
+        try:
+            import acoustid
+            raw_fp = acoustid.fingerprint_file(path)
+            fp = raw_fp[1].decode() if isinstance(raw_fp[1], bytes) else raw_fp[1]
+        except Exception:
+            fp = None
 
         record = {
             "blake3_hash": h,
@@ -171,12 +167,61 @@ def index_file(path: str, waveform_path: str, display_path: str | None = None) -
             "waveform_path": waveform,
             "fingerprint": fp,
         }
-
         FILE_DB[h] = record
-        post_to_app(record)
+        _post_to_app(record)
         return record
     except Exception:
         return None
+
+
+def _smb_fast_index(smb_path: str, display: str) -> dict | None:
+    """
+    Fast SMB indexing: streams the file once to compute hash + grab first
+    512 KB for mutagen tags. No temp file, no librosa, no waveform.
+    """
+    import smbclient
+
+    fmt = Path(display).suffix.lower().lstrip(".")
+
+    try:
+        import blake3 as _b3
+        h = _b3.blake3()
+    except ImportError:
+        h = hashlib.sha256()
+
+    HEADER_LIMIT = 524288  # 512 KB — enough for any tag block
+    header_buf = io.BytesIO()
+    header_full = False
+
+    with smbclient.open_file(smb_path, mode="rb") as f:
+        while chunk := f.read(65536):
+            h.update(chunk)
+            if not header_full:
+                header_buf.write(chunk)
+                if header_buf.tell() >= HEADER_LIMIT:
+                    header_full = True
+
+    file_hash = h.hexdigest()
+
+    header_buf.seek(0)
+    tags = _read_tags(header_buf)
+
+    record = {
+        "blake3_hash": file_hash,
+        "file_path": display,
+        "format": fmt,
+        "bitrate": tags.get("bitrate"),
+        "sample_rate": tags.get("sample_rate"),
+        "bit_depth": None,
+        "duration_ms": int(tags.get("length", 0) * 1000) if tags.get("length") else None,
+        "dr_score": None,
+        "spectral_ok": None,
+        "waveform_path": None,
+        "fingerprint": None,
+    }
+    FILE_DB[file_hash] = record
+    _post_to_app(record)
+    return record
 
 
 def scan_library(library_path: str, waveform_path: str, progress_cb: ProgressCb = None) -> int:
@@ -193,8 +238,7 @@ def scan_library(library_path: str, waveform_path: str, progress_cb: ProgressCb 
     for i, path in enumerate(all_files):
         error = None
         try:
-            result = index_file(path, waveform_path)
-            if result:
+            if index_file(path, waveform_path):
                 indexed += 1
         except Exception as e:
             error = str(e)
@@ -218,45 +262,58 @@ def scan_smb(config: dict, waveform_path: str, progress_cb: ProgressCb = None) -
     if effective_user and domain:
         effective_user = f"{domain}\\{effective_user}"
     smbclient.register_session(host, username=effective_user, password=password)
+
     smb_root = rf"\\{host}\{share}"
     if subfolder:
         smb_root = rf"{smb_root}\{subfolder}"
 
+    # ── Phase 1: Discovery — emit -1 total so caller shows "discovering" UI ──
     all_files: list[str] = []
     try:
         for dirpath, _, files in smbclient.walk(smb_root):
             for fname in files:
                 if Path(fname).suffix.lower() in AUDIO_EXTENSIONS:
                     all_files.append(rf"{dirpath}\{fname}")
+                    if progress_cb:
+                        progress_cb(-1, len(all_files), fname, None)
     except Exception as e:
         print(f"[SMB] walk error: {e}")
         return 0
 
+    if not all_files:
+        if progress_cb:
+            progress_cb(0, 0, None, None)
+        return 0
+
+    # Switch progress to indexing phase
     if progress_cb:
         progress_cb(len(all_files), 0, None, None)
 
+    # ── Phase 2: Fast parallel metadata indexing (4 workers) ─────────────────
     indexed = 0
-    for i, smb_path in enumerate(all_files):
-        error = None
-        try:
-            suffix = Path(smb_path.replace("\\", "/")).suffix
-            with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tmp:
-                with smbclient.open_file(smb_path, mode="rb") as f:
-                    tmp.write(f.read())
-                tmp_path = tmp.name
-            try:
-                display = smb_path.replace("\\", "/")
-                result = index_file(tmp_path, waveform_path, display_path=display)
-                if result:
-                    indexed += 1
-            finally:
-                os.unlink(tmp_path)
-        except Exception as e:
-            error = str(e)
-            print(f"[SMB] error indexing {smb_path}: {e}")
+    done_count = 0
+    lock = threading.Lock()
 
-        if progress_cb:
-            progress_cb(len(all_files), i + 1, smb_path.replace("\\", "/"), error)
+    def process_one(smb_path: str) -> tuple[bool, str, str | None]:
+        display = smb_path.replace("\\", "/")
+        try:
+            record = _smb_fast_index(smb_path, display)
+            return (record is not None, display, None)
+        except Exception as e:
+            print(f"[SMB] index error {smb_path}: {e}")
+            return (False, display, str(e))
+
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        futures = {pool.submit(process_one, p): p for p in all_files}
+        for fut in as_completed(futures):
+            ok, display, error = fut.result()
+            with lock:
+                done_count += 1
+                if ok:
+                    indexed += 1
+                local_done = done_count
+            if progress_cb:
+                progress_cb(len(all_files), local_done, display, error)
 
     return indexed
 

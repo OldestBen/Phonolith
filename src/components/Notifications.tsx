@@ -3,6 +3,7 @@
 import { useState, useEffect, useRef } from 'react'
 
 interface ScanProgress {
+  phase: 'idle' | 'discovering' | 'indexing'
   total: number
   done: number
   current_file: string | null
@@ -48,6 +49,7 @@ export default function Notifications() {
 
   const scanning = status?.scanning ?? false
   const progress = status?.scan_progress
+  const phase = progress?.phase ?? 'idle'
   const pct = progress && progress.total > 0
     ? Math.round((progress.done / progress.total) * 100)
     : 0
@@ -84,24 +86,47 @@ export default function Notifications() {
                   <span className="text-text-primary text-xs font-medium truncate pr-2">
                     {progress.source_name ? `Scanning ${progress.source_name}` : 'Library scan in progress'}
                   </span>
-                  <span className="text-accent text-xs font-mono shrink-0">{pct}%</span>
-                </div>
-                <div className="w-full h-1.5 bg-background rounded-full overflow-hidden">
-                  <div
-                    className="h-full bg-accent rounded-full transition-all duration-500"
-                    style={{ width: `${pct}%` }}
-                  />
-                </div>
-                <div className="flex justify-between text-text-muted text-[11px]">
-                  <span>{progress.done.toLocaleString()} / {progress.total.toLocaleString()} files</span>
-                  {progress.errors.length > 0 && (
-                    <span className="text-warning">{progress.errors.length} error{progress.errors.length !== 1 ? 's' : ''}</span>
+                  {phase === 'indexing' && (
+                    <span className="text-accent text-xs font-mono shrink-0">{pct}%</span>
                   )}
                 </div>
-                {progress.current_file && (
-                  <p className="text-text-muted text-[10px] font-mono truncate">
-                    {progress.current_file.split(/[/\\]/).pop()}
-                  </p>
+
+                {phase === 'discovering' ? (
+                  <>
+                    <div className="flex items-center gap-2">
+                      <div className="w-full h-1.5 bg-background rounded-full overflow-hidden">
+                        <div className="h-full bg-accent/40 rounded-full animate-pulse w-full" />
+                      </div>
+                    </div>
+                    <p className="text-text-muted text-[11px]">
+                      Discovering files… {progress.done.toLocaleString()} found
+                    </p>
+                    {progress.current_file && (
+                      <p className="text-text-muted text-[10px] font-mono truncate">
+                        {progress.current_file.split(/[/\\]/).pop()}
+                      </p>
+                    )}
+                  </>
+                ) : (
+                  <>
+                    <div className="w-full h-1.5 bg-background rounded-full overflow-hidden">
+                      <div
+                        className="h-full bg-accent rounded-full transition-all duration-300"
+                        style={{ width: `${pct}%` }}
+                      />
+                    </div>
+                    <div className="flex justify-between text-text-muted text-[11px]">
+                      <span>{progress.done.toLocaleString()} / {progress.total.toLocaleString()} files</span>
+                      {progress.errors.length > 0 && (
+                        <span className="text-warning">{progress.errors.length} error{progress.errors.length !== 1 ? 's' : ''}</span>
+                      )}
+                    </div>
+                    {progress.current_file && (
+                      <p className="text-text-muted text-[10px] font-mono truncate">
+                        {progress.current_file.split(/[/\\]/).pop()}
+                      </p>
+                    )}
+                  </>
                 )}
               </div>
             ) : status?.last_scan ? (
