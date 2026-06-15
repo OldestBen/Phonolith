@@ -1,9 +1,8 @@
 'use client'
 
-import { useState, useEffect, useRef } from 'react'
-import Link from 'next/link'
+import { useState, useEffect } from 'react'
 
-// ─── Helper components ───────────────────────────────────────────────────────
+// ─── Helper components ────────────────────────────────────────────────────────
 
 function Section({ id, title, children }: { id: string; title: string; children: React.ReactNode }) {
   return (
@@ -19,6 +18,15 @@ function SubSection({ id, title, children }: { id: string; title: string; childr
     <div id={id} className="mb-8 scroll-mt-8">
       <h3 className="text-text-primary text-lg font-semibold mb-3">{title}</h3>
       <div className="text-text-muted text-sm leading-relaxed space-y-3">{children}</div>
+    </div>
+  )
+}
+
+function SubSubSection({ title, children }: { title: string; children: React.ReactNode }) {
+  return (
+    <div className="mb-5">
+      <h4 className="text-text-primary text-sm font-semibold mb-2">{title}</h4>
+      <div className="text-text-muted text-sm leading-relaxed space-y-2">{children}</div>
     </div>
   )
 }
@@ -52,13 +60,13 @@ function Warning({ children }: { children: React.ReactNode }) {
 
 function CodeBlock({ children }: { children: string }) {
   return (
-    <pre className="bg-background border border-border rounded-lg p-4 text-xs font-mono text-text-primary overflow-x-auto">
+    <pre className="bg-background border border-border rounded-lg p-4 text-xs font-mono text-text-primary overflow-x-auto whitespace-pre-wrap">
       <code>{children}</code>
     </pre>
   )
 }
 
-function Table({ headers, rows }: { headers: string[]; rows: string[][] }) {
+function Table({ headers, rows }: { headers: string[]; rows: (string | React.ReactNode)[][] }) {
   return (
     <div className="overflow-x-auto">
       <table className="w-full text-sm border-collapse">
@@ -83,7 +91,47 @@ function Table({ headers, rows }: { headers: string[]; rows: string[][] }) {
   )
 }
 
-// ─── TOC data ────────────────────────────────────────────────────────────────
+function StatusBadge({ status }: { status: 'implemented' | 'partial' | 'planned' }) {
+  const cfg = {
+    implemented: 'bg-success/15 text-success border-success/30',
+    partial:     'bg-warning/15 text-warning border-warning/30',
+    planned:     'bg-surface-2 text-text-muted border-border',
+  }
+  const label = { implemented: 'Implemented', partial: 'Partial', planned: 'Planned' }
+  return (
+    <span className={`inline-block text-[10px] font-semibold uppercase tracking-wider px-2 py-0.5 rounded border ${cfg[status]}`}>
+      {label[status]}
+    </span>
+  )
+}
+
+function SubsystemCard({
+  name, layer, status, role, children,
+}: {
+  name: string
+  layer: string
+  status: 'implemented' | 'partial' | 'planned'
+  role: string
+  children: React.ReactNode
+}) {
+  return (
+    <div className="bg-surface-2 border border-border rounded-xl p-5 mb-6">
+      <div className="flex items-start justify-between gap-3 mb-3">
+        <div>
+          <div className="flex items-center gap-2 mb-0.5">
+            <span className="text-text-primary font-bold text-base">{name}</span>
+            <span className="text-text-muted text-xs border border-border rounded px-1.5 py-0.5">{layer}</span>
+          </div>
+          <p className="text-text-muted text-xs">{role}</p>
+        </div>
+        <StatusBadge status={status} />
+      </div>
+      <div className="text-text-muted text-sm leading-relaxed space-y-2">{children}</div>
+    </div>
+  )
+}
+
+// ─── TOC data ─────────────────────────────────────────────────────────────────
 
 const TOC = [
   {
@@ -95,10 +143,48 @@ const TOC = [
     ]
   },
   {
+    id: 'architecture', label: 'Architecture', children: [
+      { id: 'arch-overview', label: 'Overview' },
+      { id: 'arch-layers', label: 'Layer Model' },
+      { id: 'arch-data-flow', label: 'Data Flow' },
+      { id: 'arch-docker', label: 'Docker Services' },
+    ]
+  },
+  {
+    id: 'subsystems', label: 'Subsystems', children: [
+      { id: 'resonancefs', label: 'ResonanceFS' },
+      { id: 'tremor', label: 'Tremor' },
+      { id: 'engram', label: 'Engram' },
+      { id: 'lexicon', label: 'Lexicon' },
+      { id: 'prism', label: 'Prism' },
+      { id: 'crest', label: 'Crest' },
+      { id: 'aegis', label: 'Aegis' },
+      { id: 'bit-forge', label: 'Bit-Forge' },
+      { id: 'lucid', label: 'Lucid' },
+      { id: 'flux', label: 'Flux' },
+      { id: 'echograph', label: 'EchoGraph' },
+      { id: 'cathode', label: 'Cathode' },
+      { id: 'polyphony', label: 'Polyphony' },
+      { id: 'sonic-codex', label: 'Sonic Codex' },
+    ]
+  },
+  {
+    id: 'library', label: 'Library', children: [
+      { id: 'supported-formats', label: 'Supported Formats' },
+      { id: 'adding-sources', label: 'Adding Sources' },
+      { id: 'smb-setup', label: 'SMB / NAS Setup' },
+      { id: 'scan-pipeline', label: 'Scan Pipeline' },
+      { id: 'deep-analysis', label: 'Deep Analysis' },
+      { id: 'watcher', label: 'Auto-watcher' },
+    ]
+  },
+  {
     id: 'search', label: 'Search & Discovery', children: [
       { id: 'how-search-works', label: 'How Search Works' },
       { id: 'artist-pages', label: 'Artist Pages' },
       { id: 'song-pages', label: 'Song Pages' },
+      { id: 'lyrics', label: 'Lyrics' },
+      { id: 'credits', label: 'Credits & Annotations' },
     ]
   },
   {
@@ -106,50 +192,50 @@ const TOC = [
       { id: 'galaxy-view', label: 'Galaxy View' },
       { id: 'viz-navigation', label: 'Navigation' },
       { id: 'connection-types', label: 'Connection Types' },
-      { id: 'timeline-view', label: 'Timeline View' },
       { id: 'viz-controls', label: 'VizControls Panel' },
     ]
   },
   {
-    id: 'library', label: 'Library', children: [
-      { id: 'audio-formats', label: 'Supported Formats' },
-      { id: 'adding-sources', label: 'Adding Sources' },
-      { id: 'smb-setup', label: 'SMB Setup' },
-      { id: 'analysis-pipeline', label: 'Analysis Pipeline' },
-      { id: 'dr-score', label: 'DR Score' },
-      { id: 'watcher', label: 'Auto-watcher' },
-    ]
-  },
-  {
-    id: 'history', label: 'History & Tags', children: [
+    id: 'history-tags', label: 'History & Tags', children: [
       { id: 'history-tracking', label: 'History Tracking' },
-      { id: 'echograph', label: 'EchoGraph' },
       { id: 'tags', label: 'Tags' },
     ]
   },
   {
     id: 'settings', label: 'Settings', children: [
       { id: 'api-keys', label: 'API Keys' },
-      { id: 's3-backup', label: 'S3 Backup' },
-      { id: 'ports', label: 'Port Configuration' },
+      { id: 'runtime-keys', label: 'Runtime Key Management' },
+      { id: 'backup-settings', label: 'S3 Backup' },
+      { id: 'port-config', label: 'Port Configuration' },
     ]
   },
   {
-    id: 'services', label: 'Services Reference', children: [
-      { id: 'service-app', label: 'app (Next.js)' },
-      { id: 'service-db', label: 'db (PostgreSQL)' },
-      { id: 'service-redis', label: 'redis' },
-      { id: 'service-analyst', label: 'analyst (Python)' },
+    id: 'api-reference', label: 'API Reference', children: [
+      { id: 'api-search', label: 'Search' },
+      { id: 'api-artist', label: 'Artist' },
+      { id: 'api-song', label: 'Song' },
+      { id: 'api-library', label: 'Library' },
+      { id: 'api-analyst', label: 'Analyst Sidecar' },
     ]
   },
-  { id: 'troubleshooting', label: 'Troubleshooting', children: [] },
+  {
+    id: 'deployment', label: 'Deployment', children: [
+      { id: 'deploy-docker', label: 'Docker Compose' },
+      { id: 'deploy-env', label: 'Environment Variables' },
+      { id: 'deploy-reverse-proxy', label: 'Reverse Proxy' },
+    ]
+  },
+  {
+    id: 'troubleshooting', label: 'Troubleshooting', children: [
+      { id: 'ts-smb', label: 'SMB Issues' },
+      { id: 'ts-migrations', label: 'Database Migrations' },
+      { id: 'ts-scan', label: 'Scan Problems' },
+      { id: 'ts-genius', label: 'Genius API' },
+    ]
+  },
 ]
 
-// Flat list of all section IDs for IntersectionObserver
-const ALL_IDS = TOC.flatMap(section => [
-  section.id,
-  ...section.children.map(c => c.id),
-])
+const ALL_IDS = TOC.flatMap(section => [section.id, ...section.children.map(c => c.id)])
 
 // ─── Page component ───────────────────────────────────────────────────────────
 
@@ -158,22 +244,16 @@ export default function DocsPage() {
 
   useEffect(() => {
     const observers: IntersectionObserver[] = []
-
     ALL_IDS.forEach(id => {
       const el = document.getElementById(id)
       if (!el) return
       const observer = new IntersectionObserver(
-        entries => {
-          entries.forEach(entry => {
-            if (entry.isIntersecting) setActiveId(id)
-          })
-        },
+        entries => { entries.forEach(e => { if (e.isIntersecting) setActiveId(id) }) },
         { rootMargin: '-10% 0px -80% 0px', threshold: 0 }
       )
       observer.observe(el)
       observers.push(observer)
     })
-
     return () => observers.forEach(o => o.disconnect())
   }, [])
 
@@ -186,18 +266,14 @@ export default function DocsPage() {
           <nav className="space-y-1">
             {TOC.map(section => (
               <div key={section.id}>
-                {/* Top-level section link */}
                 <a
                   href={`#${section.id}`}
                   className={`block text-sm py-1.5 px-2 rounded transition-colors duration-100 font-medium ${
-                    activeId === section.id
-                      ? 'text-accent bg-accent/10'
-                      : 'text-text-primary hover:text-accent hover:bg-accent/5'
+                    activeId === section.id ? 'text-accent bg-accent/10' : 'text-text-primary hover:text-accent hover:bg-accent/5'
                   }`}
                 >
                   {section.label}
                 </a>
-                {/* Child links */}
                 {section.children.length > 0 && (
                   <div className="ml-3 border-l border-border/60 pl-3 mt-0.5 mb-1 space-y-0.5">
                     {section.children.map(child => (
@@ -205,9 +281,7 @@ export default function DocsPage() {
                         key={child.id}
                         href={`#${child.id}`}
                         className={`block text-xs py-1 px-1.5 rounded transition-colors duration-100 ${
-                          activeId === child.id
-                            ? 'text-accent bg-accent/10'
-                            : 'text-text-muted hover:text-text-primary hover:bg-surface-2'
+                          activeId === child.id ? 'text-accent bg-accent/10' : 'text-text-muted hover:text-text-primary hover:bg-surface-2'
                         }`}
                       >
                         {child.label}
@@ -226,797 +300,1343 @@ export default function DocsPage() {
         <div className="mb-12">
           <h1 className="text-text-primary text-3xl font-bold mb-2">Phonolith Documentation</h1>
           <p className="text-text-muted text-base">
-            Everything you need to set up, configure, and get the most out of Phonolith — your self-hosted command centre for music.
+            The self-hosted command centre for the music obsessive. Every subsystem, every setting, every wire — documented.
           </p>
         </div>
 
-        {/* ── 1. Getting Started ── */}
+        {/* ═══════════════════════════════════════════════════════════ */}
+        {/* 1. Getting Started                                         */}
+        {/* ═══════════════════════════════════════════════════════════ */}
         <Section id="getting-started" title="Getting Started">
           <SubSection id="what-is-phonolith" title="What is Phonolith?">
             <p>
-              Phonolith is a self-hosted platform for exploring music, analysing your local audio library, and tracking your listening habits over time. It runs entirely on your own hardware using Docker — your data never leaves your machine.
+              Phonolith is a self-hosted, Docker-native music platform built for audiophiles who want total control
+              over their library, metadata, and listening history. It combines a Genius-powered discovery engine
+              (search, lyrics, credits, annotations) with a local audio library analyser that inspects every file
+              you own for quality, authenticity, and provenance.
             </p>
             <p>
-              At its core, Phonolith combines two things: rich music metadata and lyrics sourced from Genius.com, and deep technical analysis of your local audio files. Think of it as a personal music knowledge base crossed with an audiophile analysis tool.
+              Unlike streaming services, Phonolith runs entirely on your own hardware. Your library, your metadata,
+              your history — none of it leaves your machine. The only external calls are to Genius, MusicBrainz,
+              Discogs, and AcoustID, and all results are cached locally after the first fetch.
             </p>
-            <p>Key capabilities at a glance:</p>
-            <ul className="list-disc list-inside space-y-1 pl-2">
-              <li>Search Genius.com for any artist and browse their full discography</li>
-              <li>Read lyrics, production credits, and editorial annotations for any song</li>
-              <li>Visualise an artist&apos;s catalogue as an interactive force-directed galaxy</li>
-              <li>Index local music files (FLAC, MP3, WAV, and more) with full audio analysis</li>
-              <li>Connect to network shares (SMB, NFS, iSCSI) to analyse music on a NAS</li>
-              <li>Track which songs you&apos;ve read lyrics for, with weekly EchoGraph charts</li>
-              <li>Apply colour-coded tags to songs and filter visualisations by tag</li>
-            </ul>
-            <Note>
-              Phonolith requires a free Genius API key to fetch lyrics and metadata. Everything else — storage, analysis, history — runs locally with no external dependencies.
-            </Note>
+            <p>
+              Phonolith is built on a named-subsystem model: each capability is a distinct engine with a name,
+              a clear responsibility, and a defined interface. This makes the system transparent, extensible, and
+              easy to reason about. See the <a href="#subsystems" className="text-accent underline">Subsystems</a> section for a full breakdown.
+            </p>
           </SubSection>
 
           <SubSection id="requirements" title="Requirements">
-            <p>Before you install Phonolith, make sure you have the following:</p>
             <Table
-              headers={['Requirement', 'Details']}
+              headers={['Requirement', 'Minimum', 'Recommended']}
               rows={[
-                ['Docker Desktop (Mac/Windows) or Docker Engine (Linux)', 'Version 24+ recommended. Docker Compose V2 is required (included with Docker Desktop).'],
-                ['Genius API key', 'Free account at genius.com/api-clients. Create an API Client and copy the Client Access Token.'],
-                ['2 GB RAM minimum', 'The analyst container uses ffmpeg and numpy for audio processing. 4 GB+ recommended for large libraries.'],
-                ['1 GB disk space (base install)', 'Add ~500 KB per audio file analysed (waveform PNG + DB row). Library files themselves are not copied.'],
-                ['Network share access (optional)', 'SMB/NFS/iSCSI shares must be reachable from the Docker host. SMB requires TCP port 445 open on the NAS.'],
+                ['Docker', '24.0+', '25.0+'],
+                ['Docker Compose', 'v2.0+', 'v2.20+'],
+                ['RAM', '2 GB', '8 GB (for large libraries)'],
+                ['Storage', '5 GB (app)', '+ your music collection'],
+                ['Network', 'LAN access to NAS', 'Gigabit for SMB scanning'],
+                ['OS', 'Any Docker host', 'Linux for Lucid playback (future)'],
               ]}
             />
-            <Tip>
-              On Linux, ensure your user is in the <code className="font-mono bg-surface-2 px-1 rounded">docker</code> group so you can run Docker commands without <code className="font-mono bg-surface-2 px-1 rounded">sudo</code>.
-            </Tip>
+            <Note>Phonolith is tested on macOS (Apple Silicon) and Linux (x86-64 / ARM64). Windows is supported via Docker Desktop but SMB scanning may require additional configuration.</Note>
           </SubSection>
 
           <SubSection id="quick-start" title="Quick Start">
-            <p>Clone the repository, configure your environment, and start the stack:</p>
+            <p>Clone the repository and start all four services with a single command:</p>
             <CodeBlock>{`git clone https://github.com/OldestBen/Phonolith
 cd Phonolith
-cp .env.example .env`}</CodeBlock>
-            <p>Open <code className="font-mono bg-surface-2 px-1 rounded">.env</code> in your editor and set your Genius access token:</p>
-            <CodeBlock>{`# Required
-GENIUS_ACCESS_TOKEN=your_token_here
-
-# Optional — only needed if you want to expose the DB/Redis to your host
-# DB_PORT=5432
-# REDIS_PORT=6379`}</CodeBlock>
-            <p>Start all four services:</p>
-            <CodeBlock>{`docker compose up --build`}</CodeBlock>
+cp .env.example .env
+# Edit .env — at minimum set GENIUS_ACCESS_TOKEN
+nano .env
+docker compose up --build`}</CodeBlock>
             <p>
-              The first build takes 2–4 minutes as Docker pulls base images and installs dependencies. On subsequent starts, <code className="font-mono bg-surface-2 px-1 rounded">docker compose up</code> (without <code className="font-mono bg-surface-2 px-1 rounded">--build</code>) starts in seconds.
+              On first start, the <code className="text-accent">app</code> container automatically runs all pending
+              database migrations before accepting traffic. The analyst sidecar starts in parallel. When you see
+              both <code className="text-accent">✓ Ready in</code> (Next.js) and{' '}
+              <code className="text-accent">Application startup complete</code> (FastAPI), open{' '}
+              <code className="text-accent">http://localhost:3000</code>.
             </p>
-            <p>Once you see <code className="font-mono bg-surface-2 px-1 rounded">Ready on http://localhost:3000</code> in the logs, open your browser:</p>
-            <CodeBlock>{`http://localhost:3000`}</CodeBlock>
-            <Note>
-              Database migrations run automatically when the app container starts. You do not need to run any migration commands manually.
-            </Note>
+            <Tip>
+              The Genius Access Token is the only truly required credential. Everything else (Discogs, AcoustID, S3) is optional and can be added at any time via Settings → API Keys without restarting the stack.
+            </Tip>
           </SubSection>
 
           <SubSection id="first-steps" title="First Steps">
-            <p>Here&apos;s a suggested path for your first session with Phonolith:</p>
-            <ol className="list-decimal list-inside space-y-2 pl-2">
-              <li>Open <strong className="text-text-primary">http://localhost:3000</strong> — you land on the Search page.</li>
-              <li>Type an artist name in the search bar and press Enter or click a result card.</li>
-              <li>You are taken to the <strong className="text-text-primary">Artist page</strong> — all albums and songs fetched from Genius, grouped by album, newest first.</li>
-              <li>Click <strong className="text-text-primary">Visualize</strong> (top-right of the artist page) to open the force-directed galaxy for that artist.</li>
-              <li>In the galaxy, drag to pan, scroll to zoom, click a song node to see its details, and double-click an album node to enter focus mode.</li>
-              <li>Click any song title (in the artist page or the galaxy detail panel) to open the <strong className="text-text-primary">Song page</strong>.</li>
-              <li>On the Song page, click the <strong className="text-text-primary">Lyrics</strong> tab. Lyrics load from Genius and are stored in the database — the next visit is instant.</li>
-              <li>Click <strong className="text-text-primary">Download</strong> to save lyrics as a <code className="font-mono bg-surface-2 px-1 rounded">.txt</code> file, or <strong className="text-text-primary">Mark as read</strong> to record a history event.</li>
-              <li>Visit <strong className="text-text-primary">Settings → Library Sources</strong> to add a local music folder or network share and start analysing your audio files.</li>
+            <p>After the stack is up:</p>
+            <ol className="list-decimal list-inside space-y-2 text-text-muted">
+              <li><strong className="text-text-primary">Add a Genius API key</strong> — Settings → API Keys → Genius Access Token → Save, then hit Test. A green checkmark means you&apos;re connected.</li>
+              <li><strong className="text-text-primary">Search for an artist</strong> — use the home page search bar. Results are fetched from Genius and cached in your local database.</li>
+              <li><strong className="text-text-primary">Add a library source</strong> — Settings → Library Sources → Add Source. Choose Local, SMB, NFS, or iSCSI.</li>
+              <li><strong className="text-text-primary">Scan your library</strong> — press Scan on the source row. The bell icon in the top-right shows live progress.</li>
+              <li><strong className="text-text-primary">Visualize an artist</strong> — open any artist page and click Visualize, or go to the Visualize section and search for an artist.</li>
             </ol>
           </SubSection>
         </Section>
 
-        {/* ── 2. Search & Discovery ── */}
-        <Section id="search" title="Search & Discovery">
-          <SubSection id="how-search-works" title="How Search Works">
+        {/* ═══════════════════════════════════════════════════════════ */}
+        {/* 2. Architecture                                            */}
+        {/* ═══════════════════════════════════════════════════════════ */}
+        <Section id="architecture" title="Architecture">
+          <SubSection id="arch-overview" title="Overview">
             <p>
-              When you type in the search bar, Phonolith queries the Genius API in real time and returns artist results ranked by Genius&apos;s own relevance score. Results include the artist&apos;s name, profile image, and follower count.
+              Phonolith is a four-container Docker application. The core application is a Next.js 14 monolith
+              (App Router, TypeScript, server-side rendering) backed by PostgreSQL for persistent storage and
+              Redis for caching. A Python FastAPI sidecar — the <strong>Analyst</strong> — handles all
+              computationally intensive audio work: file indexing, spectral analysis, waveform rendering, and
+              acoustic fingerprinting.
             </p>
-            <p>
-              On first visit to an artist&apos;s page, Phonolith fetches their full song catalogue from the Genius API and caches it in PostgreSQL. Subsequent visits load from the local database — typically under 100ms, regardless of how large the catalogue is.
-            </p>
-            <p>Caching behaviour by resource type:</p>
+            <CodeBlock>{`┌──────────────────────────────────────────────────────────────┐
+│                        Docker Network                        │
+│                                                              │
+│   ┌──────────────┐    ┌──────────────┐    ┌──────────────┐  │
+│   │  app:3000    │◄───│  db:5432     │    │  redis:6379  │  │
+│   │  Next.js 14  │    │  PostgreSQL  │    │  ioredis     │  │
+│   │  TypeScript  │    │  16          │    │  cache+pub   │  │
+│   └──────┬───────┘    └──────────────┘    └──────────────┘  │
+│          │                                                   │
+│          ▼ HTTP                                              │
+│   ┌──────────────┐                                           │
+│   │  analyst:8000│                                           │
+│   │  FastAPI     │──── SMB ────► NAS/Library                │
+│   │  Python 3.12 │                                           │
+│   └──────────────┘                                           │
+└──────────────────────────────────────────────────────────────┘`}</CodeBlock>
+          </SubSection>
+
+          <SubSection id="arch-layers" title="Layer Model">
+            <p>Phonolith&apos;s functionality is organised into six named layers, each containing one or more named subsystems:</p>
             <Table
-              headers={['Resource', 'Cache location', 'Behaviour']}
+              headers={['Layer', 'Subsystems', 'Responsibility']}
               rows={[
-                ['Artist search results', 'Redis (in-memory)', '5-minute TTL — fresh searches stay fast without hammering the API'],
-                ['Artist metadata', 'PostgreSQL', 'Persists indefinitely — re-fetched only if you manually refresh'],
-                ['Song list', 'PostgreSQL', 'Stored on first artist page load; updated when the API returns new songs'],
-                ['Lyrics', 'PostgreSQL', 'Fetched once, stored forever; the Lyrics tab loads from DB on repeat visits'],
-                ['Credits & annotations', 'PostgreSQL', 'Fetched once per song, then served locally'],
+                ['Ingestion', 'ResonanceFS, Tremor', 'Secure filesystem access and change detection'],
+                ['Metadata', 'Engram, Lexicon', 'Metadata resolution, locking, and provenance tracking'],
+                ['Sonic Lab', 'Prism, Crest', 'Spectral analysis, DR scoring, and authenticity checks'],
+                ['Vaulting', 'Aegis, Bit-Forge', 'Immutable backup, deduplication, and content-addressed storage'],
+                ['Playback', 'Lucid, Flux', 'Bit-perfect audio output and AirPlay routing'],
+                ['Analytics', 'EchoGraph, Cathode', 'History tracking, visualisation, and hardware accounting'],
+                ['Ecosystem', 'Polyphony, Sonic Codex', 'Peer networking and portable library manifests'],
+              ]}
+            />
+          </SubSection>
+
+          <SubSection id="arch-data-flow" title="Data Flow">
+            <p>A typical library scan follows this path through the subsystem stack:</p>
+            <CodeBlock>{`User clicks "Scan"
+       │
+       ▼
+app → POST /api/library/sources/:id/scan
+       │  fetches source config from PostgreSQL
+       ▼
+analyst ← POST /scan-source {type, config, name}
+       │
+       ├─ ResonanceFS: walk SMB/NFS share (smbprotocol)
+       │    emits "discovering" progress events
+       │
+       ├─ Bit-Forge: BLAKE3-stream each file (no temp write)
+       │
+       ├─ Lexicon (fast pass): mutagen reads first 512 KB
+       │    extracts title, artist, album, year, bitrate
+       │
+       ├─ [Deep scan only]
+       │    Prism: librosa spectral analysis → upscale flag
+       │    Crest: librosa crest-factor → DR score
+       │    waveform PNG rendered via PIL
+       │
+       └─ POST /api/library/ingest → upsert library_files row
+              │
+              ▼
+         PostgreSQL library_files table`}</CodeBlock>
+          </SubSection>
+
+          <SubSection id="arch-docker" title="Docker Services">
+            <Table
+              headers={['Service', 'Image', 'Exposed Port', 'Role']}
+              rows={[
+                ['app', 'node:20-alpine (multi-stage)', '${APP_PORT:-3000}', 'Next.js — UI, API routes, migrations'],
+                ['analyst', 'python:3.12-slim', '${ANALYST_PORT:-8000}', 'FastAPI — audio analysis sidecar'],
+                ['db', 'postgres:16-alpine', 'internal only', 'Primary data store'],
+                ['redis', 'redis:7-alpine', 'internal only', 'API cache + pub-sub events'],
+              ]}
+            />
+            <Note>
+              The database and Redis ports are not exposed to the host by default. To connect with external tools
+              (pgAdmin, redis-cli), uncomment the relevant <code className="text-accent">ports</code> stanza in
+              <code className="text-accent"> docker-compose.yml</code>.
+            </Note>
+          </SubSection>
+        </Section>
+
+        {/* ═══════════════════════════════════════════════════════════ */}
+        {/* 3. Subsystems                                              */}
+        {/* ═══════════════════════════════════════════════════════════ */}
+        <Section id="subsystems" title="Subsystems">
+          <p className="text-text-muted text-sm mb-6">
+            Every capability in Phonolith maps to a named subsystem with a defined role.
+            The table below is the canonical reference; each subsystem is expanded in detail below.
+          </p>
+          <Table
+            headers={['Name', 'Layer', 'Role', 'Status']}
+            rows={[
+              ['ResonanceFS', 'Ingestion', 'Secure Virtual Filesystem (SMB/NFS/CIFS mount layer)', <StatusBadge key="r" status="implemented" />],
+              ['Tremor', 'Ingestion', 'Filesystem watcher daemon (inotify / FSEvents)', <StatusBadge key="t" status="implemented" />],
+              ['Engram', 'Metadata', 'Metadata lock engine & version-control guardian', <StatusBadge key="e" status="planned" />],
+              ['Lexicon', 'Metadata', 'Deep-scraping metadata resolver (MusicBrainz, Discogs, ENGINEER tags)', <StatusBadge key="l" status="partial" />],
+              ['Prism', 'Sonic Lab', 'Spectral analysis & fake-FLAC / upscale detector', <StatusBadge key="pr" status="partial" />],
+              ['Crest', 'Sonic Lab', 'Dynamic Range (DR / Crest Factor) calculator', <StatusBadge key="cr" status="partial" />],
+              ['Aegis', 'Vaulting', 'Immutable S3 backup, encryption & chunking engine', <StatusBadge key="ag" status="partial" />],
+              ['Bit-Forge', 'Vaulting', 'BLAKE3 hashing service & deduplication index', <StatusBadge key="bf" status="implemented" />],
+              ['Lucid', 'Playback', 'Bit-perfect ALSA-exclusive audio transport daemon', <StatusBadge key="lu" status="planned" />],
+              ['Flux', 'Playback', 'Downsampling & AirPlay 2 routing sub-routine', <StatusBadge key="fl" status="planned" />],
+              ['EchoGraph', 'Analytics', 'Scrobble history, Sankey diagrams & genre-evolution engine', <StatusBadge key="eg" status="partial" />],
+              ['Cathode', 'Analytics', 'Hardware endpoint tracker & burn-in accountant', <StatusBadge key="ca" status="planned" />],
+              ['Polyphony', 'Ecosystem', 'Cryptographic peer-network ("Syndicate") for trusted node cross-referencing', <StatusBadge key="po" status="planned" />],
+              ['Sonic Codex', 'Ecosystem', 'Portable library manifest format (.codex) — the blueprint, not the bits', <StatusBadge key="sc" status="planned" />],
+            ]}
+          />
+
+          {/* ResonanceFS */}
+          <SubSection id="resonancefs" title="ResonanceFS — Ingestion">
+            <SubsystemCard
+              name="ResonanceFS"
+              layer="Ingestion"
+              status="implemented"
+              role="Secure Virtual Filesystem — SMB / NFS / CIFS / local mount layer"
+            >
+              <p>
+                ResonanceFS is the ingestion gateway. It gives the Analyst sidecar access to remote audio
+                libraries without requiring OS-level mounts, kernel modules, or root privileges inside the
+                container. Instead, it uses pure-Python protocol implementations to speak SMB2/SMB3, NFS, and
+                iSCSI directly from userspace.
+              </p>
+              <SubSubSection title="SMB / CIFS (smbprotocol)">
+                <p>
+                  Windows shares, macOS Samba exports, Synology DSM, QNAP, TrueNAS, and any other SMB2+ target
+                  are supported. The session is registered once per host with optional username, password, and
+                  domain credentials. The domain, if supplied, is prepended to the username as{' '}
+                  <code className="text-accent">DOMAIN\username</code> — the correct format for SMB NTLM
+                  authentication.
+                </p>
+                <p>
+                  During a scan, ResonanceFS walks the share tree with <code className="text-accent">smbclient.walk()</code>,
+                  emitting a live file count (the &quot;discovering&quot; phase) while Bit-Forge streams each file
+                  through a BLAKE3 hash without ever writing to local disk.
+                </p>
+              </SubSubSection>
+              <SubSubSection title="Connectivity Test">
+                <p>
+                  Before any authentication is attempted, ResonanceFS performs a TCP reachability probe to
+                  port 445 (SMB) using <code className="text-accent">socket.create_connection</code> with a
+                  5-second timeout. This is exposed in the UI as the Ping button in the Add Source modal, and
+                  as the first step of the Test button on each source row.
+                </p>
+              </SubSubSection>
+              <SubSubSection title="Configuration">
+                <Table
+                  headers={['Field', 'Required', 'Description']}
+                  rows={[
+                    ['host', 'Yes', 'IP address or hostname of the NAS / Windows share'],
+                    ['share', 'Yes', 'Share name (e.g. Music, not the full UNC path)'],
+                    ['subfolder', 'No', 'Optional subfolder within the share'],
+                    ['username', 'No*', 'SMB username (* required if guest auth is disabled)'],
+                    ['password', 'No*', 'SMB password'],
+                    ['domain', 'No', 'Windows domain / workgroup for NTLM auth'],
+                  ]}
+                />
+              </SubSubSection>
+              <Warning>
+                ResonanceFS requires SMB2 or higher. SMB1 (the legacy protocol) is disabled by default on modern NAS firmware and is not supported by smbprotocol. Enable SMB2 on your NAS if you encounter &quot;dialect not supported&quot; errors.
+              </Warning>
+            </SubsystemCard>
+          </SubSection>
+
+          {/* Tremor */}
+          <SubSection id="tremor" title="Tremor — Ingestion">
+            <SubsystemCard
+              name="Tremor"
+              layer="Ingestion"
+              status="implemented"
+              role="Filesystem watcher daemon — inotify (Linux) / FSEvents (macOS)"
+            >
+              <p>
+                Tremor monitors a local library path (the <code className="text-accent">LIBRARY_PATH</code> mount)
+                for new or modified audio files and triggers an incremental re-scan automatically. It is
+                implemented using the Python <code className="text-accent">watchdog</code> library, which
+                adapts to the native OS event API (inotify on Linux inside the container, FSEvents on the Docker
+                Desktop host via volume proxying on macOS).
+              </p>
+              <SubSubSection title="Debounce Behaviour">
+                <p>
+                  Tremor debounces file-system events by 2 seconds before triggering a scan. This prevents
+                  cascading rescans when a large copy operation drops hundreds of files in quick succession.
+                  The 2-second window resets on each new event, so the scan fires only after the burst settles.
+                </p>
+              </SubSubSection>
+              <SubSubSection title="Scope">
+                <p>
+                  Tremor only watches the local <code className="text-accent">LIBRARY_PATH</code> mount. SMB and
+                  NFS sources are not watched — they must be scanned manually or on a schedule. Native remote
+                  filesystem event support (inotify over NFS, SMB oplocks) is on the roadmap for a future release.
+                </p>
+              </SubSubSection>
+              <SubSubSection title="Status">
+                <p>
+                  Tremor reports its state through the <code className="text-accent">GET /status</code> endpoint
+                  on the Analyst sidecar (<code className="text-accent">watching: true/false</code>). The
+                  Notifications bell in the UI reflects this state in real time.
+                </p>
+              </SubSubSection>
+            </SubsystemCard>
+          </SubSection>
+
+          {/* Engram */}
+          <SubSection id="engram" title="Engram — Metadata">
+            <SubsystemCard
+              name="Engram"
+              layer="Metadata"
+              status="planned"
+              role="Metadata lock engine & version-control guardian"
+            >
+              <p>
+                Engram will be the metadata integrity layer. Its responsibility is to ensure that once a piece
+                of metadata (artist name, album title, release date, credits) has been validated and confirmed
+                by the user, it cannot be silently overwritten by a future scrape or import.
+              </p>
+              <SubSubSection title="Planned Capabilities">
+                <ul className="list-disc list-inside space-y-1">
+                  <li>Per-field lock flags on any metadata column: <code className="text-accent">locked_fields: string[]</code> on the artists, albums, and songs tables</li>
+                  <li>Full version history for all metadata changes (append-only audit log with timestamps and source attribution)</li>
+                  <li>Conflict detection when an external scrape disagrees with a locked value</li>
+                  <li>User-facing lock/unlock UI on artist and song pages</li>
+                  <li>Merge resolution workflow for conflicting metadata from different sources (Genius vs MusicBrainz vs user)</li>
+                </ul>
+              </SubSubSection>
+              <SubSubSection title="Design Intent">
+                <p>
+                  Engram treats metadata as a first-class immutable record once confirmed. The philosophy mirrors
+                  how a vinyl collector annotates a sleeve — once you&apos;ve verified the pressing details, you
+                  don&apos;t want a database scrape to silently change them. Engram will maintain a cryptographic
+                  hash of each locked field set so any tampering is detectable.
+                </p>
+              </SubSubSection>
+            </SubsystemCard>
+          </SubSection>
+
+          {/* Lexicon */}
+          <SubSection id="lexicon" title="Lexicon — Metadata">
+            <SubsystemCard
+              name="Lexicon"
+              layer="Metadata"
+              status="partial"
+              role="Deep-scraping metadata resolver — Genius, MusicBrainz, Discogs, ENGINEER tags"
+            >
+              <p>
+                Lexicon resolves and enriches metadata by querying multiple external sources and merging the
+                results into a canonical record. The current implementation covers Genius (search, artist info,
+                song descriptions, lyrics, credits, annotations) and MusicBrainz (MBID, accurate release dates,
+                ISRC codes, label information).
+              </p>
+              <SubSubSection title="Current Sources">
+                <Table
+                  headers={['Source', 'Data Obtained', 'Cache TTL', 'Status']}
+                  rows={[
+                    ['Genius API', 'Artist bio, song metadata, lyrics, credits, annotations', '5 min (Redis)', 'Implemented'],
+                    ['MusicBrainz API', 'MBID, release dates, ISRC, label, recording info', '5 min (Redis)', 'Implemented'],
+                    ['Discogs API', 'Pressing details, catalogue numbers, format info', 'Not yet', 'Planned'],
+                    ['File Tags (mutagen)', 'ENGINEER, PRODUCER, MASTERED BY, embedded credits', 'N/A', 'Partial'],
+                  ]}
+                />
+              </SubSubSection>
+              <SubSubSection title="Resolution Priority">
+                <p>
+                  Lexicon resolves in the following order of precedence (highest first): user-confirmed values
+                  (Engram-locked) → database cache → Genius API → MusicBrainz → embedded file tags. This order
+                  ensures that curated data is never overwritten by a scrape.
+                </p>
+              </SubSubSection>
+              <SubSubSection title="Rate Limiting">
+                <p>
+                  MusicBrainz requires a maximum of 1 request per second with a valid User-Agent string
+                  (set via <code className="text-accent">MUSICBRAINZ_APP_NAME</code>,{' '}
+                  <code className="text-accent">MUSICBRAINZ_APP_VERSION</code>, and{' '}
+                  <code className="text-accent">MUSICBRAINZ_CONTACT</code>). Lexicon implements a sequential
+                  queue with 1-second delays to honour this limit. Genius has no published rate limit but all
+                  responses are Redis-cached for 5 minutes to minimise load.
+                </p>
+              </SubSubSection>
+              <SubSubSection title="Planned: Discogs Integration">
+                <p>
+                  Discogs holds the most complete database of physical pressing information — catalogue numbers,
+                  matrix / runout etchings, label variants, country of pressing, and release year. Lexicon will
+                  use the Discogs API (authenticated via <code className="text-accent">DISCOGS_USER_TOKEN</code>)
+                  to resolve pressing-level detail for files in your library that match a known release. This is
+                  especially valuable for vinyl rips and physical media transfers.
+                </p>
+              </SubSubSection>
+              <SubSubSection title="Planned: ENGINEER Tag Extraction">
+                <p>
+                  Many high-quality lossless files (particularly from HD Tracks, Bandcamp, and mastering studios)
+                  embed rich credits in the TXXX, ENGINEER, PRODUCER, and COMMENT tags. Lexicon will parse these
+                  during the deep-analysis pass and cross-reference them against MusicBrainz recording credits to
+                  build a provenance chain linking every file to a specific mastering session.
+                </p>
+              </SubSubSection>
+            </SubsystemCard>
+          </SubSection>
+
+          {/* Prism */}
+          <SubSection id="prism" title="Prism — Sonic Lab">
+            <SubsystemCard
+              name="Prism"
+              layer="Sonic Lab"
+              status="partial"
+              role="Spectral analysis & fake-FLAC / upscale detector"
+            >
+              <p>
+                Prism analyses the frequency content of audio files to determine whether a file genuinely
+                contains high-frequency information or whether it has been upsampled from a lower-resolution
+                source. This is sometimes called an &quot;upscale detection&quot; or &quot;fake hi-res&quot;
+                check.
+              </p>
+              <SubSubSection title="How It Works">
+                <p>
+                  Prism loads the first 30 seconds of audio via librosa and computes an FFT of the full
+                  waveform. It then compares the energy in the high-frequency band (&gt;18 kHz) against the
+                  energy in the mid-band (1–18 kHz). A ratio below a calibrated threshold indicates that the
+                  high-frequency region is essentially empty — the hallmark of a 16-bit/44.1 kHz CD-quality
+                  source that has been sample-rate-converted to 24-bit/96 kHz or higher.
+                </p>
+              </SubSubSection>
+              <SubSubSection title="Limitations">
+                <ul className="list-disc list-inside space-y-1">
+                  <li>Prism cannot distinguish between a genuinely low-bandwidth recording and an upscale — some legitimate recordings (e.g. early analogue transfers) have limited high-frequency extension</li>
+                  <li>The 30-second analysis window may miss high-frequency content that only appears in specific sections</li>
+                  <li>Not run during the SMB fast-scan pass — requires a deep-analysis trigger</li>
+                </ul>
+              </SubSubSection>
+              <SubSubSection title="Output">
+                <p>
+                  Prism writes <code className="text-accent">spectral_ok: boolean | null</code> to the
+                  <code className="text-accent"> library_files</code> row. A value of{' '}
+                  <code className="text-accent">false</code> should be treated as a strong indicator of an
+                  upscale but not a certainty. The Library page surfaces this with a warning badge.
+                </p>
+              </SubSubSection>
+            </SubsystemCard>
+          </SubSection>
+
+          {/* Crest */}
+          <SubSection id="crest" title="Crest — Sonic Lab">
+            <SubsystemCard
+              name="Crest"
+              layer="Sonic Lab"
+              status="partial"
+              role="Dynamic Range (DR / Crest Factor) calculator"
+            >
+              <p>
+                Crest calculates the dynamic range of an audio file using the crest-factor method: the
+                ratio of peak amplitude to RMS amplitude, expressed in decibels. A high score indicates
+                wide dynamic range (good); a low score indicates heavy limiting or brickwall compression.
+              </p>
+              <SubSubSection title="Methodology">
+                <p>
+                  Crest loads up to 60 seconds of audio via librosa, computes the RMS energy and peak amplitude
+                  of the mono-mixed waveform, then calculates:
+                </p>
+                <CodeBlock>{'DR = 20 × log₁₀(peak / RMS)    [dB]'}</CodeBlock>
+                <p>
+                  This is equivalent to the crest factor used by DR Meter and the TT Dynamic Range Meter,
+                  though not identical to the block-based DR offset score used by the Dynamic Range Database.
+                  For a quick relative comparison within your own library it is an excellent signal.
+                </p>
+              </SubSubSection>
+              <SubSubSection title="Interpreting DR Scores">
+                <Table
+                  headers={['DR Score', 'Quality', 'Typical Example']}
+                  rows={[
+                    ['DR 20+', 'Exceptional', 'Classical recordings, audiophile vinyl transfers'],
+                    ['DR 14–20', 'Good', 'Well-mastered rock, jazz, acoustic recordings'],
+                    ['DR 8–14', 'Acceptable', 'Commercial pop and rock post-2000'],
+                    ['DR 5–8', 'Compromised', 'Heavily limited masters, loudness-war casualties'],
+                    ['DR < 5', 'Brickwalled', 'Extreme limiting — clipping likely'],
+                  ]}
+                />
+              </SubSubSection>
+              <SubSubSection title="Current Status">
+                <p>
+                  Crest is fully implemented in the Analyst sidecar. It is currently skipped during the fast
+                  SMB scan to avoid downloading full audio files. A <strong>Deep Analysis</strong> pass (coming
+                  soon) will run Crest and Prism over all library_files rows where{' '}
+                  <code className="text-accent">dr_score IS NULL</code>.
+                </p>
+              </SubSubSection>
+            </SubsystemCard>
+          </SubSection>
+
+          {/* Aegis */}
+          <SubSection id="aegis" title="Aegis — Vaulting">
+            <SubsystemCard
+              name="Aegis"
+              layer="Vaulting"
+              status="partial"
+              role="Immutable S3 backup, encryption & chunking engine"
+            >
+              <p>
+                Aegis provides point-in-time, immutable backups of your Phonolith database to Amazon S3 or
+                any S3-compatible object store. The current implementation covers database-only backup
+                (PostgreSQL dump → S3). Encryption, chunking, and library-file vaulting are planned.
+              </p>
+              <SubSubSection title="Current Implementation">
+                <p>
+                  A manual backup can be triggered from Settings → Backup. Aegis calls{' '}
+                  <code className="text-accent">pg_dump</code> inside the app container, streams the output
+                  through the AWS SDK v3, and uploads it to the configured S3 bucket with a timestamped key.
+                </p>
+                <CodeBlock>{`Key format: phonolith-backup-{ISO8601-timestamp}.sql.gz
+Example:    phonolith-backup-2026-06-15T00:00:00Z.sql.gz`}</CodeBlock>
+              </SubSubSection>
+              <SubSubSection title="Required Environment Variables">
+                <Table
+                  headers={['Variable', 'Description']}
+                  rows={[
+                    ['S3_BUCKET', 'Target bucket name'],
+                    ['S3_REGION', 'AWS region (e.g. us-east-1)'],
+                    ['AWS_ACCESS_KEY_ID', 'IAM access key with s3:PutObject on the bucket'],
+                    ['AWS_SECRET_ACCESS_KEY', 'Corresponding secret key'],
+                  ]}
+                />
+              </SubSubSection>
+              <SubSubSection title="Planned: Encryption & Library Vaulting">
+                <p>
+                  Future Aegis releases will add client-side AES-256-GCM encryption (key held locally, never
+                  uploaded), content-addressed chunking of audio files via Bit-Forge hashes (so deduplication
+                  happens before upload), and scheduled automatic backups via a cron-like trigger inside the app
+                  container.
+                </p>
+              </SubSubSection>
+              <Tip>All variables can be set from Settings → API Keys without restarting the stack. Aegis reads them at backup time, not at startup.</Tip>
+            </SubsystemCard>
+          </SubSection>
+
+          {/* Bit-Forge */}
+          <SubSection id="bit-forge" title="Bit-Forge — Vaulting">
+            <SubsystemCard
+              name="Bit-Forge"
+              layer="Vaulting"
+              status="implemented"
+              role="BLAKE3 hashing service & deduplication index"
+            >
+              <p>
+                Bit-Forge is responsible for content-addressed identification of every audio file in your
+                library. It computes a BLAKE3 hash of each file&apos;s complete byte stream and uses that
+                hash as the primary key for all library operations. This makes every file uniquely and
+                verifiably identified regardless of filename, path, or metadata.
+              </p>
+              <SubSubSection title="Why BLAKE3?">
+                <p>
+                  BLAKE3 was chosen over SHA-256 and MD5 for three reasons: it is cryptographically secure
+                  (unlike MD5), it is significantly faster than SHA-256 in software (typically 2–4× on modern
+                  hardware), and it is designed for parallelism. BLAKE3 performance scales with available CPU
+                  cores, which matters when hashing thousands of large FLAC files.
+                </p>
+              </SubSubSection>
+              <SubSubSection title="Streaming Architecture">
+                <p>
+                  Bit-Forge never writes a file to disk to compute its hash. For SMB sources, the file is
+                  streamed from the NAS in 64 KB chunks directly through the BLAKE3 hasher. The first 512 KB
+                  is simultaneously buffered in memory for Lexicon&apos;s fast tag read. This means the entire
+                  metadata extraction and hashing pass for a remote file touches the network exactly once and
+                  writes nothing to the container&apos;s filesystem.
+                </p>
+              </SubSubSection>
+              <SubSubSection title="Deduplication">
+                <p>
+                  Because the BLAKE3 hash is the primary key of <code className="text-accent">library_files</code>,
+                  identical files at different paths resolve to the same row. This is the foundation for future
+                  deduplication workflows: if you have a file in two locations (e.g. a backup copy on a second
+                  NAS), Bit-Forge will identify them as the same content and update the row rather than creating
+                  a duplicate.
+                </p>
+              </SubSubSection>
+              <SubSubSection title="Fallback">
+                <p>
+                  If the <code className="text-accent">blake3</code> Python package is not available (rare — it
+                  requires a Rust compiler at build time), Bit-Forge falls back to SHA-256. Both produce a
+                  hex-encoded string of equal length from Phonolith&apos;s perspective.
+                </p>
+              </SubSubSection>
+            </SubsystemCard>
+          </SubSection>
+
+          {/* Lucid */}
+          <SubSection id="lucid" title="Lucid — Playback">
+            <SubsystemCard
+              name="Lucid"
+              layer="Playback"
+              status="planned"
+              role="Bit-perfect ALSA-exclusive audio transport daemon"
+            >
+              <p>
+                Lucid will be a native audio playback daemon capable of bit-perfect output through ALSA
+                (Advanced Linux Sound Architecture) with exclusive access mode. Exclusive access bypasses
+                the Linux software mixer (ALSA dmix / PulseAudio / PipeWire), ensuring that the audio
+                signal path from file to DAC is entirely unmodified.
+              </p>
+              <SubSubSection title="Design Principles">
+                <ul className="list-disc list-inside space-y-1">
+                  <li>ALSA exclusive mode via <code className="text-accent">snd_pcm_open()</code> with <code className="text-accent">SND_PCM_ACCESS_RW_INTERLEAVED</code> and no resampling</li>
+                  <li>Format negotiation with the DAC: Lucid queries the DAC&apos;s supported formats and matches the source material natively</li>
+                  <li>Volume control through hardware attenuation only (no digital gain applied in software)</li>
+                  <li>Gapless playback via double-buffering</li>
+                  <li>Queue managed through the Phonolith web interface</li>
+                </ul>
+              </SubSubSection>
+              <SubSubSection title="Transport">
+                <p>
+                  Lucid will run as a separate long-lived process (likely a Rust binary for memory safety and
+                  low-latency guarantees) communicating with the Next.js app over a Unix socket or local HTTP.
+                  It will not be available on macOS (ALSA is Linux-only); macOS users will use Flux/AirPlay 2
+                  routing instead.
+                </p>
+              </SubSubSection>
+            </SubsystemCard>
+          </SubSection>
+
+          {/* Flux */}
+          <SubSection id="flux" title="Flux — Playback">
+            <SubsystemCard
+              name="Flux"
+              layer="Playback"
+              status="planned"
+              role="Downsampling & AirPlay 2 routing sub-routine"
+            >
+              <p>
+                Flux handles the routing of audio to endpoints that cannot accept bit-perfect PCM — principally
+                AirPlay 2 receivers (Apple TV, HomePod, AirPort Express, compatible speakers) and Bluetooth
+                audio devices. Unlike Lucid, Flux explicitly allows downsampling and transcoding because AirPlay
+                2 operates at 44.1 kHz / 16-bit ALAC.
+              </p>
+              <SubSubSection title="Planned Capabilities">
+                <ul className="list-disc list-inside space-y-1">
+                  <li>AirPlay 2 multi-room streaming using the RAOP protocol</li>
+                  <li>Automatic downsampling of hi-res files to 44.1 kHz / 16-bit for AirPlay targets</li>
+                  <li>ALAC encoding in-flight (Apple Lossless, the codec AirPlay 2 uses)</li>
+                  <li>Endpoint discovery via mDNS / Bonjour</li>
+                  <li>Volume sync across multi-room AirPlay 2 groups</li>
+                  <li>Bluetooth A2DP output as a secondary transport</li>
+                </ul>
+              </SubSubSection>
+              <Note>
+                Flux will require the host to have network visibility to AirPlay receivers. In Docker this means
+                running with <code className="text-accent">network_mode: host</code> or configuring mDNS
+                reflection through the gateway.
+              </Note>
+            </SubsystemCard>
+          </SubSection>
+
+          {/* EchoGraph */}
+          <SubSection id="echograph" title="EchoGraph — Analytics">
+            <SubsystemCard
+              name="EchoGraph"
+              layer="Analytics"
+              status="partial"
+              role="Scrobble history, Sankey diagrams & genre-evolution engine"
+            >
+              <p>
+                EchoGraph records every meaningful interaction with your library and surfaces it as rich
+                analytics. The current implementation tracks lyrics reads, lyrics downloads, and manual
+                &quot;mark as read&quot; events, stores them in the <code className="text-accent">history</code>{' '}
+                table, and displays a chronological event log on the History page.
+              </p>
+              <SubSubSection title="Current Implementation">
+                <ul className="list-disc list-inside space-y-1">
+                  <li>Event recording: lyrics_read, lyrics_download, lyrics_marked_read</li>
+                  <li>Per-artist event history</li>
+                  <li>Chronological log with filter by artist and event type</li>
+                  <li>Recently explored artists list (used by the Visualize landing page)</li>
+                </ul>
+              </SubSubSection>
+              <SubSubSection title="Planned: Sankey Diagrams">
+                <p>
+                  EchoGraph will render Sankey flow diagrams showing how your listening has evolved: genre
+                  transitions over time, how discovering one artist led to exploring collaborators, and how
+                  your weekly listening patterns shift across seasons. These diagrams will use the connections
+                  data already computed for the Visualize galaxy.
+                </p>
+              </SubSubSection>
+              <SubSubSection title="Planned: Genre Evolution">
+                <p>
+                  By cross-referencing Genius genre tags, MusicBrainz genre data, and your listen history,
+                  EchoGraph will map the evolution of your taste over time — a kind of musical autobiography.
+                  The output will be a timeline view overlaid on the EchoGraph history page.
+                </p>
+              </SubSubSection>
+            </SubsystemCard>
+          </SubSection>
+
+          {/* Cathode */}
+          <SubSection id="cathode" title="Cathode — Analytics">
+            <SubsystemCard
+              name="Cathode"
+              layer="Analytics"
+              status="planned"
+              role="Hardware endpoint tracker & burn-in accountant"
+            >
+              <p>
+                Cathode is the hardware-awareness layer. It tracks which audio output devices have been used
+                for playback, how many hours each device has accumulated, and whether tube or capacitor-coupled
+                endpoints have received appropriate burn-in time. This is particularly useful for audiophiles
+                who maintain multiple DACs, amplifiers, or headphones with different warm-up requirements.
+              </p>
+              <SubSubSection title="Planned Capabilities">
+                <ul className="list-disc list-inside space-y-1">
+                  <li>Device registry: name, type (DAC / amplifier / headphone / IEM), acquisition date, notes</li>
+                  <li>Play-hour accounting: cumulative hours of audio played through each device</li>
+                  <li>Burn-in tracking: configurable targets (e.g. &quot;100 hours for Sennheiser HD800&quot;) with progress bar</li>
+                  <li>Integration with Lucid (ALSA device name) and Flux (AirPlay receiver name) for automatic accounting</li>
+                  <li>Export burn-in report as PDF or CSV</li>
+                </ul>
+              </SubSubSection>
+            </SubsystemCard>
+          </SubSection>
+
+          {/* Polyphony */}
+          <SubSection id="polyphony" title="Polyphony — Ecosystem">
+            <SubsystemCard
+              name="Polyphony"
+              layer="Ecosystem"
+              status="planned"
+              role='Cryptographic peer-network ("Syndicate") for trusted node cross-referencing'
+            >
+              <p>
+                Polyphony enables multiple Phonolith instances — owned by different users who trust each other —
+                to form a private encrypted peer network called a <strong>Syndicate</strong>. Syndicates allow
+                members to cross-reference their libraries, share metadata corrections, and broadcast quality
+                assessments (DR scores, upscale detections) without exposing raw audio data.
+              </p>
+              <SubSubSection title="Design Principles">
+                <ul className="list-disc list-inside space-y-1">
+                  <li>No central server — purely peer-to-peer via WireGuard tunnels or mutual TLS</li>
+                  <li>Membership requires an explicit invitation signed with the inviting node&apos;s private key</li>
+                  <li>Only Bit-Forge hashes, Prism/Crest scores, and Lexicon-verified metadata are shared — no audio bytes</li>
+                  <li>A Syndicate member can query: &quot;Does anyone in my trust network have a verified DR score for this BLAKE3 hash?&quot;</li>
+                  <li>Metadata corrections from a trusted peer can be applied locally, subject to Engram lock rules</li>
+                </ul>
+              </SubSubSection>
+              <SubSubSection title="Privacy Model">
+                <p>
+                  Polyphony is designed to be zero-trust by default. No file paths, no play history, and no
+                  personal data are shared. Only content hashes and quality metrics leave your node, and only
+                  to nodes you have explicitly added to your Syndicate.
+                </p>
+              </SubSubSection>
+            </SubsystemCard>
+          </SubSection>
+
+          {/* Sonic Codex */}
+          <SubSection id="sonic-codex" title="Sonic Codex — Ecosystem">
+            <SubsystemCard
+              name="Sonic Codex"
+              layer="Ecosystem"
+              status="planned"
+              role="Portable library manifest format (.codex) — the blueprint, not the bits"
+            >
+              <p>
+                The Sonic Codex is a portable, open, signed library manifest format. A{' '}
+                <code className="text-accent">.codex</code> file describes your entire music library — every
+                file, its Bit-Forge hash, its Lexicon metadata, its Prism/Crest scores — without containing
+                any audio. Think of it as a signed blueprint of your collection.
+              </p>
+              <SubSubSection title="Format Design">
+                <CodeBlock>{`# Example .codex structure (MessagePack with Ed25519 signature)
+{
+  "version": "1.0",
+  "node_id": "phonolith-abc123",
+  "exported_at": "2026-06-15T00:00:00Z",
+  "signature": "Ed25519:<base64>",
+  "tracks": [
+    {
+      "hash": "blake3:<hex>",
+      "path": "Artist/Album/01 Track.flac",
+      "title": "Track Title",
+      "artist": "Artist Name",
+      "album": "Album Title",
+      "year": 2001,
+      "bitrate": 1411,
+      "sample_rate": 44100,
+      "bit_depth": 16,
+      "dr_score": 14.2,
+      "spectral_ok": true,
+      "mbid": "recording-uuid",
+      "isrc": "USRC12345678"
+    }
+  ]
+}`}</CodeBlock>
+              </SubSubSection>
+              <SubSubSection title="Use Cases">
+                <ul className="list-disc list-inside space-y-1">
+                  <li>Share your library blueprint with a Syndicate peer so they can compare it against their own</li>
+                  <li>Back up your library manifest independently of the audio files (the .codex can recreate the library_files table)</li>
+                  <li>Import a .codex from another Phonolith instance to pre-populate your database</li>
+                  <li>Publish a public .codex (without personal data) to the audiophile community for quality benchmarking</li>
+                </ul>
+              </SubSubSection>
+            </SubsystemCard>
+          </SubSection>
+        </Section>
+
+        {/* ═══════════════════════════════════════════════════════════ */}
+        {/* 4. Library                                                 */}
+        {/* ═══════════════════════════════════════════════════════════ */}
+        <Section id="library" title="Library">
+          <SubSection id="supported-formats" title="Supported Formats">
+            <Table
+              headers={['Format', 'Extension', 'Lossless?', 'Notes']}
+              rows={[
+                ['FLAC', '.flac', 'Yes', 'Preferred lossless format. Bit-depth metadata available.'],
+                ['ALAC', '.m4a', 'Yes', 'Apple Lossless. Common on iTunes purchases.'],
+                ['WAV', '.wav', 'Yes', 'Uncompressed PCM. Large files, limited tag support.'],
+                ['AIFF', '.aiff', 'Yes', 'Apple equivalent of WAV. Good tag support.'],
+                ['WavPack', '.wv', 'Yes', 'Lossless + hybrid lossy. Excellent compression.'],
+                ['APE', '.ape', "Yes", 'Monkey’s Audio. CPU-intensive decode.'],
+                ['MP3', '.mp3', 'No', 'Lossy. Ubiquitous. Bitrate via mutagen tags.'],
+                ['AAC', '.aac', 'No', 'Lossy. Used by Apple streaming and iTunes.'],
+                ['Ogg Vorbis', '.ogg', 'No', 'Open-source lossy. Common on Linux.'],
+                ['Opus', '.opus', 'No', 'Modern open-source lossy. Excellent quality at low bitrates.'],
+              ]}
+            />
+          </SubSection>
+
+          <SubSection id="adding-sources" title="Adding Sources">
+            <p>
+              Library sources are added from <strong>Settings → Library Sources → Add Source</strong>. Four
+              source types are supported:
+            </p>
+            <Table
+              headers={['Type', 'Description', 'Best For']}
+              rows={[
+                ['Local', 'A directory mounted into the analyst container via LIBRARY_PATH', 'Direct-attached storage, USB drives, Docker volume mounts'],
+                ['SMB', 'Windows / Samba share via smbprotocol (no OS mount required)', 'NAS devices: Synology, QNAP, TrueNAS, Windows shares'],
+                ['NFS', 'NFS export path mounted into the container', 'Linux NFS servers, enterprise NAS'],
+                ['iSCSI', 'Block device mounted as a local path', 'Advanced: dedicated storage arrays'],
               ]}
             />
             <Tip>
-              If an artist has released new music since you last visited, click the refresh icon on their artist page to re-fetch their song list from Genius.
+              For SMB, you can paste a full UNC path (<code className="text-accent">\\server\share\subfolder</code>)
+              into the UNC field in the Add Source modal and it will be automatically parsed into the host,
+              share, and subfolder fields.
             </Tip>
+          </SubSection>
+
+          <SubSection id="smb-setup" title="SMB / NAS Setup">
+            <SubSubSection title="Prerequisites">
+              <ul className="list-disc list-inside space-y-1">
+                <li>SMB2 or SMB3 must be enabled on the NAS (SMB1 is not supported)</li>
+                <li>The share must be accessible from the Docker network — test with the Ping button first</li>
+                <li>If guest access is disabled (recommended), create a dedicated read-only user for Phonolith</li>
+              </ul>
+            </SubSubSection>
+            <SubSubSection title="Synology DSM">
+              <CodeBlock>{`Control Panel → File Services → SMB
+  Enable SMB service: ON
+  Minimum SMB protocol: SMB2
+  Maximum SMB protocol: SMB3
+
+Control Panel → Shared Folder → [your music folder]
+  Permissions → Local users → phonolith-user → Read Only`}</CodeBlock>
+            </SubSubSection>
+            <SubSubSection title="TrueNAS Scale">
+              <CodeBlock>{`Shares → Windows (SMB) Shares → Add
+  Path: /mnt/pool/music
+  Name: music
+  Purpose: No presets
+  Advanced → Enable SMB2/SMB3 Negotiation: ON
+
+Credentials → Local Users → Add
+  Username: phonolith
+  Samba Authentication: ON
+  Assign to share: music (read only)`}</CodeBlock>
+            </SubSubSection>
+            <Warning>
+              Do not run Phonolith with an admin or root NAS account. Create a dedicated read-only account
+              and grant it access only to your music share.
+            </Warning>
+          </SubSection>
+
+          <SubSection id="scan-pipeline" title="Scan Pipeline">
+            <p>
+              When you click <strong>Scan</strong> on a source row, the following sequence runs entirely
+              inside the Analyst sidecar:
+            </p>
+            <ol className="list-decimal list-inside space-y-2 text-text-muted">
+              <li><strong className="text-text-primary">Discovery (ResonanceFS)</strong> — walk the source tree, emit file count in real time. The Notifications bell shows &quot;Discovering files… N found&quot; with a pulsing bar.</li>
+              <li><strong className="text-text-primary">Parallel fast indexing (4 workers)</strong> — for each file: stream through Bit-Forge (BLAKE3), buffer first 512 KB, parse tags via Lexicon (mutagen). No temp files written to disk.</li>
+              <li><strong className="text-text-primary">Ingest</strong> — POST each record to <code className="text-accent">/api/library/ingest</code> in the Next.js app, which upserts the <code className="text-accent">library_files</code> row. Duplicate files (same hash) update the existing row rather than creating a new one.</li>
+              <li><strong className="text-text-primary">Progress reporting</strong> — the Notifications bell switches to a percentage progress bar during indexing, showing the current file name.</li>
+            </ol>
+          </SubSection>
+
+          <SubSection id="deep-analysis" title="Deep Analysis (Coming Soon)">
+            <p>
+              The fast scan (described above) intentionally skips computationally intensive operations to keep
+              scan times acceptable over SMB. A separate <strong>Deep Analysis</strong> pass will be triggerable
+              per-source or per-file, and will run:
+            </p>
+            <Table
+              headers={['Subsystem', 'Operation', 'Requires']}
+              rows={[
+                ['Crest', 'DR / crest-factor score', 'Full audio download'],
+                ['Prism', 'Upscale / fake-FLAC detection', 'Full audio download + FFT'],
+                ['Bit-Forge (waveform)', 'Waveform PNG rendering (1200×200px)', 'Full audio download + librosa'],
+                ['Lexicon', 'AcoustID fingerprinting', 'Full audio download'],
+              ]}
+            />
+            <Note>
+              Deep Analysis will download each file once (shared across all four operations above) and process
+              them in order. For a 10,000-file library, expect 1–4 hours depending on file size and CPU speed.
+              It will run in the background with full progress reporting.
+            </Note>
+          </SubSection>
+
+          <SubSection id="watcher" title="Auto-watcher (Tremor)">
+            <p>
+              If <code className="text-accent">LIBRARY_PATH</code> is set and the path exists inside the
+              analyst container, Tremor automatically starts a filesystem watcher on startup. Any new or
+              modified audio file within that path triggers an incremental re-scan after a 2-second debounce
+              delay.
+            </p>
+            <p>
+              Tremor is only active for the local <code className="text-accent">LIBRARY_PATH</code>. SMB
+              sources must be rescanned manually. Tremor&apos;s status is visible via the Analyst{' '}
+              <code className="text-accent">GET /status</code> endpoint and surfaced in the Notifications panel.
+            </p>
+          </SubSection>
+        </Section>
+
+        {/* ═══════════════════════════════════════════════════════════ */}
+        {/* 5. Search & Discovery                                      */}
+        {/* ═══════════════════════════════════════════════════════════ */}
+        <Section id="search" title="Search & Discovery">
+          <SubSection id="how-search-works" title="How Search Works">
+            <p>
+              Phonolith uses a database-first, API-on-miss caching strategy for all data. Every search result,
+              artist page, and song page is served from the local PostgreSQL database if a matching row exists.
+              Only on a cache miss does Phonolith call the Genius API — and the result is immediately written
+              back to the database for next time.
+            </p>
+            <CodeBlock>{`Search query
+  → GET /api/search?q=artist+name
+  → Check artists table for cached results
+  → On miss: call Genius /search
+  → Insert/update artists rows
+  → Return from database
+  → Cache result in Redis (5 min TTL)`}</CodeBlock>
           </SubSection>
 
           <SubSection id="artist-pages" title="Artist Pages">
             <p>
-              An artist page at <code className="font-mono bg-surface-2 px-1 rounded">/artist/[id]</code> is the main hub for exploring a single artist&apos;s catalogue.
-            </p>
-            <p>Layout breakdown:</p>
-            <ul className="list-disc list-inside space-y-1 pl-2">
-              <li><strong className="text-text-primary">Hero header</strong>: Full-bleed background from the artist&apos;s Genius profile image, artist name, follower count, and action buttons.</li>
-              <li><strong className="text-text-primary">Action buttons</strong>: Visualize (opens the galaxy), Download All Lyrics (bulk-downloads every song&apos;s lyrics as a ZIP), View in Library (jumps to your local files matching this artist).</li>
-              <li><strong className="text-text-primary">Album groups</strong>: Songs grouped by album in reverse chronological order (newest album first). Each album section shows the cover art, album title, year, and track count.</li>
-              <li><strong className="text-text-primary">Song rows</strong>: Within each album group, songs appear in track order. Each row shows the track number, song title, release date, and any tags you&apos;ve applied.</li>
-              <li><strong className="text-text-primary">Right sidebar</strong>: Artist bio sourced from Genius, plus a tag cloud of all tags applied to this artist&apos;s songs.</li>
-            </ul>
-            <p>
-              Click any song title to navigate to its dedicated song page. Click an album cover to open the album&apos;s page on Genius in a new tab.
+              An artist page (<code className="text-accent">/artist/[id]</code>) shows the full discography
+              grouped by album in reverse-chronological order, plus a right sidebar with the artist
+              description and tag counts. Clicking <strong>Visualize</strong> opens the Galaxy view for that
+              artist.
             </p>
           </SubSection>
 
           <SubSection id="song-pages" title="Song Pages">
             <p>
-              A song page at <code className="font-mono bg-surface-2 px-1 rounded">/song/[id]</code> has four tabs, each covering a different aspect of the song.
+              A song page (<code className="text-accent">/song/[id]</code>) has four tabs:
             </p>
+            <Table
+              headers={['Tab', 'Content']}
+              rows={[
+                ['Lyrics', 'Full lyrics in Playfair Display, with Copy and Download actions'],
+                ['About', 'Genius song description, rendered as prose'],
+                ['Credits', 'Producer, writer, performer, engineer credits from Genius'],
+                ['Annotations', 'Per-line Genius annotations; user annotations can be added'],
+              ]}
+            />
+          </SubSection>
 
-            <p className="font-medium text-text-primary pt-1">Lyrics tab</p>
+          <SubSection id="lyrics" title="Lyrics">
             <p>
-              The main tab. Shows the song&apos;s artwork and metadata header (title, artist, album, year, duration). Lyrics are displayed in Playfair Display serif for comfortable reading.
+              Lyrics are fetched from Genius on first view and cached in the{' '}
+              <code className="text-accent">lyrics</code> table. The request is recorded in the{' '}
+              <code className="text-accent">history</code> table as a <code className="text-accent">lyrics_read</code> event.
+              If lyrics are not available for a song, the Lyrics tab shows a &quot;Not available&quot; message.
             </p>
-            <p>Actions available on the Lyrics tab:</p>
-            <ul className="list-disc list-inside space-y-1 pl-2">
-              <li><strong className="text-text-primary">Copy to clipboard</strong>: Copies the full lyrics as plain text.</li>
-              <li><strong className="text-text-primary">Download as .txt</strong>: Saves a text file named <code className="font-mono bg-surface-2 px-1 rounded">{`{Artist} - {Title}.txt`}</code> containing the lyrics.</li>
-              <li><strong className="text-text-primary">Mark as read</strong>: Records a <code className="font-mono bg-surface-2 px-1 rounded">mark_read</code> history event with the current timestamp. Visible in History.</li>
-            </ul>
-            <p>
-              Loading the Lyrics tab also automatically records a <code className="font-mono bg-surface-2 px-1 rounded">lyrics_read</code> history event, so your EchoGraph chart builds up naturally as you browse.
-            </p>
+          </SubSection>
 
-            <p className="font-medium text-text-primary pt-2">About tab</p>
+          <SubSection id="credits" title="Credits & Annotations">
             <p>
-              The song&apos;s Genius description — rich prose covering production background, cultural context, and editorial commentary. Sourced from Genius&apos;s editorial team. Not available for all songs.
-            </p>
-
-            <p className="font-medium text-text-primary pt-2">Credits tab</p>
-            <p>
-              A full credits table with role on the left and contributor name(s) on the right. Common roles include: Producer, Featuring, Written By, Recorded At, Mixed By, Mastered By, Vocals, Guitar, Drums, Keyboards, and more. Click a contributor name to trigger a search for that person.
-            </p>
-
-            <p className="font-medium text-text-primary pt-2">Annotations tab</p>
-            <p>
-              The song lyrics with Genius annotations inline. Highlighted phrases expand when clicked to reveal the annotation text — these come directly from Genius&apos;s community and editorial contributors.
+              Credits come from Genius&apos;s <code className="text-accent">custom_performances</code> field
+              on the song object. Each credit has a role (e.g. &quot;Produced by&quot;, &quot;Written by&quot;,
+              &quot;Mixed by&quot;) and one or more artist names. Credits are stored in the{' '}
+              <code className="text-accent">credits</code> table and displayed in the Credits tab.
             </p>
             <p>
-              At the bottom of the Annotations tab is a text input for adding your own annotations. Enter a lyric phrase and your note, then click Save. User annotations are stored locally in your PostgreSQL database and are never sent to Genius.
+              Annotations are fetched by scraping the Genius web page for the song and parsing the annotated
+              lyric regions. User annotations can be added from the Annotations tab and are stored locally
+              in the <code className="text-accent">annotations</code> table.
             </p>
           </SubSection>
         </Section>
 
-        {/* ── 3. Visualization ── */}
+        {/* ═══════════════════════════════════════════════════════════ */}
+        {/* 6. Visualization                                           */}
+        {/* ═══════════════════════════════════════════════════════════ */}
         <Section id="visualization" title="Visualization">
           <SubSection id="galaxy-view" title="Galaxy View">
             <p>
-              The galaxy is a force-directed canvas simulation that renders an artist&apos;s entire catalogue as a spatial map of interconnected nodes. It is accessed from any artist page via the <strong className="text-text-primary">Visualize</strong> button, or directly via the Visualize icon in the sidebar (which re-opens the last artist you visualised).
-            </p>
-            <p>Node types in the galaxy:</p>
-            <Table
-              headers={['Node type', 'Visual', 'Represents']}
-              rows={[
-                ['Album node', 'Large white circle with album label below', 'One per album — anchors the songs in that album'],
-                ['Song node', 'Smaller violet circle', 'Individual songs, spring-connected to their album node'],
-                ['Stars', 'Static white dots in the background', 'Decorative background stars for depth and atmosphere'],
-              ]}
-            />
-            <p>
-              When the galaxy first loads, the physics simulation runs for 200 ticks before the canvas is shown. This pre-computation ensures the layout has already settled into a stable configuration — you never see nodes flying around when the view appears.
+              The Galaxy view (<code className="text-accent">/visualize/[artist-id]</code>) renders an
+              artist&apos;s entire discography as an interactive canvas. Each song is a node whose size is
+              proportional to its Genius pageviews. Songs from the same album share a colour (violet for
+              album tracks, blue for singles and loosies).
             </p>
             <p>
-              Album nodes repel each other via a charge force and are pulled toward the centre by a weak gravity. Song nodes are spring-connected to their album node (link force) and repel other song nodes. The result is a layout where each album occupies its own region of the canvas, with songs fanning out around it.
+              Nodes drift slowly across the canvas using simple Newtonian physics: constant velocity with
+              elastic bouncing at the canvas edges. The drift is intentional — it makes the constellation
+              feel alive rather than static.
             </p>
           </SubSection>
 
           <SubSection id="viz-navigation" title="Navigation">
-            <Table
-              headers={['Action', 'Result']}
-              rows={[
-                ['Scroll wheel', 'Zoom in/out — scale range 0.3× (zoomed out) to 3× (zoomed in)'],
-                ['Click and drag background', 'Pan the canvas in any direction'],
-                ['Click a song node', 'Opens the song detail panel at the bottom of the screen, showing title, album, year, and tags'],
-                ['Double-click an album node', 'Enters focus mode: all other album and song nodes fade to 5% opacity, and the selected album\'s songs expand into a radial fan for easy reading'],
-                ['Click an album label', 'Same as double-clicking the album node — selects the album and enters focus mode'],
-                ['Press Escape', 'Exits focus mode and deselects any selected node, returning all nodes to full opacity'],
-                ['Click song title in detail panel', 'Navigates to that song\'s page'],
-              ]}
-            />
-            <Tip>
-              If you have a large catalogue (500+ songs), zoom in first to find the album you want, then double-click its node to enter focus mode. The radial fan makes individual song titles readable even in dense discographies.
-            </Tip>
+            <p>Access the Visualization section from the sidebar (the dot-constellation icon), then search for or select an artist from your history. From any artist page, the <strong>Visualize</strong> button in the action row takes you directly to that artist&apos;s galaxy.</p>
           </SubSection>
 
           <SubSection id="connection-types" title="Connection Types">
-            <p>
-              Phonolith can draw additional connection lines between song nodes based on shared attributes. These are called spider-web connections. Enable or disable each type using the checkboxes in the VizControls panel on the left side of the visualization page.
-            </p>
             <Table
-              headers={['Connection type', 'Colour', 'What it means']}
+              headers={['Type', 'Colour', 'Meaning']}
               rows={[
-                ['Album', 'White dashed (#ffffff)', 'Default — always visible. Lines from each song node to its album node.'],
-                ['Collaborator', 'Blue (#3b82f6)', 'Two songs that feature the same credited artist (from the Credits tab).'],
-                ['Producer', 'Amber (#f59e0b)', 'Two songs produced by the same person.'],
-                ['Era', 'Green (#34d399)', 'Two songs released within 2 years of each other, across different albums.'],
+                ['Collaborator', 'Violet (#a78bfa)', 'Two songs share at least one credited performer'],
+                ['Producer', 'Green (#34d399)', 'Two songs share the same producer credit'],
+                ['Era', 'Amber (#f59e0b)', 'Two songs were released within 2 years of each other'],
               ]}
             />
-            <p>
-              Connection data is pre-computed server-side when the visualization first loads and cached in Redis for one hour. For artists with large catalogues, this computation may take a moment on first load — subsequent loads within the hour are instant.
-            </p>
-            <Note>
-              Collaborator and Producer connections require that the song&apos;s Credits tab has been loaded at least once (so the credits are stored in the database). Songs without cached credits will not appear in these connection sets.
-            </Note>
-          </SubSection>
-
-          <SubSection id="timeline-view" title="Timeline View">
-            <p>
-              Toggle between Galaxy and Timeline using the button in the top-right corner of the visualization panel. The timeline offers a chronological view of an artist&apos;s output.
-            </p>
-            <p>Timeline layout:</p>
-            <ul className="list-disc list-inside space-y-1 pl-2">
-              <li><strong className="text-text-primary">X axis</strong>: Year, auto-ranged to the artist&apos;s career span (earliest to latest release).</li>
-              <li><strong className="text-text-primary">Y axis</strong>: Album swim-lanes — one horizontal row per album, labelled on the left with the album title.</li>
-              <li><strong className="text-text-primary">Song dots</strong>: Each song appears as a dot in its album&apos;s swim-lane, positioned at its release year. Dot size is proportional to the song&apos;s Genius pageview count — popular songs appear as larger dots.</li>
-            </ul>
-            <p>
-              Click any dot to open the same song detail panel used in the galaxy view. The timeline is useful for spotting prolific periods in an artist&apos;s career and identifying which songs became the most popular.
-            </p>
+            <p>Connection lines are toggled in the VizControls panel. All three types can be active simultaneously.</p>
           </SubSection>
 
           <SubSection id="viz-controls" title="VizControls Panel">
-            <p>
-              The VizControls panel sits on the left side of the visualization page and provides controls for filtering and customising the view.
-            </p>
-            <p>Controls available:</p>
-            <Table
-              headers={['Control', 'Description']}
-              rows={[
-                ['Collaborator toggle', 'Show/hide blue connection lines between songs featuring the same artist'],
-                ['Producer toggle', 'Show/hide amber connection lines between songs with the same producer'],
-                ['Era toggle', 'Show/hide green connection lines between songs released within 2 years of each other'],
-                ['Albums dropdown', 'Filter the galaxy to show only one album\'s songs (others fade). Useful for dense discographies.'],
-                ['Decade dropdown', 'Fade out songs outside the selected decade, keeping only the relevant era visible'],
-                ['Tag dropdown', 'Highlight songs that have a specific tag applied — untagged songs fade to low opacity'],
-                ['Galaxy / Timeline toggle', 'Switch between the force-directed galaxy view and the chronological timeline view'],
-              ]}
-            />
+            <p>The left panel in the Galaxy view provides:</p>
+            <ul className="list-disc list-inside space-y-1">
+              <li><strong>Connections</strong> — toggles for Collaborator, Producer, and Era connection lines</li>
+              <li><strong>Min. Pageviews</strong> — slider to hide songs below a certain popularity threshold (useful for artists with 500+ songs)</li>
+              <li><strong>Node count</strong> — shows how many nodes are visible with the current filter</li>
+            </ul>
           </SubSection>
         </Section>
 
-        {/* ── 4. Library ── */}
-        <Section id="library" title="Library">
-          <SubSection id="audio-formats" title="Supported Audio Formats">
-            <p>The analyst container can index and analyse the following audio formats:</p>
-            <Table
-              headers={['Format', 'Extension(s)', 'Notes']}
-              rows={[
-                ['FLAC', '.flac', 'Lossless. Full DR analysis and waveform rendering supported.'],
-                ['MP3', '.mp3', 'Lossy. DR analysis reflects encoded dynamic range.'],
-                ['AAC / M4A', '.aac, .m4a', 'Lossy. Common for iTunes and Apple Music downloads.'],
-                ['OGG Vorbis', '.ogg', 'Lossy. Open format used by Spotify offline files and some Linux players.'],
-                ['WAV', '.wav', 'Lossless uncompressed. Large files; full analysis supported.'],
-                ['AIFF', '.aiff', 'Lossless uncompressed. Common on macOS and in professional workflows.'],
-                ['WavPack', '.wv', 'Lossless. High-quality archival format; less common but fully supported.'],
-                ['Monkey\'s Audio', '.ape', 'Lossless. Older lossless format; analysis supported.'],
-                ['Opus', '.opus', 'Lossy. Modern efficient codec; common for streaming archives.'],
-              ]}
-            />
-            <p>Files with other extensions (e.g. <code className="font-mono bg-surface-2 px-1 rounded">.pdf</code>, <code className="font-mono bg-surface-2 px-1 rounded">.jpg</code>, <code className="font-mono bg-surface-2 px-1 rounded">.cue</code>) are silently skipped during scanning.</p>
-          </SubSection>
-
-          <SubSection id="adding-sources" title="Adding Library Sources">
+        {/* ═══════════════════════════════════════════════════════════ */}
+        {/* 7. History & Tags                                          */}
+        {/* ═══════════════════════════════════════════════════════════ */}
+        <Section id="history-tags" title="History & Tags">
+          <SubSection id="history-tracking" title="History Tracking">
             <p>
-              Go to <strong className="text-text-primary">Settings → Library Sources</strong> and click <strong className="text-text-primary">+ Add Source</strong>. A modal appears with four source type options:
+              EchoGraph records events automatically as you use Phonolith. No opt-in is required.
             </p>
             <Table
-              headers={['Source type', 'Best for']}
+              headers={['Event', 'Trigger']}
               rows={[
-                ['Local Path', 'Music stored on the same machine running Docker. The ./music folder in the project root is mounted at /music inside the analyst container by default.'],
-                ['SMB / Samba', 'Windows file shares or NAS devices (Synology, QNAP, TrueNAS). Credentials are entered in the modal and stored in the local database.'],
-                ['NFS', 'Unix/Linux network shares. Mount the NFS share on your host first, then Docker Desktop can see the mount point.'],
-                ['iSCSI', 'Block-level network storage. Mount at the OS level first, then add the resulting path as a Local Path source.'],
+                ['lyrics_read', 'Lyrics tab is opened for a song'],
+                ['lyrics_download', 'Download button is clicked on the Lyrics tab'],
+                ['lyrics_marked_read', 'Mark as read button is clicked on the Lyrics tab'],
               ]}
             />
             <p>
-              After saving a source, it appears in the source list with <strong className="text-text-primary">Test</strong> and <strong className="text-text-primary">Scan</strong> buttons. Click <strong className="text-text-primary">Test</strong> first to verify the source is reachable and readable, then click <strong className="text-text-primary">Scan</strong> to begin indexing.
+              The History page shows a chronological log with the artist name, song title, event type, and
+              timestamp. Events can be filtered by artist, event type, and date range. The same history data
+              powers the &quot;Recently explored&quot; section on the home page and the artist picker on the
+              Visualize landing page.
             </p>
-            <Note>
-              Phonolith never copies or modifies your audio files. The analyst reads files in place (for local paths) or downloads them to a temporary location (for SMB), analyses them, and immediately deletes the temp file.
-            </Note>
-          </SubSection>
-
-          <SubSection id="smb-setup" title="SMB Setup">
-            <p>Step-by-step guide for connecting to an SMB / Samba share:</p>
-            <ol className="list-decimal list-inside space-y-2 pl-2">
-              <li>In the Add Source modal, select <strong className="text-text-primary">SMB / Samba</strong>.</li>
-              <li>
-                Paste a UNC path to auto-fill the fields:
-                <CodeBlock>{`\\\\192.168.1.10\\Music\\FLAC`}</CodeBlock>
-                Or fill in the fields manually:
-                <Table
-                  headers={['Field', 'Example', 'Description']}
-                  rows={[
-                    ['Host / IP', '192.168.1.10', 'Your NAS hostname or IP address'],
-                    ['Share Name', 'Music', 'The top-level SMB share name, without backslashes'],
-                    ['Username', 'admin', 'SMB user with read access to the share'],
-                    ['Password', '••••••••', 'Stored encrypted in your local PostgreSQL database'],
-                    ['Domain', '(leave blank)', 'Only needed for Windows Active Directory environments'],
-                    ['Subfolder', 'FLAC/Albums', 'Optional — scan only a subdirectory within the share'],
-                  ]}
-                />
-              </li>
-              <li>Click <strong className="text-text-primary">Ping {'{host}'}</strong> to verify that TCP port 445 is reachable from inside the analyst container. This tests network connectivity before you save the source.</li>
-              <li>Click <strong className="text-text-primary">Save Source</strong>.</li>
-              <li>In the source list, click <strong className="text-text-primary">Test</strong> to verify SMB authentication and confirm the share is accessible.</li>
-              <li>Click <strong className="text-text-primary">Scan</strong> to begin indexing. Progress is shown in the Notifications bell (top-right of the app).</li>
-            </ol>
-            <Warning>
-              For SMB sources, the analyst downloads each audio file from the share to a temporary location, analyses it, and then deletes the temporary file. Your NAS files are never modified. However, scanning a large library over a slow network will take time proportional to total library size.
-            </Warning>
-          </SubSection>
-
-          <SubSection id="analysis-pipeline" title="Analysis Pipeline">
-            <p>
-              When a file is scanned, the analyst runs these seven steps in order. All results are sent to the Next.js app&apos;s <code className="font-mono bg-surface-2 px-1 rounded">/api/library/ingest</code> route and stored in the <code className="font-mono bg-surface-2 px-1 rounded">library_files</code> table.
-            </p>
-            <Table
-              headers={['Step', 'Tool / method', 'Output']}
-              rows={[
-                ['1. BLAKE3 hash', 'blake3 Python library', 'A unique content fingerprint. If you move a file, Phonolith recognises it by content, not path — no duplicate records.'],
-                ['2. Tag extraction', 'Mutagen', 'Title, artist, album, year, track number, bitrate, sample rate, duration, and any other embedded ID3/Vorbis tags.'],
-                ['3. DR score', 'Custom crest-factor analysis', 'Dynamic range in dB — the ratio of peak amplitude to RMS amplitude. See DR Score section for interpretation.'],
-                ['4. Upscale detection', 'FFT spectral analysis', 'Compares energy above 18 kHz to energy in 1–18 kHz band. A very low ratio flags the file as a likely upscale from a lower-resolution source.'],
-                ['5. Waveform rendering', 'numpy + PIL', '1200×200px PNG of the audio waveform, saved to the waveforms Docker volume and served at /api/waveforms/{hash}.'],
-                ['6. AcoustID fingerprint', 'chromaprint / fpcalc', 'An acoustic fingerprint for matching the recording to MusicBrainz, even if the tags are missing or wrong.'],
-                ['7. Ingest', 'POST to /api/library/ingest', 'All data is upserted into a library_files row in PostgreSQL.'],
-              ]}
-            />
-            <p>
-              If a file has already been indexed (same BLAKE3 hash), the ingest step updates the existing row rather than creating a duplicate. This makes re-scanning idempotent.
-            </p>
-          </SubSection>
-
-          <SubSection id="dr-score" title="DR Score Explained">
-            <p>
-              The DR score is the crest factor of the audio — the ratio of peak amplitude to RMS (average) amplitude, expressed in decibels. A higher DR score means more variation between the loudest and quietest moments in the recording.
-            </p>
-            <p>
-              Dynamic range compression (applied during mastering) reduces the DR score by pushing up the quieter parts and limiting the peaks. This is often done to make tracks sound louder on consumer devices, at the cost of perceived naturalness and listening fatigue on high-quality playback systems.
-            </p>
-            <Table
-              headers={['DR Score', 'Quality label', 'Typical source']}
-              rows={[
-                ['DR 14+', 'Excellent', 'Classical, jazz, acoustic, audiophile pressings. Very dynamic — quiet passages are genuinely quiet.'],
-                ['DR 10–13', 'Good', 'Quality rock and pop from before ~2000, or modern reissues mastered for dynamics.'],
-                ['DR 7–9', 'Compressed', 'Typical modern commercial mastering. Still listenable but dynamics are noticeably flattened.'],
-                ['DR 5–6', 'Very compressed', 'Loudness-war territory. Fatiguing on extended listening on revealing systems.'],
-                ['DR < 5', 'Extreme', 'Heavily clipped or over-limited. Waveform approaches a solid block. Audible distortion on transients.'],
-              ]}
-            />
-            <Tip>
-              If your FLAC rip has a DR score close to the MP3 copy of the same album, the FLAC may be a transcoded lossy file (a &quot;FLAC of MP3&quot;). Use the upscale detection flag alongside the DR score to spot these cases.
-            </Tip>
-          </SubSection>
-
-          <SubSection id="watcher" title="Auto-watcher">
-            <p>
-              The analyst container runs a filesystem watcher on the <code className="font-mono bg-surface-2 px-1 rounded">/music</code> directory — the default local source mounted from <code className="font-mono bg-surface-2 px-1 rounded">./music</code> in the project root.
-            </p>
-            <p>Watcher behaviour:</p>
-            <ul className="list-disc list-inside space-y-1 pl-2">
-              <li>When a new audio file is added or an existing file is modified, the watcher detects the change.</li>
-              <li>It waits 2 seconds for the write to complete and for any burst of file activity to settle (e.g. unzipping an album).</li>
-              <li>It then indexes only the changed files — not the entire directory.</li>
-              <li>The waveform, DR score, and all other analysis steps run immediately.</li>
-              <li>The file appears in your library within a few seconds of being saved to the <code className="font-mono bg-surface-2 px-1 rounded">./music</code> folder.</li>
-            </ul>
-            <Note>
-              Automatic watching is only supported for the default local <code className="font-mono bg-surface-2 px-1 rounded">/music</code> source. SMB and NFS sources do not support real-time watching — use the manual <strong className="text-text-primary">Scan</strong> button in Settings → Library Sources to pick up new files on those shares.
-            </Note>
-          </SubSection>
-        </Section>
-
-        {/* ── 5. History & Tags ── */}
-        <Section id="history" title="History & Tags">
-          <SubSection id="history-tracking" title="Automatic History Tracking">
-            <p>
-              Phonolith records history events automatically as you use the app. You do not need to opt in — every lyrics view is tracked by default.
-            </p>
-            <Table
-              headers={['Event type', 'When it fires']}
-              rows={[
-                ['lyrics_read', 'The Lyrics tab loads for a song (fires once per page load, not on every scroll)'],
-                ['lyrics_download', 'You click the Download button on the Lyrics tab'],
-                ['mark_read', 'You click the "Mark as read" button on the Lyrics tab'],
-              ]}
-            />
-            <p>
-              Each event is stored with: the song ID, artist ID, event type, and a UTC timestamp. Events accumulate indefinitely — there is no automatic pruning. You can view and filter all events on the History page.
-            </p>
-            <Note>
-              History events are stored only in your local PostgreSQL database. Nothing is sent externally. There are no analytics, no telemetry, and no account required.
-            </Note>
-          </SubSection>
-
-          <SubSection id="echograph" title="EchoGraph">
-            <p>
-              The History page (<code className="font-mono bg-surface-2 px-1 rounded">/history</code>) shows your listening and reading activity visualised as two charts plus a full event log.
-            </p>
-            <p>Charts:</p>
-            <ul className="list-disc list-inside space-y-1 pl-2">
-              <li>
-                <strong className="text-text-primary">Weekly line chart</strong>: Lyrics reads per week over the past 12 weeks. Gives you a sense of how active your music exploration has been over time.
-              </li>
-              <li>
-                <strong className="text-text-primary">Top artists bar chart</strong>: Your top 10 artists by total history events (all types combined). The bar length reflects how many times you&apos;ve read or downloaded lyrics for songs by that artist.
-              </li>
-            </ul>
-            <p>Event log below the charts:</p>
-            <ul className="list-disc list-inside space-y-1 pl-2">
-              <li>Chronological list of all events, newest first.</li>
-              <li>Each row shows: artist name, song title, event type badge, and timestamp.</li>
-              <li>Filter by artist name using the search field at the top.</li>
-              <li>Filter by event type using the dropdown (lyrics_read / lyrics_download / mark_read).</li>
-            </ul>
           </SubSection>
 
           <SubSection id="tags" title="Tags">
             <p>
-              Tags are colour-coded labels you create and apply to songs. They appear on song rows in artist pages, in the song page header, and as a filter option in the visualization&apos;s VizControls panel.
+              Tags are user-defined labels that can be applied to any song. They are stored in the{' '}
+              <code className="text-accent">tags</code> and <code className="text-accent">song_tags</code>{' '}
+              tables. A tag has a name and an optional colour. Songs can have multiple tags.
             </p>
-            <p>Adding a tag to a song:</p>
-            <ol className="list-decimal list-inside space-y-1 pl-2">
-              <li>Open any song page.</li>
-              <li>Click <strong className="text-text-primary">+ Tag</strong> in the song header area.</li>
-              <li>Type a new tag name or select an existing tag from the dropdown.</li>
-              <li>The tag is saved immediately and appears on the song row throughout the app.</li>
-            </ol>
-            <p>Managing tags:</p>
-            <ul className="list-disc list-inside space-y-1 pl-2">
-              <li>Go to <strong className="text-text-primary">/tags</strong> (the Tags icon in the sidebar) to see all your tags, how many songs each has, and edit or delete them.</li>
-              <li>Rename a tag on the Tags page — the rename propagates to all songs that have it.</li>
-              <li>Delete a tag to remove it from all songs at once.</li>
-              <li>Change a tag&apos;s colour using the colour picker on the Tags page.</li>
-            </ul>
             <p>
-              Tags are stored in the <code className="font-mono bg-surface-2 px-1 rounded">tags</code> and <code className="font-mono bg-surface-2 px-1 rounded">song_tags</code> tables in PostgreSQL. Changes are reflected immediately across the app — the visualization filter updates within seconds of a new tag being applied.
+              The Tags page (<code className="text-accent">/tags</code>) shows all tags and the number of songs
+              with each tag. Clicking a tag filters the library to songs with that tag. Tags can be added and
+              removed from song pages.
+            </p>
+          </SubSection>
+        </Section>
+
+        {/* ═══════════════════════════════════════════════════════════ */}
+        {/* 8. Settings                                                */}
+        {/* ═══════════════════════════════════════════════════════════ */}
+        <Section id="settings" title="Settings">
+          <SubSection id="api-keys" title="API Keys">
+            <Table
+              headers={['Key', 'Where to Get', 'Required']}
+              rows={[
+                ['GENIUS_ACCESS_TOKEN', 'genius.com/api-clients — create a client, copy the Access Token', 'Yes'],
+                ['DISCOGS_USER_TOKEN', 'discogs.com/settings/developers — generate a Personal Access Token', 'No'],
+                ['ACOUSTID_API_KEY', 'acoustid.org/login — register an application', 'No'],
+                ['AWS_ACCESS_KEY_ID', 'AWS IAM console — create a user with s3:PutObject', 'No (Aegis only)'],
+                ['AWS_SECRET_ACCESS_KEY', 'AWS IAM console — same user as above', 'No (Aegis only)'],
+              ]}
+            />
+          </SubSection>
+
+          <SubSection id="runtime-keys" title="Runtime Key Management">
+            <p>
+              All API keys can be updated at runtime from the Settings page without restarting the Docker stack.
+              When you save a key via the UI, it is stored encrypted in the{' '}
+              <code className="text-accent">app_settings</code> PostgreSQL table and cached in Redis with a
+              60-second TTL. All subsequent API calls read from this cache first, then the database, then the
+              environment variable.
+            </p>
+            <p>
+              A key set via the UI takes precedence over one set in the <code className="text-accent">.env</code>{' '}
+              file. To revert to the environment variable, click the <strong>Clear</strong> link next to the
+              stored key. The Settings page shows whether each key is &quot;Saved in database&quot;,
+              &quot;Set via environment&quot;, or &quot;Not configured&quot;.
+            </p>
+          </SubSection>
+
+          <SubSection id="backup-settings" title="S3 Backup (Aegis)">
+            <p>
+              Fill in S3 Bucket and Region, then click <strong>Backup Now</strong>. Aegis runs a{' '}
+              <code className="text-accent">pg_dump</code> inside the app container, compresses it, and uploads
+              it to <code className="text-accent">s3://{'{bucket}'}/phonolith-backup-{'{timestamp}'}.sql.gz</code>.
             </p>
             <Tip>
-              Use tags to group songs across artists — for example, &quot;90s hip-hop beats&quot;, &quot;audiophile reference&quot;, or &quot;need to annotate&quot;. The visualization&apos;s tag filter then highlights exactly those songs in the galaxy.
+              The S3 bucket should have Object Lock enabled (Compliance mode) for truly immutable backups.
+              This prevents deletion of backup objects even by the account owner, protecting against
+              ransomware or accidental bucket deletion.
             </Tip>
           </SubSection>
-        </Section>
 
-        {/* ── 6. Settings ── */}
-        <Section id="settings" title="Settings & Configuration">
-          <SubSection id="api-keys" title="API Keys">
+          <SubSection id="port-config" title="Port Configuration">
             <p>
-              All API keys can be configured in two ways. The Settings UI (database method) takes precedence and does not require a container restart:
+              Default ports can be overridden in your <code className="text-accent">.env</code> file without
+              modifying <code className="text-accent">docker-compose.yml</code>:
             </p>
-            <Table
-              headers={['Method', 'How to set', 'Requires restart?']}
-              rows={[
-                ['Environment variable', 'Edit .env and run docker compose up --build', 'Yes — the value is baked in at container start'],
-                ['Settings UI (database)', 'Settings page → paste key → Save', 'No — takes effect within 60 seconds (Redis TTL)'],
-              ]}
-            />
-            <p>Available API keys:</p>
-            <Table
-              headers={['Key', 'Required', 'Where to get it']}
-              rows={[
-                ['GENIUS_ACCESS_TOKEN', 'Yes — without this, search and lyrics will not work', 'genius.com/api-clients → Create an API Client → copy the Client Access Token (not the Client Secret)'],
-                ['DISCOGS_USER_TOKEN', 'No — enhances release date data', 'discogs.com/settings/developers → Generate new token'],
-                ['ACOUSTID_API_KEY', 'No — used for fingerprint lookups against MusicBrainz', 'acoustid.org/login → register an application → copy the API key'],
-              ]}
-            />
+            <CodeBlock>{`APP_PORT=3000      # Next.js web interface
+ANALYST_PORT=8000  # Python analyst sidecar`}</CodeBlock>
             <p>
-              The <strong className="text-text-primary">Test</strong> button next to each key makes a live request to the relevant API (not the local database) to verify that the key is valid. If the test passes, the key is working. If it fails, the error message will tell you whether the problem is connectivity or an invalid key.
+              The database (5432) and Redis (6379) ports are not exposed to the host by default. To expose
+              them for debugging, uncomment the relevant <code className="text-accent">ports:</code> section
+              in <code className="text-accent">docker-compose.yml</code>.
             </p>
           </SubSection>
+        </Section>
 
-          <SubSection id="s3-backup" title="S3 Backup">
-            <p>
-              Phonolith can back up your entire database to an S3 bucket on demand. Configure it in <strong className="text-text-primary">Settings → Backup</strong>:
-            </p>
+        {/* ═══════════════════════════════════════════════════════════ */}
+        {/* 9. API Reference                                           */}
+        {/* ═══════════════════════════════════════════════════════════ */}
+        <Section id="api-reference" title="API Reference">
+          <SubSection id="api-search" title="Search">
             <Table
-              headers={['Field', 'Example', 'Description']}
+              headers={['Method', 'Path', 'Description']}
               rows={[
-                ['S3 Bucket', 'my-phonolith-backups', 'The name of an existing S3 bucket. The bucket must exist before the first backup.'],
-                ['Region', 'us-east-1', 'The AWS region where the bucket is hosted.'],
-                ['Access Key ID', 'AKIA…', 'IAM access key with s3:PutObject permission on the target bucket.'],
-                ['Secret Access Key', '••••••••', 'The corresponding IAM secret key. Stored encrypted in your local database.'],
+                ['GET', '/api/search?q=query', 'Search artists by name. Returns array of artist objects.'],
               ]}
             />
-            <p>
-              Click <strong className="text-text-primary">Backup Now</strong> to run a <code className="font-mono bg-surface-2 px-1 rounded">pg_dump</code> immediately. The backup is uploaded as:
-            </p>
-            <CodeBlock>{`s3://your-bucket/backups/phonolith-2024-01-15T14:30:00Z.sql`}</CodeBlock>
-            <p>To restore from a backup:</p>
-            <CodeBlock>{`# Download from S3
-aws s3 cp s3://your-bucket/backups/phonolith-TIMESTAMP.sql ./restore.sql
+          </SubSection>
 
-# Restore into the running database
-docker compose exec -T db psql -U postgres phonolith < restore.sql`}</CodeBlock>
+          <SubSection id="api-artist" title="Artist">
+            <Table
+              headers={['Method', 'Path', 'Description']}
+              rows={[
+                ['GET', '/api/artist/[id]', 'Get artist by Genius ID. Fetches from Genius on cache miss.'],
+                ['GET', '/api/artist/[id]/songs', 'Paginated songs for artist. ?page=1&per_page=20'],
+                ['GET', '/api/artist/[id]/songs/all', 'All songs for artist (loops Genius pages). Slow on first call.'],
+              ]}
+            />
+          </SubSection>
+
+          <SubSection id="api-song" title="Song">
+            <Table
+              headers={['Method', 'Path', 'Description']}
+              rows={[
+                ['GET', '/api/song/[id]', 'Get song by Genius ID.'],
+                ['GET', '/api/song/[id]/lyrics', 'Get or scrape lyrics. Records history event.'],
+                ['GET', '/api/song/[id]/credits', 'Get credits from Genius custom_performances.'],
+                ['GET', '/api/song/[id]/about', 'Get song description.'],
+                ['GET', '/api/song/[id]/annotations', 'Get Genius annotations (scraped).'],
+                ['POST', '/api/song/[id]/tags', 'Add tag to song. Body: {tag_id: number}'],
+                ['DELETE', '/api/song/[id]/tags/[tagId]', 'Remove tag from song.'],
+              ]}
+            />
+          </SubSection>
+
+          <SubSection id="api-library" title="Library">
+            <Table
+              headers={['Method', 'Path', 'Description']}
+              rows={[
+                ['GET', '/api/library', 'List all library_files rows with match status.'],
+                ['GET', '/api/library/[hash]', 'Single file detail by BLAKE3 hash.'],
+                ['GET', '/api/library/sources', 'List all configured library sources.'],
+                ['POST', '/api/library/sources', 'Add a new source. Body: {name, type, config}'],
+                ['DELETE', '/api/library/sources/[id]', 'Delete a source.'],
+                ['POST', '/api/library/sources/[id]/test', 'Test source connectivity.'],
+                ['POST', '/api/library/sources/[id]/scan', 'Trigger a scan of this source.'],
+                ['POST', '/api/library/ping', 'TCP ping test. Body: {host, port?}'],
+                ['GET', '/api/library/status', 'Analyst scan status (proxy to analyst /status).'],
+                ['POST', '/api/library/ingest', 'Internal: upsert library_files. Called by analyst.'],
+              ]}
+            />
+          </SubSection>
+
+          <SubSection id="api-analyst" title="Analyst Sidecar (port 8000)">
+            <p>
+              The analyst sidecar exposes its own HTTP API. These routes are called by the Next.js app and
+              are not intended for direct use, but can be useful for debugging.
+            </p>
+            <Table
+              headers={['Method', 'Path', 'Description']}
+              rows={[
+                ['GET', '/health', 'Health check. Returns {status: "ok"}'],
+                ['GET', '/status', 'Full scan status: phase, progress, errors, watcher state.'],
+                ['POST', '/scan', 'Trigger local library scan. Body: {path: string}'],
+                ['POST', '/scan-source', 'Trigger source scan. Body: {source_id, type, config, name}'],
+                ['POST', '/test-source', 'Test source connectivity. Body: {type, config}'],
+                ['POST', '/ping', 'TCP ping. Body: {host, port?}'],
+                ['GET', '/file/[hash]', 'Get indexed file record by hash.'],
+                ['POST', '/fingerprint', 'AcoustID fingerprint a file. Body: {path}'],
+                ['GET', '/waveforms/[hash].png', 'Serve waveform image (if rendered).'],
+              ]}
+            />
+          </SubSection>
+        </Section>
+
+        {/* ═══════════════════════════════════════════════════════════ */}
+        {/* 10. Deployment                                             */}
+        {/* ═══════════════════════════════════════════════════════════ */}
+        <Section id="deployment" title="Deployment">
+          <SubSection id="deploy-docker" title="Docker Compose">
+            <p>The recommended deployment is via Docker Compose. All four services (app, analyst, db, redis) are defined in <code className="text-accent">docker-compose.yml</code> in the repository root.</p>
+            <CodeBlock>{`# Start all services (rebuild images)
+docker compose up --build
+
+# Start in background
+docker compose up -d --build
+
+# Stop all services
+docker compose down
+
+# Stop and remove volumes (WARNING: deletes all data)
+docker compose down -v
+
+# View logs
+docker compose logs -f
+docker compose logs -f app
+docker compose logs -f analyst`}</CodeBlock>
+          </SubSection>
+
+          <SubSection id="deploy-env" title="Environment Variables">
+            <Table
+              headers={['Variable', 'Default', 'Description']}
+              rows={[
+                ['GENIUS_ACCESS_TOKEN', '(none)', 'Genius API access token. Required.'],
+                ['DATABASE_URL', 'postgresql://phonolith:phonolith@db:5432/phonolith', 'PostgreSQL connection string.'],
+                ['REDIS_URL', 'redis://redis:6379', 'Redis connection string.'],
+                ['ANALYST_URL', 'http://analyst:8000', 'Analyst sidecar base URL.'],
+                ['MUSICBRAINZ_APP_NAME', 'Phonolith', 'User-Agent app name for MusicBrainz.'],
+                ['MUSICBRAINZ_APP_VERSION', '1.0', 'User-Agent app version for MusicBrainz.'],
+                ['MUSICBRAINZ_CONTACT', '(none)', 'Your email for MusicBrainz User-Agent.'],
+                ['DISCOGS_USER_TOKEN', '(none)', 'Discogs Personal Access Token. Optional.'],
+                ['ACOUSTID_API_KEY', '(none)', 'AcoustID application key. Optional.'],
+                ['S3_BUCKET', '(none)', 'S3 bucket name for Aegis backups.'],
+                ['S3_REGION', '(none)', 'AWS region for S3 bucket.'],
+                ['AWS_ACCESS_KEY_ID', '(none)', 'AWS IAM access key for S3.'],
+                ['AWS_SECRET_ACCESS_KEY', '(none)', 'AWS IAM secret key for S3.'],
+                ['LIBRARY_PATH', '(empty)', 'Host path mounted into analyst container as /music.'],
+                ['APP_PORT', '3000', 'Host port for the Next.js app.'],
+                ['ANALYST_PORT', '8000', 'Host port for the analyst sidecar.'],
+              ]}
+            />
+          </SubSection>
+
+          <SubSection id="deploy-reverse-proxy" title="Reverse Proxy (Nginx / Caddy)">
+            <p>To expose Phonolith on a custom domain with HTTPS, put a reverse proxy in front of the app container.</p>
+            <SubSubSection title="Nginx">
+              <CodeBlock>{`server {
+    listen 443 ssl;
+    server_name phonolith.yourdomain.com;
+
+    ssl_certificate     /etc/ssl/certs/phonolith.crt;
+    ssl_certificate_key /etc/ssl/private/phonolith.key;
+
+    location / {
+        proxy_pass http://127.0.0.1:3000;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+}`}</CodeBlock>
+            </SubSubSection>
+            <SubSubSection title="Caddy">
+              <CodeBlock>{`phonolith.yourdomain.com {
+    reverse_proxy localhost:3000
+}`}</CodeBlock>
+            </SubSubSection>
             <Warning>
-              Restoring a backup overwrites all current data in the database. Make a fresh backup before restoring an older one.
-            </Warning>
-            <Note>
-              S3 backup covers the PostgreSQL database only (artists, songs, lyrics, tags, history, library metadata, settings). Waveform PNGs stored in the <code className="font-mono bg-surface-2 px-1 rounded">waveforms</code> Docker volume are not included — they will be regenerated on the next library scan.
-            </Note>
-          </SubSection>
-
-          <SubSection id="ports" title="Port Configuration">
-            <p>
-              Default ports are defined in your <code className="font-mono bg-surface-2 px-1 rounded">.env</code> file:
-            </p>
-            <CodeBlock>{`# Web UI and API
-APP_PORT=3000
-
-# Audio analyst sidecar
-ANALYST_PORT=8000`}</CodeBlock>
-            <p>
-              Change either port if something else on your machine is already listening there. The change takes effect on the next <code className="font-mono bg-surface-2 px-1 rounded">docker compose up</code>.
-            </p>
-            <p>
-              By default, the PostgreSQL database and Redis are not exposed to your host — they communicate only between containers on Docker&apos;s internal network. To access them from host tools like TablePlus or redis-cli, uncomment the <code className="font-mono bg-surface-2 px-1 rounded">ports:</code> stanzas in <code className="font-mono bg-surface-2 px-1 rounded">docker-compose.yml</code> and add the corresponding variables to your <code className="font-mono bg-surface-2 px-1 rounded">.env</code>:
-            </p>
-            <CodeBlock>{`# Expose database to host (for TablePlus, pgAdmin, etc.)
-DB_PORT=5432
-
-# Expose Redis to host (for redis-cli)
-REDIS_PORT=6379`}</CodeBlock>
-            <Warning>
-              Exposing the database port on a machine with a public IP is a security risk. Only do this on a trusted local network, or use an SSH tunnel.
+              Do not expose the analyst sidecar (port 8000) to the public internet. It has no authentication.
+              It should remain internal to the Docker network or your LAN.
             </Warning>
           </SubSection>
         </Section>
 
-        {/* ── 7. Services Reference ── */}
-        <Section id="services" title="Services Reference">
-          <SubSection id="service-app" title="app — Next.js 14">
-            <p>
-              The main web application. Serves the React UI and handles all API requests.
-            </p>
-            <Table
-              headers={['Property', 'Value']}
-              rows={[
-                ['Port', 'APP_PORT (default 3000)'],
-                ['Language', 'TypeScript'],
-                ['Framework', 'Next.js 14 App Router'],
-                ['Image', 'node:20-alpine (built from Dockerfile)'],
-              ]}
-            />
-            <p>Responsibilities:</p>
-            <ul className="list-disc list-inside space-y-1 pl-2">
-              <li>Serves all pages and client-side React components</li>
-              <li>All <code className="font-mono bg-surface-2 px-1 rounded">/api/*</code> routes (artist, song, lyrics, credits, annotations, library, history, tags, settings)</li>
-              <li>Genius API integration — search, artist metadata, song data, lyrics, credits, annotations</li>
-              <li>MusicBrainz integration — artist MBID lookup and release date enrichment</li>
-              <li>Database migrations — run automatically at startup via <code className="font-mono bg-surface-2 px-1 rounded">src/instrumentation.ts</code></li>
-              <li>Redis caching layer — wraps all Genius API calls with 5-minute TTL</li>
-              <li>Proxies <code className="font-mono bg-surface-2 px-1 rounded">/api/waveforms/:hash</code> to the analyst sidecar</li>
-            </ul>
-            <p>Key environment variables:</p>
-            <CodeBlock>{`GENIUS_ACCESS_TOKEN=   # Required
-DATABASE_URL=          # Auto-set by docker-compose
-REDIS_URL=             # Auto-set by docker-compose
-ANALYST_URL=           # Auto-set by docker-compose (http://analyst:8000)`}</CodeBlock>
-          </SubSection>
-
-          <SubSection id="service-db" title="db — PostgreSQL 16">
-            <p>
-              The primary persistent data store for all Phonolith data.
-            </p>
-            <Table
-              headers={['Property', 'Value']}
-              rows={[
-                ['Port', '5432 (internal only by default)'],
-                ['Image', 'postgres:16-alpine'],
-                ['Data volume', 'pgdata (survives container restarts and upgrades)'],
-              ]}
-            />
-            <p>Database tables:</p>
-            <Table
-              headers={['Table', 'Contents']}
-              rows={[
-                ['artists', 'Genius artist data: ID, name, profile image URL, description, follower count'],
-                ['albums', 'Album metadata: title, cover art URL, release year, track count, artist ID'],
-                ['songs', 'Song data: title, release date, Genius pageview count, lyrics URL, album ID, artist ID'],
-                ['lyrics', 'Full lyrics text, stored per song ID after first fetch'],
-                ['credits', 'Song credits: role (Producer, Written By, etc.) and contributor name, linked to song ID'],
-                ['annotations', 'Genius annotations and user-created annotations, linked to song ID and lyric position'],
-                ['library_files', 'Audio file analysis results: hash, path, tags, DR score, upscale flag, waveform path, fingerprint'],
-                ['library_sources', 'Configured library sources: type (local/SMB/NFS), connection details, credentials'],
-                ['tags', 'Tag definitions: name, colour (hex), created_at'],
-                ['song_tags', 'Many-to-many join table: song_id ↔ tag_id'],
-                ['history', 'History events: song_id, artist_id, event_type, created_at (UTC)'],
-                ['app_settings', 'Runtime configuration: API keys, S3 config, other overrideable settings'],
-                ['schema_migrations', 'Tracks which migration files have been applied'],
-              ]}
-            />
-          </SubSection>
-
-          <SubSection id="service-redis" title="redis — Redis 7">
-            <p>
-              In-memory cache layer used for fast API responses and settings lookups.
-            </p>
-            <Table
-              headers={['Property', 'Value']}
-              rows={[
-                ['Port', '6379 (internal only by default)'],
-                ['Image', 'redis:7-alpine'],
-                ['Data volume', 'redisdata (persisted — cache survives restarts)'],
-              ]}
-            />
-            <p>What Redis caches:</p>
-            <Table
-              headers={['Cache key pattern', 'TTL', 'Contents']}
-              rows={[
-                ['genius:artist:{id}', '5 minutes', 'Genius API response for an artist (songs, metadata)'],
-                ['genius:song:{id}', '5 minutes', 'Genius API response for a song detail page'],
-                ['viz:connections:{artistId}', '1 hour', 'Pre-computed connection data for the galaxy visualization'],
-                ['settings:{key}', '60 seconds', 'Runtime config values from app_settings table'],
-              ]}
-            />
-            <Note>
-              Flushing Redis (<code className="font-mono bg-surface-2 px-1 rounded">docker compose exec redis redis-cli FLUSHALL</code>) only clears the cache. All persistent data lives in PostgreSQL and is unaffected. The next request will simply re-fetch from Genius and re-populate the cache.
-            </Note>
-          </SubSection>
-
-          <SubSection id="service-analyst" title="analyst — Python FastAPI">
-            <p>
-              The audio analysis sidecar. Handles all file I/O and heavy computation so the Node.js app stays responsive.
-            </p>
-            <Table
-              headers={['Property', 'Value']}
-              rows={[
-                ['Port', 'ANALYST_PORT (default 8000)'],
-                ['Language', 'Python 3.12'],
-                ['Framework', 'FastAPI + uvicorn'],
-                ['Key libraries', 'mutagen, numpy, Pillow, chromaprint, smbprotocol, blake3, watchdog'],
-              ]}
-            />
-            <p>HTTP API endpoints:</p>
-            <Table
-              headers={['Endpoint', 'Method', 'Description']}
-              rows={[
-                ['/health', 'GET', 'Health check — returns 200 OK if the service is running'],
-                ['/status', 'GET', 'Current scan status and progress (files scanned, files remaining, errors)'],
-                ['/scan', 'POST', 'Scan a local path directly (body: { path: string })'],
-                ['/scan-source', 'POST', 'Scan a configured library source by ID (body: { source_id: number })'],
-                ['/test-source', 'POST', 'Test connectivity and authentication for a source without indexing'],
-                ['/ping', 'POST', 'TCP port reachability test (body: { host: string, port: number })'],
-                ['/file/{hash}', 'GET', 'Get the indexed library_file record for a given BLAKE3 hash'],
-                ['/fingerprint', 'POST', 'Generate an AcoustID fingerprint for a given file path'],
-                ['/waveforms/{hash}', 'GET', 'Serve the waveform PNG for a given BLAKE3 hash'],
-              ]}
-            />
-          </SubSection>
-        </Section>
-
-        {/* ── 8. Troubleshooting ── */}
+        {/* ═══════════════════════════════════════════════════════════ */}
+        {/* 11. Troubleshooting                                        */}
+        {/* ═══════════════════════════════════════════════════════════ */}
         <Section id="troubleshooting" title="Troubleshooting">
-          <div className="space-y-8">
+          <SubSection id="ts-smb" title="SMB Issues">
+            <Table
+              headers={['Symptom', 'Likely Cause', 'Fix']}
+              rows={[
+                ['Ping fails', 'Port 445 blocked or NAS offline', 'Check firewall rules; verify NAS is online and SMB service is running'],
+                ['Auth/share error: dialect not supported', 'SMB1 only enabled on NAS', 'Enable SMB2 or SMB3 in NAS settings'],
+                ['"Host and share name are required"', 'Empty fields in source config', 'Re-add the source and fill in all required fields'],
+                ['Auth error after correct credentials', 'Domain missing', 'Add the Windows domain or workgroup in the Domain field'],
+                ['Files found: 0', 'Wrong share name or subfolder', 'Share names are case-sensitive — check exact name in NAS UI'],
+                ['Scan very slow', 'Running deep analysis on SMB', 'Fast scan (no librosa) is the default; deep analysis is a future separate pass'],
+              ]}
+            />
+          </SubSection>
 
-            <div>
-              <h3 className="text-text-primary text-base font-semibold mb-2">&quot;Genius shows connection failed&quot; in Settings</h3>
-              <div className="text-text-muted text-sm leading-relaxed space-y-2">
-                <p>Check that <code className="font-mono bg-surface-2 px-1 rounded">GENIUS_ACCESS_TOKEN</code> is set in your <code className="font-mono bg-surface-2 px-1 rounded">.env</code> file and that it contains a valid token (not the Client Secret — you need the Client Access Token).</p>
-                <p>Alternatively, paste your token directly in the <strong className="text-text-primary">Settings → Genius Access Token</strong> field and click Save. This takes effect immediately without a restart (within 60 seconds as the settings cache expires).</p>
-                <p>To get a token: go to <strong className="text-text-primary">genius.com/api-clients</strong> → Create an API Client → copy the <strong className="text-text-primary">Client Access Token</strong> (the long one, not the short Client ID or Secret).</p>
-              </div>
-            </div>
+          <SubSection id="ts-migrations" title="Database Migrations">
+            <p>
+              Migrations run automatically on app startup via the instrumentation hook. If you see a{' '}
+              <code className="text-accent">42P01 relation does not exist</code> error, the migration hook
+              may not have run. Check:
+            </p>
+            <ul className="list-disc list-inside space-y-1">
+              <li>The app logs for <code className="text-accent">[db] applied migration:</code> lines on startup</li>
+              <li>That <code className="text-accent">experimental.instrumentationHook: true</code> is set in <code className="text-accent">next.config.mjs</code></li>
+              <li>That <code className="text-accent">src/instrumentation.ts</code> exists and exports <code className="text-accent">register()</code></li>
+              <li>That <code className="text-accent">src/migrations/</code> was copied into the Docker image (check Dockerfile runner stage)</li>
+            </ul>
+          </SubSection>
 
-            <div>
-              <h3 className="text-text-primary text-base font-semibold mb-2">&quot;relation X does not exist&quot; errors in logs</h3>
-              <div className="text-text-muted text-sm leading-relaxed space-y-2">
-                <p>The database migrations did not run on startup. This sometimes happens if the database container was not yet ready when the app container started.</p>
-                <p>Fix: restart the app container to re-run migrations:</p>
-                <CodeBlock>{`docker compose restart app`}</CodeBlock>
-                <p>Then check the logs for migration errors:</p>
-                <CodeBlock>{`docker compose logs app | grep -i migrat`}</CodeBlock>
-              </div>
-            </div>
+          <SubSection id="ts-scan" title="Scan Problems">
+            <Table
+              headers={['Symptom', 'Likely Cause', 'Fix']}
+              rows={[
+                ['Scan starts but 0 files indexed', 'No audio files match supported extensions', 'Verify share contains .flac/.mp3/.m4a etc.'],
+                ['Progress stuck at "Discovering"', 'Walk is slow on large share', 'Normal — NAS directory listings over SMB are slower than local disk'],
+                ['Many errors in scan log', 'Files locked by another process', 'Ensure no other software has exclusive locks on the files'],
+                ['Ingest fails with 500', 'library_files table missing', 'See Database Migrations above'],
+              ]}
+            />
+          </SubSection>
 
-            <div>
-              <h3 className="text-text-primary text-base font-semibold mb-2">SMB source shows &quot;Cannot reach host:445&quot;</h3>
-              <div className="text-text-muted text-sm leading-relaxed space-y-2">
-                <p>The analyst container cannot establish a TCP connection to your NAS on port 445. This is a network issue, not a credentials issue.</p>
-                <p>Steps to diagnose:</p>
-                <ol className="list-decimal list-inside space-y-1 pl-2">
-                  <li>Verify the NAS is powered on and SMB is enabled in its admin panel.</li>
-                  <li>Use the <strong className="text-text-primary">Ping</strong> button in the Add Source modal — it tests TCP port 445 from inside the analyst container specifically.</li>
-                  <li>Check your NAS&apos;s built-in firewall or any network firewall rules blocking port 445.</li>
-                  <li>On Windows hosts, check Windows Defender Firewall for rules blocking outbound SMB.</li>
-                  <li>Test manually from the analyst container:</li>
-                </ol>
-                <CodeBlock>{`docker compose exec analyst python3 -c "import socket; socket.create_connection(('YOUR-NAS-IP', 445), 5); print('OK')"`}</CodeBlock>
-              </div>
-            </div>
-
-            <div>
-              <h3 className="text-text-primary text-base font-semibold mb-2">SMB source shows &quot;Auth/share error&quot;</h3>
-              <div className="text-text-muted text-sm leading-relaxed space-y-2">
-                <p>The analyst can reach port 445, but authentication or share access is failing.</p>
-                <ul className="list-disc list-inside space-y-1 pl-2">
-                  <li>Double-check the username, password, and share name — share names are case-sensitive on some NAS platforms.</li>
-                  <li>For Windows shares, try adding the machine name or domain to the <strong className="text-text-primary">Domain</strong> field (e.g. <code className="font-mono bg-surface-2 px-1 rounded">WORKGROUP</code> or <code className="font-mono bg-surface-2 px-1 rounded">DESKTOP-ABC123</code>).</li>
-                  <li>For Synology NAS: ensure the user has read permission on the shared folder in the Shared Folder settings, not just user-level permission.</li>
-                  <li>For QNAP NAS: check that SMB 2.0+ is enabled — some older firmware defaults to SMB 1.0 which is not supported.</li>
-                  <li>Try the <strong className="text-text-primary">Test</strong> button in the source list after saving — it gives a more specific error message than the Ping check.</li>
-                </ul>
-              </div>
-            </div>
-
-            <div>
-              <h3 className="text-text-primary text-base font-semibold mb-2">Docker mount denied for <code className="font-mono">/music</code> or <code className="font-mono">/Volumes/…</code></h3>
-              <div className="text-text-muted text-sm leading-relaxed space-y-2">
-                <p>Docker Desktop requires explicit permission to access directories outside its default allowed paths.</p>
-                <p>Fix: In <strong className="text-text-primary">Docker Desktop → Settings → Resources → File Sharing</strong>, add the directory you want to mount and click Apply.</p>
-                <p>Alternatively, the simplest option for local music is to put your files inside the <code className="font-mono bg-surface-2 px-1 rounded">./music</code> folder in the Phonolith project root. This directory is always mounted inside the analyst container at <code className="font-mono bg-surface-2 px-1 rounded">/music</code> and does not require any File Sharing configuration.</p>
-              </div>
-            </div>
-
-            <div>
-              <h3 className="text-text-primary text-base font-semibold mb-2">Artist or song page shows empty or keeps loading</h3>
-              <div className="text-text-muted text-sm leading-relaxed space-y-2">
-                <p>Open browser DevTools (F12) → Network tab and look for failing requests to <code className="font-mono bg-surface-2 px-1 rounded">/api/artist/[id]</code>, <code className="font-mono bg-surface-2 px-1 rounded">/api/song/[id]</code>, or <code className="font-mono bg-surface-2 px-1 rounded">/api/lyrics/[id]</code>.</p>
-                <ul className="list-disc list-inside space-y-1 pl-2">
-                  <li>A <strong className="text-text-primary">429 response</strong> means you have hit the Genius API rate limit. Wait 60 seconds and try again.</li>
-                  <li>A <strong className="text-text-primary">401 response</strong> means your Genius token is invalid — re-check it in Settings.</li>
-                  <li>A <strong className="text-text-primary">500 response</strong> means a server error — check <code className="font-mono bg-surface-2 px-1 rounded">docker compose logs app</code> for the full stack trace.</li>
-                </ul>
-                <CodeBlock>{`docker compose logs app --tail 50`}</CodeBlock>
-              </div>
-            </div>
-
-            <div>
-              <h3 className="text-text-primary text-base font-semibold mb-2">Analyst shows &quot;offline&quot; in Settings</h3>
-              <div className="text-text-muted text-sm leading-relaxed space-y-2">
-                <p>The app cannot reach the analyst container&apos;s health endpoint at <code className="font-mono bg-surface-2 px-1 rounded">http://analyst:8000/health</code>.</p>
-                <ol className="list-decimal list-inside space-y-1 pl-2">
-                  <li>Check if the analyst container is running: <CodeBlock>{`docker compose ps`}</CodeBlock></li>
-                  <li>If it is not running or shows &quot;Exit&quot;, check its logs for startup errors: <CodeBlock>{`docker compose logs analyst`}</CodeBlock></li>
-                  <li>Common startup failure: a Python dependency failed to install during the image build. Rebuild the image: <CodeBlock>{`docker compose build analyst && docker compose up analyst -d`}</CodeBlock></li>
-                  <li>If the container is running but the app still shows offline, try restarting both: <CodeBlock>{`docker compose restart analyst app`}</CodeBlock></li>
-                </ol>
-              </div>
-            </div>
-
-            <div>
-              <h3 className="text-text-primary text-base font-semibold mb-2">Waveforms not appearing in the Library</h3>
-              <div className="text-text-muted text-sm leading-relaxed space-y-2">
-                <p>Waveform PNGs are generated by the analyst during the file indexing pipeline — they do not exist until a scan has been run for that file.</p>
-                <ul className="list-disc list-inside space-y-1 pl-2">
-                  <li>Ensure you have run a <strong className="text-text-primary">Scan</strong> for the library source containing the file.</li>
-                  <li>Verify the <code className="font-mono bg-surface-2 px-1 rounded">waveforms</code> Docker volume exists: <CodeBlock>{`docker volume ls | grep waveforms`}</CodeBlock></li>
-                  <li>Verify the analyst is online (Settings → analyst status indicator).</li>
-                  <li>If a waveform is missing for an already-indexed file, re-scan the source to regenerate it. The BLAKE3 hash check ensures re-scanning does not create duplicate records.</li>
-                </ul>
-              </div>
-            </div>
-
-            <div>
-              <h3 className="text-text-primary text-base font-semibold mb-2">Library scan takes very long for an SMB source</h3>
-              <div className="text-text-muted text-sm leading-relaxed space-y-2">
-                <p>SMB scanning works by downloading each audio file from the share to a temporary location on the analyst container, running the full analysis pipeline, then deleting the temporary file. On a slow network or a large library, this takes time.</p>
-                <ul className="list-disc list-inside space-y-1 pl-2">
-                  <li>The <strong className="text-text-primary">Notifications bell</strong> (top-right of the app) shows real-time scan progress — files processed, files remaining, and any errors.</li>
-                  <li>You can safely navigate around the app while a scan is running in the background.</li>
-                  <li>Only supported audio formats are processed (FLAC, MP3, AAC, M4A, OGG, WAV, AIFF, WV, APE, OPUS). Other file types are counted but skipped immediately, so they do not slow the scan.</li>
-                  <li>Once indexed, re-scanning is much faster — the BLAKE3 hash is checked first, and files that have not changed are skipped within milliseconds.</li>
-                  <li>For very large libraries (&gt;10,000 files), consider scanning a subfolder at a time using the <strong className="text-text-primary">Subfolder</strong> field in the source configuration.</li>
-                </ul>
-              </div>
-            </div>
-
-          </div>
+          <SubSection id="ts-genius" title="Genius API Issues">
+            <Table
+              headers={['Symptom', 'Fix']}
+              rows={[
+                ['Test button shows "Genius API returned 401"', 'Token is invalid or expired. Regenerate at genius.com/api-clients.'],
+                ['Test passes but search returns no results', 'Artist name may be too ambiguous. Try a more specific query.'],
+                ['Lyrics show "Not available"', 'Genius may not have lyrics for this song, or the scraping failed. Try again later.'],
+                ['GENIUS_ACCESS_TOKEN not set (after saving in UI)', 'Redis cache may still hold the old null value. Wait 60 seconds and retry, or restart Redis.'],
+              ]}
+            />
+          </SubSection>
         </Section>
       </main>
     </div>
