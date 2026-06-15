@@ -50,6 +50,7 @@ export default function LibraryPage() {
   const [scanning, setScanning] = useState(false)
   const [scanMsg, setScanMsg] = useState<string | null>(null)
   const [activeScan, setActiveScan] = useState(false)
+  const [deepScanning, setDeepScanning] = useState(false)
 
   // Filters
   const [formatFilter, setFormatFilter] = useState<string>('all')
@@ -89,6 +90,21 @@ export default function LibraryPage() {
     }, 3000)
     return () => clearInterval(id)
   }, [activeScan])
+
+  const handleDeepScan = async () => {
+    setDeepScanning(true)
+    setScanMsg(null)
+    try {
+      const r = await fetch('/api/library/deep-scan-pending', { method: 'POST' })
+      const data = await r.json()
+      setScanMsg(data.message ?? (data.ok ? 'Deep scan started.' : 'Deep scan failed.'))
+      if (data.ok) setActiveScan(true)
+    } catch {
+      setScanMsg('Deep scan failed — check analyst sidecar.')
+    } finally {
+      setDeepScanning(false)
+    }
+  }
 
   const handleScan = async () => {
     setScanning(true)
@@ -137,6 +153,20 @@ export default function LibraryPage() {
               Last scan: {new Date(status.last_scan).toLocaleString()}
             </span>
           )}
+          {(() => {
+            const unscanned = files.filter(f => f.dr_score == null).length
+            return unscanned > 0 ? (
+              <button
+                onClick={handleDeepScan}
+                disabled={deepScanning || activeScan}
+                title={`${unscanned} fast-indexed file${unscanned !== 1 ? 's' : ''} with no DR score`}
+                className="px-3 py-1.5 rounded-lg bg-warning/10 border border-warning/30 text-warning text-xs font-medium
+                           hover:bg-warning/20 transition-colors disabled:opacity-50"
+              >
+                {deepScanning ? 'Analysing…' : `Analyse Unscanned (${unscanned})`}
+              </button>
+            ) : null
+          })()}
           <button
             onClick={handleScan}
             disabled={scanning}

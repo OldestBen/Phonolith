@@ -310,6 +310,168 @@ function LibrarySourcesSection() {
   )
 }
 
+// ── Playback ──────────────────────────────────────────────────────────────────
+interface AlsaDevice {
+  id: string
+  name: string
+  description?: string
+}
+
+function PlaybackSection() {
+  const [devices, setDevices] = useState<AlsaDevice[]>([])
+  const [lucidOnline, setLucidOnline] = useState<boolean | null>(null)
+  const [device, setDevice] = useState('')
+  const [endpointName, setEndpointName] = useState('')
+  const [saving, setSaving] = useState(false)
+  const [saveMsg, setSaveMsg] = useState<string | null>(null)
+
+  useEffect(() => {
+    // Load current saved values
+    Promise.all([
+      fetch('/api/settings/keys?key=LUCID_DEVICE').then(r => r.ok ? r.json() : null),
+      fetch('/api/settings/keys?key=LUCID_ENDPOINT_NAME').then(r => r.ok ? r.json() : null),
+    ]).then(([devMeta, nameMeta]) => {
+      // meta.masked is just the masked display — to get the real value we rely on Lucid status
+    }).catch(() => {})
+
+    // Fetch ALSA devices from Lucid sidecar
+    fetch('/api/lucid/devices')
+      .then(r => r.ok ? r.json() : null)
+      .then(data => {
+        if (data && !data.online === false) {
+          setLucidOnline(true)
+          const devList: AlsaDevice[] = Array.isArray(data) ? data : (data.devices ?? [])
+          setDevices(devList)
+        } else if (data?.online === false) {
+          setLucidOnline(false)
+        }
+      })
+      .catch(() => setLucidOnline(false))
+
+    // Also get current status to see selected device
+    fetch('/api/lucid/status')
+      .then(r => r.ok ? r.json() : null)
+      .then(data => {
+        if (data?.online !== false) {
+          setLucidOnline(true)
+          if (data?.device) setDevice(data.device)
+          if (data?.endpoint_name) setEndpointName(data.endpoint_name)
+        }
+      })
+      .catch(() => {})
+  }, [])
+
+  const handleSave = async () => {
+    setSaving(true)
+    setSaveMsg(null)
+    try {
+      const saves: Promise<Response>[] = []
+      if (device) {
+        saves.push(fetch('/api/settings/keys', {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ key: 'LUCID_DEVICE', value: device }),
+        }))
+      }
+      if (endpointName.trim()) {
+        saves.push(fetch('/api/settings/keys', {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ key: 'LUCID_ENDPOINT_NAME', value: endpointName.trim() }),
+        }))
+      }
+      await Promise.all(saves)
+      setSaveMsg('Saved — restart Lucid for device changes to take effect')
+    } catch {
+      setSaveMsg('Save failed')
+    } finally {
+      setSaving(false)
+      setTimeout(() => setSaveMsg(null), 8000)
+    }
+  }
+
+  return (
+    <div className="space-y-5">
+      {/* Lucid status */}
+      <div className="flex items-center gap-2">
+        <span className={`w-2 h-2 rounded-full shrink-0 ${
+          lucidOnline === null ? 'bg-text-muted animate-pulse' :
+          lucidOnline ? 'bg-success' : 'bg-danger'
+        }`} />
+        <span className="text-text-muted text-xs">
+          {lucidOnline === null ? 'Checking Lucid sidecar…' :
+           lucidOnline ? 'Lucid sidecar online — bit-perfect ALSA playback available' :
+           'Lucid sidecar offline — start with docker compose --profile audio up lucid'}
+        </span>
+      </div>
+
+      {/* ALSA output device */}
+      <div>
+        <label className="text-text-muted text-xs uppercase tracking-widest block mb-1.5">
+          ALSA Output Device
+        </label>
+        {devices.length > 0 ? (
+          <select
+            value={device}
+            onChange={e => setDevice(e.target.value)}
+            className="bg-background border border-border text-text-primary text-sm rounded-lg px-3 py-2 w-full
+                       focus:outline-none focus:border-accent transition-colors"
+          >
+            <option value="">Select device…</option>
+            {devices.map(d => (
+              <option key={d.id} value={d.id}>
+                {d.name}{d.description ? ` — ${d.description}` : ''}
+              </option>
+            ))}
+          </select>
+        ) : (
+          <input
+            type="text"
+            value={device}
+            onChange={e => setDevice(e.target.value)}
+            placeholder="e.g. hw:0,0 or default"
+            className="bg-background border border-border text-text-primary text-sm rounded-lg px-3 py-2 w-full
+                       focus:outline-none focus:border-accent transition-colors font-mono"
+          />
+        )}
+        <p className="text-text-muted text-xs mt-1">
+          {lucidOnline ? 'Exclusive ALSA access — bypasses the kernel mixer for bit-perfect output.' :
+           'Enter an ALSA device string (hw:0,0, plughw:1,0, etc.).'}
+        </p>
+      </div>
+
+      {/* Endpoint name */}
+      <div>
+        <label className="text-text-muted text-xs uppercase tracking-widest block mb-1.5">
+          Endpoint Display Name
+        </label>
+        <input
+          type="text"
+          value={endpointName}
+          onChange={e => setEndpointName(e.target.value)}
+          placeholder="e.g. Chord Hugo TT2, iFi Zen DAC, Built-in Speakers"
+          className="bg-background border border-border text-text-primary text-sm rounded-lg px-3 py-2 w-full
+                     focus:outline-none focus:border-accent transition-colors"
+        />
+        <p className="text-text-muted text-xs mt-1">
+          Shown in the Signal Path display and playback bar.
+        </p>
+      </div>
+
+      <div className="flex items-center gap-3">
+        <button
+          onClick={handleSave}
+          disabled={saving}
+          className="px-4 py-2 rounded-lg bg-accent text-white text-sm font-medium hover:bg-accent/80 transition-colors disabled:opacity-50"
+        >
+          {saving ? 'Saving…' : 'Save Playback Settings'}
+        </button>
+        {saveMsg && <span className="text-text-muted text-sm">{saveMsg}</span>}
+      </div>
+    </div>
+  )
+}
+
 // ── Backup ────────────────────────────────────────────────────────────────────
 function BackupSection() {
   const [bucket, setBucket] = useState('')
@@ -367,6 +529,10 @@ export default function SettingsPage() {
         <ApiKeyField label="Genius Access Token" settingKey="GENIUS_ACCESS_TOKEN" testEndpoint="/api/settings/genius" />
         <ApiKeyField label="Discogs User Token" settingKey="DISCOGS_USER_TOKEN" />
         <ApiKeyField label="AcoustID API Key" settingKey="ACOUSTID_API_KEY" />
+      </Section>
+
+      <Section title="Playback">
+        <PlaybackSection />
       </Section>
 
       <Section title="Library Sources">

@@ -13,6 +13,8 @@ const ALLOWED_KEYS = new Set([
   'AWS_ACCESS_KEY_ID',
   'AWS_SECRET_ACCESS_KEY',
   'MUSICBRAINZ_CONTACT',
+  'LUCID_DEVICE',
+  'LUCID_ENDPOINT_NAME',
 ])
 
 export async function GET(req: NextRequest) {

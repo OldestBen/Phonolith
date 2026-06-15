@@ -240,6 +240,75 @@ async def accuraterip(req: AccurateRipRequest):
     return result
 
 
+class DeepScanRequest(BaseModel):
+    path: str
+
+
+@app.post("/deep-scan")
+async def deep_scan(req: DeepScanRequest):
+    """Full analysis pass on a single already-indexed file (DR, spectral, waveform, AcoustID)."""
+    if not os.path.isfile(req.path):
+        return {"ok": False, "error": f"File not found: {req.path}"}
+    asyncio.create_task(_run_deep_scan(req.path))
+    return {"ok": True, "message": "Deep scan started"}
+
+
+async def _run_deep_scan(path: str):
+    from scanner import index_file
+    try:
+        record = await asyncio.to_thread(index_file, path, WAVEFORM_PATH)
+        if record:
+            log.info("Deep scan complete: %s", path)
+        else:
+            log.warning("Deep scan returned no record: %s", path)
+    except Exception:
+        log.exception("Deep scan failed: %s", path)
+
+
+@app.post("/deep-scan-pending")
+async def deep_scan_pending():
+    """Deep-analyse all files that were fast-indexed (dr_score IS NULL)."""
+    if STATUS["scanning"]:
+        return {"ok": False, "message": "Scan already in progress"}
+    asyncio.create_task(_run_pending_deep_scans())
+    return {"ok": True, "message": "Pending deep scan started"}
+
+
+async def _run_pending_deep_scans():
+    import httpx
+    from scanner import index_file
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            r = await client.get(f"{APP_URL}/api/library/pending-analysis")
+            if not r.is_success:
+                return
+            files = r.json()
+
+        log.info("Deep scan pending: %d files queued", len(files))
+        STATUS["scanning"] = True
+        STATUS["scan_progress"]["phase"] = "indexing"
+        STATUS["scan_progress"]["total"] = len(files)
+        STATUS["scan_progress"]["done"] = 0
+        STATUS["scan_progress"]["source_name"] = "Deep analysis pass"
+        STATUS["scan_progress"]["errors"] = []
+
+        for i, f in enumerate(files):
+            path = f.get("file_path", "")
+            STATUS["scan_progress"]["current_file"] = path
+            if not path or not os.path.isfile(path):
+                STATUS["scan_progress"]["done"] = i + 1
+                continue
+            try:
+                await asyncio.to_thread(index_file, path, WAVEFORM_PATH)
+            except Exception as e:
+                STATUS["scan_progress"]["errors"].append(str(e))
+            STATUS["scan_progress"]["done"] = i + 1
+    finally:
+        STATUS["scanning"] = False
+        STATUS["scan_progress"]["phase"] = "idle"
+        STATUS["scan_progress"]["current_file"] = None
+
+
 @app.get("/waveforms/{hash}")
 def get_waveform(hash: str):
     path = os.path.join(WAVEFORM_PATH, f"{hash}.png")
