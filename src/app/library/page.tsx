@@ -35,6 +35,7 @@ interface LibraryStatus {
   last_scan?: string
   watcher_status?: string
   library_path?: string
+  scanning?: boolean
 }
 
 // ── Filter types ──────────────────────────────────────────────────────────────
@@ -44,28 +45,50 @@ type MatchFilter = 'all' | 'matched' | 'unmatched'
 export default function LibraryPage() {
   const router = useRouter()
   const [files, setFiles] = useState<LibraryFile[]>([])
-  const [status, setStatus] = useState<LibraryStatus>({})
+  const [status, setStatus] = useState<LibraryStatus | null>(null)
   const [loading, setLoading] = useState(true)
   const [scanning, setScanning] = useState(false)
   const [scanMsg, setScanMsg] = useState<string | null>(null)
+  const [activeScan, setActiveScan] = useState(false)
 
   // Filters
   const [formatFilter, setFormatFilter] = useState<string>('all')
   const [drFilter, setDrFilter] = useState<DRFilter>('all')
   const [matchFilter, setMatchFilter] = useState<MatchFilter>('all')
 
+  // Initial load
   useEffect(() => {
     Promise.all([
       fetch('/api/library').then(r => r.ok ? r.json() : { files: [] }),
-      fetch('/api/library/status').then(r => r.ok ? r.json() : {}),
+      fetch('/api/library/status').then(r => r.ok ? r.json() : null),
     ])
       .then(([libData, statusData]) => {
         setFiles(libData.files ?? libData ?? [])
         setStatus(statusData)
+        if (statusData?.scanning) setActiveScan(true)
       })
       .catch(() => {})
       .finally(() => setLoading(false))
   }, [])
+
+  // Poll while a scan is active — show files as they arrive, like Plex/Roon
+  useEffect(() => {
+    if (!activeScan) return
+    const id = setInterval(async () => {
+      try {
+        const [libData, statusData] = await Promise.all([
+          fetch('/api/library').then(r => r.ok ? r.json() : null),
+          fetch('/api/library/status').then(r => r.ok ? r.json() : null),
+        ])
+        if (libData) setFiles(libData.files ?? libData ?? [])
+        if (statusData) {
+          setStatus(statusData)
+          if (!statusData.scanning) setActiveScan(false)
+        }
+      } catch {}
+    }, 3000)
+    return () => clearInterval(id)
+  }, [activeScan])
 
   const handleScan = async () => {
     setScanning(true)
@@ -74,13 +97,7 @@ export default function LibraryPage() {
       const r = await fetch('/api/library/scan', { method: 'POST' })
       const data = await r.json()
       setScanMsg(data.message ?? 'Scan started.')
-      // Re-fetch files after a short delay
-      setTimeout(() => {
-        fetch('/api/library')
-          .then(r => r.ok ? r.json() : { files: [] })
-          .then(d => setFiles(d.files ?? d ?? []))
-          .catch(() => {})
-      }, 2000)
+      setActiveScan(true)
     } catch {
       setScanMsg('Scan failed — check your library configuration.')
     } finally {
@@ -108,12 +125,14 @@ export default function LibraryPage() {
       <div className="flex flex-wrap items-center gap-4 mb-6">
         <div className="flex items-center gap-3">
           <h1 className="text-text-primary text-xl font-bold">Library</h1>
-          <span className="px-2 py-0.5 rounded-full bg-surface-2 border border-border text-text-muted text-xs">
+          <span className="px-2 py-0.5 rounded-full bg-surface-2 border border-border text-text-muted text-xs flex items-center gap-1.5">
+            {activeScan && <span className="w-1.5 h-1.5 rounded-full bg-accent animate-pulse shrink-0" />}
             {files.length} file{files.length !== 1 ? 's' : ''}
+            {activeScan && ' — scanning…'}
           </span>
         </div>
         <div className="flex items-center gap-2 ml-auto">
-          {status.last_scan && (
+          {status?.last_scan && (
             <span className="text-text-muted text-xs">
               Last scan: {new Date(status.last_scan).toLocaleString()}
             </span>

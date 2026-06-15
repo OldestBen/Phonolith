@@ -311,14 +311,15 @@ export default function DocsPage() {
           <SubSection id="what-is-phonolith" title="What is Phonolith?">
             <p>
               Phonolith is a self-hosted, Docker-native music platform built for audiophiles who want total control
-              over their library, metadata, and listening history. It combines a Genius-powered discovery engine
-              (search, lyrics, credits, annotations) with a local audio library analyser that inspects every file
-              you own for quality, authenticity, and provenance.
+              over their library, metadata, and listening history. It draws on two complementary metadata authorities —
+              MusicBrainz for canonical artist and release data (MBIDs, ISRCs, accurate release dates, labels) and
+              Genius for lyrics, credits, and annotations — and pairs them with a local audio library analyser that
+              inspects every file you own for quality, authenticity, and provenance.
             </p>
             <p>
               Unlike streaming services, Phonolith runs entirely on your own hardware. Your library, your metadata,
-              your history — none of it leaves your machine. The only external calls are to Genius, MusicBrainz,
-              Discogs, and AcoustID, and all results are cached locally after the first fetch.
+              your history — none of it leaves your machine. External calls go to MusicBrainz, Genius, Discogs,
+              and AcoustID; all results are written to your local database on first fetch and never fetched again.
             </p>
             <p>
               Phonolith is built on a named-subsystem model: each capability is a distinct engine with a name,
@@ -358,7 +359,11 @@ docker compose up --build`}</CodeBlock>
               <code className="text-accent">http://localhost:3000</code>.
             </p>
             <Tip>
-              The Genius Access Token is the only truly required credential. Everything else (Discogs, AcoustID, S3) is optional and can be added at any time via Settings → API Keys without restarting the stack.
+              The Genius Access Token is the only credential required to start. MusicBrainz is queried automatically
+              with no key (identify your instance via <code className="text-accent">MUSICBRAINZ_APP_NAME</code> and{' '}
+              <code className="text-accent">MUSICBRAINZ_CONTACT</code> in <code className="text-accent">.env</code>
+              — this is required by their fair-use policy). Discogs, AcoustID, and S3 can be added at any time via
+              Settings → API Keys without restarting the stack.
             </Tip>
           </SubSection>
 
@@ -366,7 +371,7 @@ docker compose up --build`}</CodeBlock>
             <p>After the stack is up:</p>
             <ol className="list-decimal list-inside space-y-2 text-text-muted">
               <li><strong className="text-text-primary">Add a Genius API key</strong> — Settings → API Keys → Genius Access Token → Save, then hit Test. A green checkmark means you&apos;re connected.</li>
-              <li><strong className="text-text-primary">Search for an artist</strong> — use the home page search bar. Results are fetched from Genius and cached in your local database.</li>
+              <li><strong className="text-text-primary">Search for an artist</strong> — use the home page search bar. On first lookup, Phonolith fetches from Genius and simultaneously enriches with MusicBrainz (MBID, release dates, ISRCs). Both sources are cached locally.</li>
               <li><strong className="text-text-primary">Add a library source</strong> — Settings → Library Sources → Add Source. Choose Local, SMB, NFS, or iSCSI.</li>
               <li><strong className="text-text-primary">Scan your library</strong> — press Scan on the source row. The bell icon in the top-right shows live progress.</li>
               <li><strong className="text-text-primary">Visualize an artist</strong> — open any artist page and click Visualize, or go to the Visualize section and search for an artist.</li>
