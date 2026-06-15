@@ -173,3 +173,16 @@ export interface AlsaDevice {
   name: string
   label: string
 }
+
+// ── Cathode ────────────────────────────────────────────────────────────────────
+
+export interface HardwareProfile {
+  id: number
+  name: string
+  description?: string
+  device_type: 'dac' | 'amp' | 'speaker' | 'headphone' | 'dap' | 'system'
+  components: Array<{ role: string; model: string }>
+  total_hours: number
+  lucid_device?: string
+  created_at: string
+}
