@@ -78,10 +78,15 @@ export interface LibraryFile {
   spectral_ok?: boolean
   waveform_path?: string
   fingerprint?: string
+  accuraterip_status?: string
+  accuraterip_confidence?: number
+  mb_release_group_id?: string
   indexed_at: string
   // Joined
   song_title?: string
   song_artist?: string
+  album_name?: string
+  album_id?: number
 }
 
 export interface Tag {
@@ -121,4 +126,50 @@ export interface VizConnections {
   collaborator: [number, number][]
   producer: [number, number][]
   era: [number, number][]
+}
+
+// ── Engram ─────────────────────────────────────────────────────────────────────
+
+export interface MetadataVersion {
+  id: number
+  blake3_hash: string
+  snapshot: Record<string, unknown>
+  source: 'ingest' | 'user' | 'lexicon' | 'musicbrainz' | 'restore'
+  note?: string
+  created_at: string
+}
+
+// ── Lucid / Signal Path ────────────────────────────────────────────────────────
+
+export interface SignalPathState {
+  source_file: string | null
+  source_format: string | null
+  source_bit_depth: number | null
+  source_sample_rate: number | null
+  source_channels: number
+  decoder: string | null
+  dsp_chain: string[]
+  transport: string
+  alsa_device: string
+  endpoint_name: string | null
+  status: 'playing' | 'paused' | 'stopped' | 'buffering' | 'error'
+  position_ms: number
+  duration_ms: number
+  volume: number
+  bit_perfect: boolean
+}
+
+export interface LucidStatus {
+  signal_path: SignalPathState
+  queue: {
+    tracks: string[]
+    position: number
+    current: string | null
+  }
+  online: boolean
+}
+
+export interface AlsaDevice {
+  name: string
+  label: string
 }

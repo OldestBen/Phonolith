@@ -11,7 +11,8 @@ export async function POST(_req: NextRequest, { params }: { params: { id: string
   if (rows.length === 0) return NextResponse.json({ error: 'Not found' }, { status: 404 })
 
   const source = rows[0]
-  const config = typeof source.config === 'string' ? JSON.parse(source.config) : source.config
+  const { resolveConfig } = await import('@/lib/crypto')
+  const config = resolveConfig(source.config)
   const analystUrl = process.env.ANALYST_URL || 'http://analyst:8000'
 
   try {

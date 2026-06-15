@@ -3,6 +3,7 @@ import { Inter, Playfair_Display } from 'next/font/google'
 import './globals.css'
 import Sidebar from '@/components/Sidebar'
 import Notifications from '@/components/Notifications'
+import PlaybackBar from '@/components/PlaybackBar'
 
 const inter = Inter({
   variable: '--font-geist-sans',
@@ -30,9 +31,10 @@ export default function RootLayout({
       <body className={`${inter.variable} ${playfair.variable} font-sans`}>
         <Sidebar />
         <Notifications />
-        <main className="ml-16">
+        <main className="ml-16 pb-16">
           {children}
         </main>
+        <PlaybackBar />
       </body>
     </html>
   )

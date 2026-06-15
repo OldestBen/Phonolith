@@ -54,6 +54,15 @@ function SettingsIcon() {
   )
 }
 
+function VersionsIcon() {
+  return (
+    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z"/>
+      <path d="M15 5l3 3"/>
+    </svg>
+  )
+}
+
 function DocsIcon() {
   return (
     <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -66,6 +75,7 @@ function DocsIcon() {
 const NAV_ITEMS = [
   { href: '/', icon: SearchIcon, label: 'Search' },
   { href: '/library', icon: LibraryIcon, label: 'Library' },
+  { href: '/versions', icon: VersionsIcon, label: 'Versions' },
   { href: '/visualize', icon: VizIcon, label: 'Visualize' },
   { href: '/history', icon: HistoryIcon, label: 'History' },
   { href: '/tags', icon: TagIcon, label: 'Tags' },

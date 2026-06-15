@@ -2,10 +2,23 @@ export const dynamic = 'force-dynamic'
 
 import { NextRequest, NextResponse } from 'next/server'
 import { sql } from '@/lib/db'
+import { encryptConfig, resolveConfig } from '@/lib/crypto'
 
 export async function GET() {
   const sources = await sql`SELECT * FROM library_sources ORDER BY created_at`
-  return NextResponse.json(sources)
+  // Decrypt config before returning — strip sensitive credential fields
+  const safe = sources.map((s: Record<string, unknown>) => ({
+    ...s,
+    config: sanitiseConfig(resolveConfig(s.config)),
+  }))
+  return NextResponse.json(safe)
+}
+
+/** Remove plaintext passwords from API responses */
+function sanitiseConfig(cfg: Record<string, unknown>): Record<string, unknown> {
+  const out = { ...cfg }
+  if (out.password) out.password = '••••••••'
+  return out
 }
 
 export async function POST(req: NextRequest) {
@@ -17,10 +30,13 @@ export async function POST(req: NextRequest) {
   if (!body.name?.trim()) return NextResponse.json({ error: 'Missing name' }, { status: 400 })
   if (!body.type) return NextResponse.json({ error: 'Missing type' }, { status: 400 })
 
+  const encrypted = encryptConfig(body.config ?? {})
+
   const rows = await sql`
     INSERT INTO library_sources (name, type, config)
-    VALUES (${body.name.trim()}, ${body.type}, ${sql.json(body.config ?? {})})
+    VALUES (${body.name.trim()}, ${body.type}, ${encrypted})
     RETURNING *
   `
-  return NextResponse.json(rows[0], { status: 201 })
+  const row = rows[0] as Record<string, unknown>
+  return NextResponse.json({ ...row, config: sanitiseConfig(resolveConfig(row.config)) }, { status: 201 })
 }

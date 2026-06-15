@@ -11,6 +11,8 @@ services:
       - DATABASE_URL=postgresql://phonolith:phonolith@db:5432/phonolith
       - REDIS_URL=redis://redis:6379
       - ANALYST_URL=http://analyst:8000
+      - LUCID_URL=http://lucid:8001
+      - CREDENTIAL_KEY=${CREDENTIAL_KEY:-}
       - DISCOGS_USER_TOKEN=${DISCOGS_USER_TOKEN:-}
       - ACOUSTID_API_KEY=${ACOUSTID_API_KEY:-}
       - MUSICBRAINZ_APP_NAME=${MUSICBRAINZ_APP_NAME:-Phonolith}
@@ -44,6 +46,32 @@ services:
     depends_on:
       - redis
     restart: unless-stopped
+
+  # Lucid — bit-perfect ALSA audio transport daemon
+  # Requires a USB DAC or ALSA-compatible audio device on the Docker host.
+  # Remove this service if running without local audio hardware.
+  lucid:
+    build:
+      context: ./lucid
+      dockerfile: Dockerfile
+    ports:
+      - "${LUCID_PORT:-8001}:8001"
+    environment:
+      - REDIS_URL=redis://redis:6379
+      - APP_URL=http://app:3000
+    # Grant access to ALSA audio devices. On Linux, add your user to the 'audio' group.
+    devices:
+      - /dev/snd:/dev/snd
+    group_add:
+      - audio
+    volumes:
+      - ${LIBRARY_PATH:-./music}:/music:ro
+    depends_on:
+      - redis
+    restart: unless-stopped
+    # Disable on macOS / Windows or if no audio hardware is present:
+    profiles:
+      - audio
 
   db:
     image: postgres:16-alpine

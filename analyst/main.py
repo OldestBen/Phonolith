@@ -229,6 +229,16 @@ async def fingerprint_file(req: FingerprintRequest):
     return {"fingerprint": fp}
 
 
+class AccurateRipRequest(BaseModel):
+    path: str
+
+@app.post("/accuraterip")
+async def accuraterip(req: AccurateRipRequest):
+    from accuraterip import verify_track
+    result = await asyncio.to_thread(verify_track, req.path)
+    return result
+
+
 @app.get("/waveforms/{hash}")
 def get_waveform(hash: str):
     path = os.path.join(WAVEFORM_PATH, f"{hash}.png")

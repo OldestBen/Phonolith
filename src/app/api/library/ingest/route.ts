@@ -18,6 +18,8 @@ export async function POST(req: NextRequest) {
     spectral_ok?: boolean
     waveform_path?: string
     fingerprint?: string
+    accuraterip_status?: string
+    accuraterip_crc?: string
   }
 
   if (!data.blake3_hash || !data.file_path) {
@@ -27,12 +29,14 @@ export async function POST(req: NextRequest) {
   await sql`
     INSERT INTO library_files (
       blake3_hash, file_path, format, bitrate, sample_rate, bit_depth,
-      duration_ms, dr_score, spectral_ok, waveform_path, fingerprint, indexed_at
+      duration_ms, dr_score, spectral_ok, waveform_path, fingerprint,
+      accuraterip_status, indexed_at
     ) VALUES (
       ${data.blake3_hash}, ${data.file_path}, ${data.format ?? null},
       ${data.bitrate ?? null}, ${data.sample_rate ?? null}, ${data.bit_depth ?? null},
       ${data.duration_ms ?? null}, ${data.dr_score ?? null}, ${data.spectral_ok ?? null},
-      ${data.waveform_path ?? null}, ${data.fingerprint ?? null}, NOW()
+      ${data.waveform_path ?? null}, ${data.fingerprint ?? null},
+      ${data.accuraterip_status ?? null}, NOW()
     )
     ON CONFLICT (blake3_hash) DO UPDATE
     SET file_path = EXCLUDED.file_path,
@@ -45,7 +49,27 @@ export async function POST(req: NextRequest) {
         spectral_ok = EXCLUDED.spectral_ok,
         waveform_path = EXCLUDED.waveform_path,
         fingerprint = EXCLUDED.fingerprint,
+        accuraterip_status = EXCLUDED.accuraterip_status,
+        accuraterip_confidence = EXCLUDED.accuraterip_confidence,
         indexed_at = NOW()
+  `
+
+  await sql`
+    INSERT INTO metadata_versions (blake3_hash, snapshot, source)
+    VALUES (
+      ${data.blake3_hash},
+      ${sql.json({
+        format: data.format,
+        bitrate: data.bitrate,
+        sample_rate: data.sample_rate,
+        bit_depth: data.bit_depth,
+        duration_ms: data.duration_ms,
+        dr_score: data.dr_score,
+        spectral_ok: data.spectral_ok,
+        fingerprint: data.fingerprint,
+      })},
+      'ingest'
+    )
   `
 
   // Pub-sub event for real-time UI

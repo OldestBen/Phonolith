@@ -154,6 +154,15 @@ def index_file(path: str, waveform_path: str, display_path: str | None = None) -
         except Exception:
             fp = None
 
+        # AccurateRip CRC (FLAC and WAV only — needs uncompressed PCM access)
+        accuraterip_result = None
+        if fmt in ('flac', 'wav', 'aiff'):
+            try:
+                from accuraterip import verify_track
+                accuraterip_result = verify_track(path)
+            except Exception:
+                pass
+
         record = {
             "blake3_hash": h,
             "file_path": display_path or path,
@@ -166,6 +175,8 @@ def index_file(path: str, waveform_path: str, display_path: str | None = None) -
             "spectral_ok": spectral_ok,
             "waveform_path": waveform,
             "fingerprint": fp,
+            "accuraterip_crc": accuraterip_result.get('crc') if accuraterip_result else None,
+            "accuraterip_status": accuraterip_result.get('status') if accuraterip_result else None,
         }
         FILE_DB[h] = record
         _post_to_app(record)
