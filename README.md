@@ -42,10 +42,16 @@ Phonolith is a self-hosted music intelligence platform. It indexes your local au
 - EchoGraph page: reads-per-week line chart, top-artists bar chart, chronological event log
 - Tag any song; filter the library and discography views by tag
 
+### Playback
+- **Lucid** — bit-perfect ALSA playback daemon (Linux, Docker profile `audio`): exclusive ALSA lock via pyalsaaudio, gapless queue, frame-accurate seek, RAM pre-caching, two decode paths (soundfile for FLAC/WAV/AIFF; FFmpeg pipe for MP3/AAC/M4A)
+- **Signal Path Visualizer** — fixed bottom playback bar with a full-screen "Signal Path" overlay showing the end-to-end chain (Source → Decoder → DSP → Transport → Endpoint), animated flowing pulse while playing, bit-perfect status badge per stage
+- **Flux** — AirPlay endpoint discovery via zeroconf (`_raop._tcp.local.`); RTSP/ALAC streaming is a future milestone
+
 ### Settings & Backup
 - In-app settings for API keys with live "Test" buttons
 - Library source management (add, remove, scan, test) with real-time scan progress
 - PostgreSQL backup to S3 on demand or scheduled
+- AES-256-GCM encryption of SMB/NFS credentials at rest (`CREDENTIAL_KEY`)
 
 ---
 
