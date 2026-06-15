@@ -7,6 +7,12 @@ from pathlib import Path
 from typing import Callable
 import httpx
 
+import os as _os
+try:
+    _os.nice(10)  # Analyst runs at low priority — never compete with Lucid for CPU
+except (AttributeError, PermissionError):
+    pass
+
 APP_URL = os.environ.get("APP_URL", "http://app:3000")
 
 AUDIO_EXTENSIONS = {'.flac', '.mp3', '.aac', '.m4a', '.ogg', '.wav', '.aiff', '.wv', '.ape', '.opus'}
@@ -39,6 +45,16 @@ def _hash_fileobj(fileobj) -> str:
     return h.hexdigest()
 
 
+def _parse_disc_number(raw: str | None) -> int | None:
+    """Parse disc number from tag value like '1' or '1/2', returning the integer part."""
+    if not raw:
+        return None
+    try:
+        return int(str(raw).split("/")[0].strip())
+    except (ValueError, AttributeError):
+        return None
+
+
 def _read_tags(fileobj_or_path) -> dict:
     try:
         from mutagen import File as MutagenFile
@@ -46,12 +62,22 @@ def _read_tags(fileobj_or_path) -> dict:
         if not audio:
             return {}
         info = audio.info
+
+        # disc_number: try Vorbis 'discnumber' first, then easy-tag 'disk'
+        disc_raw = None
+        if audio.get("discnumber"):
+            disc_raw = str(audio.get("discnumber", [""])[0])
+        elif audio.get("disk"):
+            disc_raw = str(audio.get("disk", [""])[0])
+        disc_number = _parse_disc_number(disc_raw)
+
         return {
             "title": str(audio.get("title", [""])[0]) if audio.get("title") else None,
             "artist": str(audio.get("artist", [""])[0]) if audio.get("artist") else None,
             "album": str(audio.get("album", [""])[0]) if audio.get("album") else None,
             "year": str(audio.get("date", [""])[0])[:4] if audio.get("date") else None,
             "track": str(audio.get("tracknumber", [""])[0]) if audio.get("tracknumber") else None,
+            "disc_number": disc_number,
             "bitrate": getattr(info, "bitrate", None),
             "sample_rate": getattr(info, "sample_rate", None),
             "length": getattr(info, "length", None),
@@ -106,7 +132,8 @@ def _detect_upscale(path: str) -> bool | None:
 
 
 def _render_waveform(path: str, file_hash: str, waveform_path: str) -> str | None:
-    output = os.path.join(waveform_path, f"{file_hash}.png")
+    output = os.path.join(waveform_path, file_hash[0:2], file_hash[2:4], f"{file_hash}.png")
+    os.makedirs(os.path.dirname(output), exist_ok=True)
     if os.path.exists(output):
         return output
     try:
@@ -130,6 +157,66 @@ def _render_waveform(path: str, file_hash: str, waveform_path: str) -> str | Non
         return None
 
 
+def _render_cover_art(path_or_fileobj, file_hash: str, waveform_path: str) -> str | None:
+    """
+    Extract embedded cover art from a local file path or a BytesIO buffer.
+    Saves as a sharded JPEG at quality=85. Returns the output path or None.
+    """
+    output = os.path.join(waveform_path, file_hash[0:2], file_hash[2:4], f"{file_hash}_cover.jpg")
+    os.makedirs(os.path.dirname(output), exist_ok=True)
+    if os.path.exists(output):
+        return output
+
+    art_data: bytes | None = None
+
+    try:
+        from mutagen import File as MutagenFile
+
+        # For BytesIO buffers, seek to start before reading
+        if hasattr(path_or_fileobj, "read"):
+            path_or_fileobj.seek(0)
+
+        audio = MutagenFile(path_or_fileobj)
+        if not audio:
+            return None
+
+        # ID3 tags (MP3, AIFF, etc.) — APIC frames
+        if hasattr(audio, "tags") and audio.tags:
+            from mutagen.id3 import APIC
+            for key in audio.tags.keys():
+                if key.startswith("APIC"):
+                    frame = audio.tags[key]
+                    art_data = frame.data
+                    break
+
+        # FLAC / Vorbis — METADATA_BLOCK_PICTURE
+        if art_data is None and hasattr(audio, "pictures"):
+            pics = audio.pictures
+            if pics:
+                art_data = pics[0].data
+
+        # MP4/AAC — covr atom
+        if art_data is None:
+            covr = audio.get("covr") if hasattr(audio, "get") else None
+            if covr:
+                art_data = bytes(covr[0])
+
+    except Exception:
+        return None
+
+    if not art_data:
+        return None
+
+    try:
+        from PIL import Image
+        img = Image.open(io.BytesIO(art_data))
+        img = img.convert("RGB")
+        img.save(output, "JPEG", quality=85)
+        return output
+    except Exception:
+        return None
+
+
 def _post_to_app(data: dict) -> None:
     try:
         httpx.post(f"{APP_URL}/api/library/ingest", json=data, timeout=10)
@@ -137,7 +224,37 @@ def _post_to_app(data: dict) -> None:
         pass
 
 
-def index_file(path: str, waveform_path: str, display_path: str | None = None) -> dict | None:
+def ensure_root_marker(source_root: str, marker_uuid: str) -> bool:
+    """Write .phonolith_id to source root if not present. Returns True if writable."""
+    marker_path = os.path.join(source_root, ".phonolith_id")
+    try:
+        if not os.path.exists(marker_path):
+            with open(marker_path, "w") as f:
+                f.write(marker_uuid)
+        return True
+    except OSError:
+        return False
+
+
+def check_root_marker(source_root: str, expected_uuid: str | None) -> bool:
+    """Returns True if source root is accessible (and marker matches if provided)."""
+    marker_path = os.path.join(source_root, ".phonolith_id")
+    try:
+        if expected_uuid:
+            with open(marker_path) as f:
+                return f.read().strip() == expected_uuid
+        return os.path.exists(marker_path) or os.path.isdir(source_root)
+    except (OSError, IOError):
+        return os.path.isdir(source_root)
+
+
+def index_file(
+    path: str,
+    waveform_path: str,
+    display_path: str | None = None,
+    source_id: int | None = None,
+    source_root: str | None = None,
+) -> dict | None:
     """Full analysis: hash + tags + librosa DR + waveform. Used for local sources."""
     try:
         h = _hash_file(path)
@@ -147,6 +264,7 @@ def index_file(path: str, waveform_path: str, display_path: str | None = None) -
         dr = _compute_dr(path)
         spectral_ok = _detect_upscale(path)
         waveform = _render_waveform(path, h, waveform_path)
+        cover_art = _render_cover_art(path, h, waveform_path)
         try:
             import acoustid
             raw_fp = acoustid.fingerprint_file(path)
@@ -164,6 +282,20 @@ def index_file(path: str, waveform_path: str, display_path: str | None = None) -
             except Exception:
                 pass
 
+        # Stat fields for fast-path identity check
+        try:
+            st = os.stat(path)
+            inode = st.st_ino
+            file_size = st.st_size
+            mtime = int(st.st_mtime)
+        except OSError:
+            inode = file_size = mtime = None
+
+        # Relative path computation
+        relative_path = None
+        if source_root and path.startswith(source_root):
+            relative_path = os.path.relpath(path, source_root)
+
         record = {
             "blake3_hash": h,
             "file_path": display_path or path,
@@ -178,6 +310,17 @@ def index_file(path: str, waveform_path: str, display_path: str | None = None) -
             "fingerprint": fp,
             "accuraterip_crc": accuraterip_result.get('crc') if accuraterip_result else None,
             "accuraterip_status": accuraterip_result.get('status') if accuraterip_result else None,
+            "source_id": source_id,
+            "relative_path": relative_path,
+            "inode": inode,
+            "file_size": file_size,
+            "mtime": mtime,
+            "title": tags.get("title"),
+            "artist": tags.get("artist"),
+            "album": tags.get("album"),
+            "year": tags.get("year"),
+            "disc_number": tags.get("disc_number", 1),
+            "cover_art_path": cover_art,
         }
         FILE_DB[h] = record
         _post_to_app(record)
@@ -186,7 +329,13 @@ def index_file(path: str, waveform_path: str, display_path: str | None = None) -
         return None
 
 
-def _smb_fast_index(smb_path: str, display: str) -> dict | None:
+def _smb_fast_index(
+    smb_path: str,
+    display: str,
+    waveform_path: str = "",
+    source_id: int | None = None,
+    smb_root: str | None = None,
+) -> dict | None:
     """
     Fast SMB indexing: streams the file once to compute hash + grab first
     512 KB for mutagen tags. No temp file, no librosa, no waveform.
@@ -218,6 +367,16 @@ def _smb_fast_index(smb_path: str, display: str) -> dict | None:
     header_buf.seek(0)
     tags = _read_tags(header_buf)
 
+    # Extract cover art from the buffered header (512 KB is enough for embedded art)
+    cover_art = None
+    if waveform_path:
+        cover_art = _render_cover_art(header_buf, file_hash, waveform_path)
+
+    # Relative path computation for SMB
+    relative_path = None
+    if smb_root and smb_path.startswith(smb_root):
+        relative_path = smb_path[len(smb_root):].lstrip("\\/").replace("\\", "/")
+
     record = {
         "blake3_hash": file_hash,
         "file_path": display,
@@ -230,13 +389,32 @@ def _smb_fast_index(smb_path: str, display: str) -> dict | None:
         "spectral_ok": None,
         "waveform_path": None,
         "fingerprint": None,
+        "source_id": source_id,
+        "relative_path": relative_path,
+        "title": tags.get("title"),
+        "artist": tags.get("artist"),
+        "album": tags.get("album"),
+        "year": tags.get("year"),
+        "disc_number": tags.get("disc_number", 1),
+        "cover_art_path": cover_art,
     }
     FILE_DB[file_hash] = record
     _post_to_app(record)
     return record
 
 
-def scan_library(library_path: str, waveform_path: str, progress_cb: ProgressCb = None) -> int:
+def scan_library(
+    library_path: str,
+    waveform_path: str,
+    progress_cb: ProgressCb = None,
+    source_id: int | None = None,
+    marker_uuid: str | None = None,
+) -> int:
+    if source_id is not None:
+        ensure_root_marker(library_path, marker_uuid or "default")
+
+    source_root = library_path
+
     all_files = []
     for root, _, files in os.walk(library_path):
         for fname in files:
@@ -250,7 +428,7 @@ def scan_library(library_path: str, waveform_path: str, progress_cb: ProgressCb 
     for i, path in enumerate(all_files):
         error = None
         try:
-            if index_file(path, waveform_path):
+            if index_file(path, waveform_path, source_id=source_id, source_root=source_root):
                 indexed += 1
         except Exception as e:
             error = str(e)
@@ -260,7 +438,12 @@ def scan_library(library_path: str, waveform_path: str, progress_cb: ProgressCb 
     return indexed
 
 
-def scan_smb(config: dict, waveform_path: str, progress_cb: ProgressCb = None) -> int:
+def scan_smb(
+    config: dict,
+    waveform_path: str,
+    progress_cb: ProgressCb = None,
+    source_id: int | None = None,
+) -> int:
     import smbclient
 
     host = config.get("host", "")
@@ -309,7 +492,13 @@ def scan_smb(config: dict, waveform_path: str, progress_cb: ProgressCb = None) -
     def process_one(smb_path: str) -> tuple[bool, str, str | None]:
         display = smb_path.replace("\\", "/")
         try:
-            record = _smb_fast_index(smb_path, display)
+            record = _smb_fast_index(
+                smb_path,
+                display,
+                waveform_path=waveform_path,
+                source_id=source_id,
+                smb_root=smb_root,
+            )
             return (record is not None, display, None)
         except Exception as e:
             print(f"[SMB] index error {smb_path}: {e}")
@@ -330,15 +519,21 @@ def scan_smb(config: dict, waveform_path: str, progress_cb: ProgressCb = None) -
     return indexed
 
 
-def scan_source_config(src_type: str, config: dict, waveform_path: str, progress_cb: ProgressCb = None) -> int:
+def scan_source_config(
+    src_type: str,
+    config: dict,
+    waveform_path: str,
+    progress_cb: ProgressCb = None,
+    source_id: int | None = None,
+) -> int:
     if src_type in ("local", "nfs", "iscsi"):
         path = config.get("path", "")
         if not path or not os.path.isdir(path):
             print(f"[scanner] path not found: {path}")
             return 0
-        return scan_library(path, waveform_path, progress_cb)
+        return scan_library(path, waveform_path, progress_cb, source_id=source_id)
     elif src_type == "smb":
-        return scan_smb(config, waveform_path, progress_cb)
+        return scan_smb(config, waveform_path, progress_cb, source_id=source_id)
     else:
         print(f"[scanner] unknown source type: {src_type}")
         return 0

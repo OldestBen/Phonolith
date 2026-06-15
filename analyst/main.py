@@ -200,7 +200,7 @@ async def _run_source_scan(req: ScanSourceRequest):
     STATUS["scan_progress"]["phase"] = "discovering" if req.type == "smb" else "indexing"
     cb = make_progress_cb(req.name)
     try:
-        indexed = await asyncio.to_thread(scan_source_config, req.type, req.config, WAVEFORM_PATH, cb)
+        indexed = await asyncio.to_thread(scan_source_config, req.type, req.config, WAVEFORM_PATH, cb, req.source_id)
         STATUS["files_indexed"] = STATUS.get("files_indexed", 0) + indexed
         STATUS["last_scan"] = datetime.now(timezone.utc).isoformat()
     finally:
@@ -311,10 +311,21 @@ async def _run_pending_deep_scans():
 
 @app.get("/waveforms/{hash}")
 def get_waveform(hash: str):
-    path = os.path.join(WAVEFORM_PATH, f"{hash}.png")
-    if not os.path.exists(path):
+    # Try sharded path first, then fall back to legacy flat path
+    sharded = os.path.join(WAVEFORM_PATH, hash[0:2], hash[2:4], f"{hash}.png")
+    legacy = os.path.join(WAVEFORM_PATH, f"{hash}.png")
+    path = sharded if os.path.exists(sharded) else (legacy if os.path.exists(legacy) else None)
+    if not path:
         raise HTTPException(status_code=404, detail="Waveform not found")
     return FileResponse(path, media_type="image/png")
+
+
+@app.get("/waveforms/{hash}/cover")
+def get_cover_art(hash: str):
+    sharded = os.path.join(WAVEFORM_PATH, hash[0:2], hash[2:4], f"{hash}_cover.jpg")
+    if not os.path.exists(sharded):
+        raise HTTPException(status_code=404, detail="Cover art not found")
+    return FileResponse(sharded, media_type="image/jpeg")
 
 
 if __name__ == "__main__":

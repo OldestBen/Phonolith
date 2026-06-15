@@ -64,10 +64,60 @@ export interface Annotation {
   created_at: string
 }
 
+export interface Track {
+  id: string  // UUID
+  mb_recording_id?: string
+  acoustid?: string
+  song_id?: number
+  title?: string
+  disc_number: number
+  track_number?: number
+  duration_ms?: number
+  year?: string
+  album_name?: string
+  artist_name?: string
+  created_at: string
+}
+
+export interface Contributor {
+  id: number
+  name: string
+  mb_artist_id?: string
+  genius_id?: number
+}
+
+export interface TrackContribution {
+  track_id: string
+  contributor_id: number
+  contributor_name: string
+  role: string
+}
+
+export interface User {
+  id: number
+  username: string
+  role: 'admin' | 'viewer'
+  created_at: string
+}
+
+export interface LibrarySource {
+  id: number
+  name: string
+  type: 'local' | 'smb' | 'nfs' | 'iscsi'
+  config: Record<string, string>
+  enabled: boolean
+  status: 'ok' | 'offline' | 'error'
+  root_marker_uuid?: string
+  last_seen_at?: string
+  offline_since?: string
+  last_scanned_at?: string | null
+  created_at: string
+}
+
 export interface LibraryFile {
   id: number
   blake3_hash: string
-  file_path: string
+  file_path: string  // deprecated, kept for backwards compat
   song_id?: number
   format?: string
   bitrate?: number
@@ -87,6 +137,22 @@ export interface LibraryFile {
   song_artist?: string
   album_name?: string
   album_id?: number
+  // New Tier 0 fields
+  track_id?: string
+  source_id?: number
+  relative_path?: string
+  disc_number?: number
+  title?: string        // embedded tag (may differ from matched song title)
+  artist?: string
+  album?: string
+  year?: string
+  inode?: number
+  file_size?: number
+  mtime?: number
+  cover_art_path?: string
+  source_online?: boolean
+  metadata_locked?: boolean
+  metadata_overrides?: Record<string, unknown>
 }
 
 export interface Tag {
@@ -100,6 +166,8 @@ export interface HistoryEvent {
   id: number
   song_id?: number
   artist_id?: number
+  track_id?: string
+  user_id?: number
   event: 'lyrics_read' | 'lyrics_download' | 'play'
   created_at: string
   // Joined

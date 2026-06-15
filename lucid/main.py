@@ -27,6 +27,12 @@ from player import Player
 from queue_manager import QueueManager
 from signal_path import SignalPathManager
 
+import os as _os
+try:
+    _os.nice(-5)  # Lucid requests elevated scheduling priority for real-time audio
+except (AttributeError, PermissionError):
+    pass  # Non-root or non-Linux — run at default priority
+
 # ── Logging ────────────────────────────────────────────────────────────────────
 
 logging.basicConfig(
