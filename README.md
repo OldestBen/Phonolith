@@ -64,14 +64,23 @@ Browser
         ├── postgres.js → PostgreSQL 16
         ├── ioredis   → Redis 7
         └── HTTP      → Analyst sidecar
+                     → Lucid sidecar (optional, Linux only)
 
 Analyst sidecar (Python / FastAPI)
-  ├── scanner.py  — BLAKE3 · mutagen · DR · spectral · waveform · AcoustID
-  ├── watcher.py  — watchdog → debounced rescan on file change
+  ├── scanner.py     — BLAKE3 · mutagen · DR · spectral · waveform · AcoustID
+  ├── accuraterip.py — CRCv1 verification for FLAC/WAV/AIFF during indexing
+  ├── watcher.py     — watchdog → debounced rescan on file change
   └── POST /api/library/ingest → Next.js (internal network only)
+
+Lucid sidecar (Python / FastAPI — Docker profile: audio — Linux only)
+  ├── alsa.py        — exclusive ALSA lock via pyalsaaudio; gapless queue playback
+  ├── decode.py      — soundfile (FLAC/WAV/AIFF) · FFmpeg pipe (MP3/AAC/M4A)
+  ├── airplay.py     — AirPlay endpoint discovery via zeroconf (_raop._tcp.local.)
+  └── signal_path    — state published to Redis key lucid:signal_path
 ```
 
-Four Docker services: `app`, `analyst`, `db` (Postgres 16), `redis` (Redis 7).
+Four core Docker services: `app`, `analyst`, `db` (Postgres 16), `redis` (Redis 7).
+A fifth optional service `lucid` starts only with the `audio` Docker profile (Linux hosts only).
 
 ---
 
@@ -102,6 +111,35 @@ Open **http://localhost:3000** in your browser.
 
 ---
 
+## Lucid — Bit-Perfect Playback
+
+Lucid is an optional Python/FastAPI daemon (port 8001) that provides bit-perfect audio output via exclusive ALSA access, bypassing the Linux kernel mixer entirely. It runs as a separate Docker service under the `audio` profile.
+
+**Requirements (Linux only):**
+- Linux host with the ALSA sound subsystem available
+- `/dev/snd` device directory exposed to the container
+- Your host user must be a member of the `audio` group: `sudo usermod -aG audio $USER`
+
+**Start Lucid alongside the core stack:**
+
+```bash
+docker compose --profile audio up -d
+```
+
+Or start only Lucid:
+
+```bash
+docker compose --profile audio up lucid -d
+```
+
+**Signal path state** is published to the Redis key `lucid:signal_path` on every state change, enabling the Signal Path Visualizer in the web UI to reflect the live chain in real time.
+
+**REST API** (port 8001): `/play`, `/pause`, `/resume`, `/stop`, `/seek`, `/status`, `/devices`, `/queue/*`, `/airplay/endpoints`
+
+> Lucid is Linux-only. macOS and Windows users can use AirPlay (Flux) as an alternative output path once RTSP/ALAC streaming is implemented.
+
+---
+
 ## Environment Variables
 
 | Variable | Required | Description |
@@ -122,6 +160,9 @@ Open **http://localhost:3000** in your browser.
 | `AWS_SECRET_ACCESS_KEY` | Optional | AWS credentials for S3 backup |
 | `APP_PORT` | Optional | Host port for the web UI (default: `3000`) |
 | `ANALYST_PORT` | Optional | Host port for the analyst sidecar (default: `8000`) |
+| `LUCID_URL` | Optional | Base URL of the Lucid playback daemon (default: `http://lucid:8001`) |
+| `LUCID_PORT` | Optional | Host port for Lucid (default: `8001`; only used with `--profile audio`) |
+| `CREDENTIAL_KEY` | Recommended | AES-256-GCM key for encrypting SMB/NFS credentials at rest. Generate: `openssl rand -hex 32`. Falls back to a SHA-256 of `DATABASE_URL` if unset (not suitable for production). |
 
 ---
 
@@ -186,6 +227,17 @@ All routes are under `/api`. Full documentation is available at `/docs` inside t
 | GET | `/api/visualize/[id]/connections` | Pre-computed connection graph |
 | GET | `/api/waveforms/[hash]` | Waveform PNG (proxied from analyst) |
 | POST | `/api/backup/trigger` | Dump Postgres → S3 |
+| GET | `/api/versions` | Albums with multiple library versions/masters |
+| GET | `/api/versions/[albumId]` | Side-by-side version comparison for an album |
+| GET | `/api/engram/[hash]` | Last 50 metadata snapshots for a file (newest first) |
+| POST | `/api/engram/[hash]/restore` | Restore all or a subset of fields from a prior snapshot |
+| GET | `/api/lucid/status` | Lucid signal path and queue state |
+| POST | `/api/lucid/play` | Start playback via Lucid |
+| POST | `/api/lucid/pause` | Pause Lucid playback |
+| POST | `/api/lucid/resume` | Resume Lucid playback |
+| POST | `/api/lucid/stop` | Stop Lucid playback |
+| POST | `/api/lucid/seek` | Seek to position in current track |
+| GET | `/api/lucid/devices` | Available ALSA devices and AirPlay endpoints |
 
 ---
 
@@ -232,8 +284,8 @@ The fourteen subsystems in Phonolith each have a name. You'll see these in the `
 | **Crest** | Sonic Lab | Dynamic Range computation |
 | **Aegis** | Vaulting | PostgreSQL schema + S3 backup |
 | **Bit-Forge** | Vaulting | Waveform renderer and fingerprint pipeline |
-| **Lucid** | Playback | ALSA bit-perfect playback daemon (planned) |
-| **Flux** | Playback | AirPlay 2 routing layer (planned) |
+| **Lucid** | Playback | ALSA bit-perfect playback daemon (Implemented — basic) |
+| **Flux** | Playback | AirPlay 2 routing layer (Implemented — basic) |
 | **EchoGraph** | Analytics | Listening history charts and event log |
 | **Cathode** | Analytics | Hardware endpoint tracker (planned) |
 | **Polyphony** | Ecosystem | Cryptographic peer network for Codex sharing (planned) |

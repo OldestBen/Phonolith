@@ -215,6 +215,9 @@ const TOC = [
       { id: 'api-artist', label: 'Artist' },
       { id: 'api-song', label: 'Song' },
       { id: 'api-library', label: 'Library' },
+      { id: 'api-engram', label: 'Engram' },
+      { id: 'api-lucid', label: 'Lucid Playback' },
+      { id: 'api-versions', label: 'Versions' },
       { id: 'api-analyst', label: 'Analyst Sidecar' },
     ]
   },
@@ -337,7 +340,7 @@ export default function DocsPage() {
                 ['RAM', '2 GB', '8 GB (for large libraries)'],
                 ['Storage', '5 GB (app)', '+ your music collection'],
                 ['Network', 'LAN access to NAS', 'Gigabit for SMB scanning'],
-                ['OS', 'Any Docker host', 'Linux for Lucid playback (future)'],
+                ['OS', 'Any Docker host', 'Linux required for Lucid bit-perfect playback'],
               ]}
             />
             <Note>Phonolith is tested on macOS (Apple Silicon) and Linux (x86-64 / ARM64). Windows is supported via Docker Desktop but SMB scanning may require additional configuration.</Note>
@@ -375,6 +378,7 @@ docker compose up --build`}</CodeBlock>
               <li><strong className="text-text-primary">Add a library source</strong> — Settings → Library Sources → Add Source. Choose Local, SMB, NFS, or iSCSI.</li>
               <li><strong className="text-text-primary">Scan your library</strong> — press Scan on the source row. The bell icon in the top-right shows live progress.</li>
               <li><strong className="text-text-primary">Visualize an artist</strong> — open any artist page and click Visualize, or go to the Visualize section and search for an artist.</li>
+              <li><strong className="text-text-primary">Enable bit-perfect playback (Linux only)</strong> — run <code className="text-accent">docker compose --profile audio up lucid</code>. Ensure your user is in the <code className="text-accent">audio</code> group and your USB DAC&apos;s ALSA device appears in Settings → Playback.</li>
             </ol>
           </SubSection>
         </Section>
@@ -385,11 +389,14 @@ docker compose up --build`}</CodeBlock>
         <Section id="architecture" title="Architecture">
           <SubSection id="arch-overview" title="Overview">
             <p>
-              Phonolith is a four-container Docker application. The core application is a Next.js 14 monolith
-              (App Router, TypeScript, server-side rendering) backed by PostgreSQL for persistent storage and
-              Redis for caching. A Python FastAPI sidecar — the <strong>Analyst</strong> — handles all
-              computationally intensive audio work: file indexing, spectral analysis, waveform rendering, and
-              acoustic fingerprinting.
+              Phonolith is a four-container Docker application with an optional fifth sidecar for playback.
+              The core application is a Next.js 14 monolith (App Router, TypeScript, server-side rendering)
+              backed by PostgreSQL for persistent storage and Redis for caching. A Python FastAPI sidecar —
+              the <strong>Analyst</strong> — handles all computationally intensive audio work: file indexing,
+              spectral analysis, waveform rendering, and acoustic fingerprinting. An optional third sidecar —
+              <strong> Lucid</strong> — provides bit-perfect ALSA playback and AirPlay discovery on Linux
+              hosts; it starts only when you opt in via the <code className="text-accent">audio</code> Docker
+              Compose profile.
             </p>
             <CodeBlock>{`┌──────────────────────────────────────────────────────────────┐
 │                        Docker Network                        │
@@ -462,6 +469,7 @@ analyst ← POST /scan-source {type, config, name}
                 ['analyst', 'python:3.12-slim', '${ANALYST_PORT:-8000}', 'FastAPI — audio analysis sidecar'],
                 ['db', 'postgres:16-alpine', 'internal only', 'Primary data store'],
                 ['redis', 'redis:7-alpine', 'internal only', 'API cache + pub-sub events'],
+                ['lucid', 'python:3.12-slim (profile: audio)', '${LUCID_PORT:-8001}', 'FastAPI — bit-perfect ALSA playback + AirPlay discovery (Linux only)'],
               ]}
             />
             <Note>
@@ -485,14 +493,14 @@ analyst ← POST /scan-source {type, config, name}
             rows={[
               ['ResonanceFS', 'Ingestion', 'Secure Virtual Filesystem (SMB/NFS/CIFS mount layer)', <StatusBadge key="r" status="implemented" />],
               ['Tremor', 'Ingestion', 'Filesystem watcher daemon (inotify / FSEvents)', <StatusBadge key="t" status="implemented" />],
-              ['Engram', 'Metadata', 'Metadata lock engine & version-control guardian', <StatusBadge key="e" status="planned" />],
+              ['Engram', 'Metadata', 'Metadata lock engine & version-control guardian', <StatusBadge key="e" status="partial" />],
               ['Lexicon', 'Metadata', 'Deep-scraping metadata resolver (MusicBrainz, Discogs, ENGINEER tags)', <StatusBadge key="l" status="partial" />],
               ['Prism', 'Sonic Lab', 'Spectral analysis & fake-FLAC / upscale detector', <StatusBadge key="pr" status="partial" />],
               ['Crest', 'Sonic Lab', 'Dynamic Range (DR / Crest Factor) calculator', <StatusBadge key="cr" status="partial" />],
               ['Aegis', 'Vaulting', 'Immutable S3 backup, encryption & chunking engine', <StatusBadge key="ag" status="partial" />],
               ['Bit-Forge', 'Vaulting', 'BLAKE3 hashing service & deduplication index', <StatusBadge key="bf" status="implemented" />],
-              ['Lucid', 'Playback', 'Bit-perfect ALSA-exclusive audio transport daemon', <StatusBadge key="lu" status="planned" />],
-              ['Flux', 'Playback', 'Downsampling & AirPlay 2 routing sub-routine', <StatusBadge key="fl" status="planned" />],
+              ['Lucid', 'Playback', 'Bit-perfect ALSA-exclusive audio transport daemon', <StatusBadge key="lu" status="partial" />],
+              ['Flux', 'Playback', 'AirPlay endpoint discovery & routing sidecar', <StatusBadge key="fl" status="partial" />],
               ['EchoGraph', 'Analytics', 'Scrobble history, Sankey diagrams & genre-evolution engine', <StatusBadge key="eg" status="partial" />],
               ['Cathode', 'Analytics', 'Hardware endpoint tracker & burn-in accountant', <StatusBadge key="ca" status="planned" />],
               ['Polyphony', 'Ecosystem', 'Cryptographic peer-network ("Syndicate") for trusted node cross-referencing', <StatusBadge key="po" status="planned" />],
@@ -599,30 +607,29 @@ analyst ← POST /scan-source {type, config, name}
             <SubsystemCard
               name="Engram"
               layer="Metadata"
-              status="planned"
+              status="partial"
               role="Metadata lock engine & version-control guardian"
             >
               <p>
-                Engram will be the metadata integrity layer. Its responsibility is to ensure that once a piece
-                of metadata (artist name, album title, release date, credits) has been validated and confirmed
-                by the user, it cannot be silently overwritten by a future scrape or import.
+                Engram is the metadata version history layer. It records a snapshot of every file&apos;s
+                metadata at ingest time and provides an API to browse the full change history and restore
+                any prior snapshot — in whole or field by field.
               </p>
-              <SubSubSection title="Planned Capabilities">
+              <SubSubSection title="Current Implementation">
                 <ul className="list-disc list-inside space-y-1">
-                  <li>Per-field lock flags on any metadata column: <code className="text-accent">locked_fields: string[]</code> on the artists, albums, and songs tables</li>
-                  <li>Full version history for all metadata changes (append-only audit log with timestamps and source attribution)</li>
-                  <li>Conflict detection when an external scrape disagrees with a locked value</li>
-                  <li>User-facing lock/unlock UI on artist and song pages</li>
-                  <li>Merge resolution workflow for conflicting metadata from different sources (Genius vs MusicBrainz vs user)</li>
+                  <li>New Postgres table <code className="text-accent">metadata_versions</code> — stores blake3_hash, snapshot JSONB, source, note, and created_at</li>
+                  <li>Every library ingest automatically snapshots the file&apos;s metadata (<code className="text-accent">source=&apos;ingest&apos;</code>)</li>
+                  <li><code className="text-accent">GET /api/engram/[hash]</code> — returns the last 50 versions for a file, newest first</li>
+                  <li><code className="text-accent">POST /api/engram/[hash]/restore</code> — restores all fields or a specified subset from any prior snapshot; auto-snapshots the current state before restore (<code className="text-accent">source=&apos;restore&apos;</code>) so the restore itself is reversible</li>
                 </ul>
               </SubSubSection>
-              <SubSubSection title="Design Intent">
-                <p>
-                  Engram treats metadata as a first-class immutable record once confirmed. The philosophy mirrors
-                  how a vinyl collector annotates a sleeve — once you&apos;ve verified the pressing details, you
-                  don&apos;t want a database scrape to silently change them. Engram will maintain a cryptographic
-                  hash of each locked field set so any tampering is detectable.
-                </p>
+              <SubSubSection title="Planned: Engram v2">
+                <ul className="list-disc list-inside space-y-1">
+                  <li>Per-field lock flags (<code className="text-accent">locked_fields: string[]</code>) so confirmed values cannot be silently overwritten by a future scrape</li>
+                  <li>External tagger interception — writes from third-party taggers are version-controlled before being applied</li>
+                  <li>Conflict detection when an external scrape disagrees with a locked value</li>
+                  <li>User-facing lock/unlock UI on artist and song pages</li>
+                </ul>
               </SubSubSection>
             </SubsystemCard>
           </SubSection>
@@ -725,6 +732,18 @@ analyst ← POST /scan-source {type, config, name}
                   <code className="text-accent"> library_files</code> row. A value of{' '}
                   <code className="text-accent">false</code> should be treated as a strong indicator of an
                   upscale but not a certainty. The Library page surfaces this with a warning badge.
+                </p>
+              </SubSubSection>
+              <SubSubSection title="AccurateRip CRC Verification">
+                <p>
+                  Prism now computes an AccurateRip CRCv1 checksum during indexing for FLAC, WAV, and
+                  AIFF files. The algorithm iterates 32-bit samples, multiplies each by its 1-based position,
+                  and sums modulo 2³². The result is stored in <code className="text-accent">library_files</code>{' '}
+                  alongside the columns <code className="text-accent">accuraterip_status</code>,{' '}
+                  <code className="text-accent">accuraterip_confidence</code>, and{' '}
+                  <code className="text-accent">mb_release_group_id</code>. On-demand single-file verification
+                  is also available via <code className="text-accent">POST /accuraterip</code> on the analyst
+                  sidecar. Full disc verification (requiring a CUE sheet) is a future milestone.
                 </p>
               </SubSubSection>
             </SubsystemCard>
@@ -878,30 +897,34 @@ Example:    phonolith-backup-2026-06-15T00:00:00Z.sql.gz`}</CodeBlock>
             <SubsystemCard
               name="Lucid"
               layer="Playback"
-              status="planned"
+              status="partial"
               role="Bit-perfect ALSA-exclusive audio transport daemon"
             >
               <p>
-                Lucid will be a native audio playback daemon capable of bit-perfect output through ALSA
-                (Advanced Linux Sound Architecture) with exclusive access mode. Exclusive access bypasses
-                the Linux software mixer (ALSA dmix / PulseAudio / PipeWire), ensuring that the audio
-                signal path from file to DAC is entirely unmodified.
+                Lucid is a Python FastAPI daemon (port 8001) that provides bit-perfect audio output via
+                exclusive ALSA access, bypassing the Linux kernel mixer (dmix / PulseAudio / PipeWire)
+                entirely. It ships as a separate Docker service under the <code className="text-accent">audio</code> profile
+                and only starts when you opt in: <code className="text-accent">docker compose --profile audio up</code>.
               </p>
-              <SubSubSection title="Design Principles">
+              <SubSubSection title="Current Implementation">
                 <ul className="list-disc list-inside space-y-1">
-                  <li>ALSA exclusive mode via <code className="text-accent">snd_pcm_open()</code> with <code className="text-accent">SND_PCM_ACCESS_RW_INTERLEAVED</code> and no resampling</li>
-                  <li>Format negotiation with the DAC: Lucid queries the DAC&apos;s supported formats and matches the source material natively</li>
-                  <li>Volume control through hardware attenuation only (no digital gain applied in software)</li>
-                  <li>Gapless playback via double-buffering</li>
-                  <li>Queue managed through the Phonolith web interface</li>
+                  <li>Exclusive ALSA lock via <code className="text-accent">pyalsaaudio</code> — no kernel mixer involved</li>
+                  <li>Two decode paths: <code className="text-accent">soundfile</code> / libsndfile for FLAC, WAV, AIFF; FFmpeg subprocess pipe for MP3, AAC, M4A</li>
+                  <li>Gapless queue playback; frame-accurate seek via soundfile</li>
+                  <li>RAM pre-caching — album loads to memory before playback starts</li>
+                  <li>Signal path state published to Redis key <code className="text-accent">lucid:signal_path</code> on every state change, powering the Signal Path Visualizer in the web UI</li>
                 </ul>
               </SubSubSection>
-              <SubSubSection title="Transport">
+              <SubSubSection title="Host Requirements">
+                <ul className="list-disc list-inside space-y-1">
+                  <li>Linux host with <code className="text-accent">/dev/snd</code> exposed to the container</li>
+                  <li>Host user must be in the <code className="text-accent">audio</code> group: <code className="text-accent">sudo usermod -aG audio $USER</code></li>
+                  <li>Not available on macOS or Windows (ALSA is Linux-only)</li>
+                </ul>
+              </SubSubSection>
+              <SubSubSection title="REST API (port 8001)">
                 <p>
-                  Lucid will run as a separate long-lived process (likely a Rust binary for memory safety and
-                  low-latency guarantees) communicating with the Next.js app over a Unix socket or local HTTP.
-                  It will not be available on macOS (ALSA is Linux-only); macOS users will use Flux/AirPlay 2
-                  routing instead.
+                  <code className="text-accent">/play</code>, <code className="text-accent">/pause</code>, <code className="text-accent">/resume</code>, <code className="text-accent">/stop</code>, <code className="text-accent">/seek</code>, <code className="text-accent">/status</code>, <code className="text-accent">/devices</code>, <code className="text-accent">/queue/*</code>, <code className="text-accent">/airplay/endpoints</code>
                 </p>
               </SubSubSection>
             </SubsystemCard>
@@ -912,29 +935,33 @@ Example:    phonolith-backup-2026-06-15T00:00:00Z.sql.gz`}</CodeBlock>
             <SubsystemCard
               name="Flux"
               layer="Playback"
-              status="planned"
-              role="Downsampling & AirPlay 2 routing sub-routine"
+              status="partial"
+              role="AirPlay endpoint discovery & routing sidecar"
             >
               <p>
-                Flux handles the routing of audio to endpoints that cannot accept bit-perfect PCM — principally
-                AirPlay 2 receivers (Apple TV, HomePod, AirPort Express, compatible speakers) and Bluetooth
-                audio devices. Unlike Lucid, Flux explicitly allows downsampling and transcoding because AirPlay
-                2 operates at 44.1 kHz / 16-bit ALAC.
+                Flux is the AirPlay discovery layer, running as part of the Lucid sidecar. It browses
+                the local network for <code className="text-accent">_raop._tcp.local.</code> service records
+                via <code className="text-accent">zeroconf</code>, discovering HomePods, Apple TVs, AirPlay
+                AVRs, and any other AirPlay-capable endpoint.
               </p>
-              <SubSubSection title="Planned Capabilities">
+              <SubSubSection title="Current Implementation">
                 <ul className="list-disc list-inside space-y-1">
-                  <li>AirPlay 2 multi-room streaming using the RAOP protocol</li>
-                  <li>Automatic downsampling of hi-res files to 44.1 kHz / 16-bit for AirPlay targets</li>
-                  <li>ALAC encoding in-flight (Apple Lossless, the codec AirPlay 2 uses)</li>
-                  <li>Endpoint discovery via mDNS / Bonjour</li>
-                  <li>Volume sync across multi-room AirPlay 2 groups</li>
-                  <li>Bluetooth A2DP output as a secondary transport</li>
+                  <li>Automatic mDNS browsing for <code className="text-accent">_raop._tcp.local.</code> — discovers AirPlay and AirPlay 2 endpoints on the LAN</li>
+                  <li><code className="text-accent">GET /airplay/endpoints</code> returns all discovered devices (name, host, port, model)</li>
+                  <li>Discovery runs continuously in the background while Lucid is online</li>
                 </ul>
               </SubSubSection>
+              <SubSubSection title="Future Milestone: RTSP/ALAC Streaming">
+                <p>
+                  Full AirPlay streaming — RTSP session negotiation, ALAC encoding, and synchronised
+                  multi-room playback — is planned for a future Flux release. The current release handles
+                  discovery and logs intent; no audio is yet sent to AirPlay endpoints.
+                </p>
+              </SubSubSection>
               <Note>
-                Flux will require the host to have network visibility to AirPlay receivers. In Docker this means
-                running with <code className="text-accent">network_mode: host</code> or configuring mDNS
-                reflection through the gateway.
+                Flux requires the Docker container to have network visibility to AirPlay receivers. Run with
+                <code className="text-accent"> network_mode: host</code> or configure mDNS reflection through
+                the gateway for cross-subnet discovery.
               </Note>
             </SubsystemCard>
           </SubSection>
@@ -1486,6 +1513,44 @@ ANALYST_PORT=8000  # Python analyst sidecar`}</CodeBlock>
             />
           </SubSection>
 
+          <SubSection id="api-engram" title="Engram — Metadata Version History">
+            <Table
+              headers={['Method', 'Path', 'Description']}
+              rows={[
+                ['GET', '/api/engram/[hash]', 'Last 50 metadata snapshots for a file, newest first. Returns array of {id, snapshot, source, note, created_at}.'],
+                ['POST', '/api/engram/[hash]/restore', 'Restore a prior snapshot. Body: {version_id: number, fields?: string[]}. Auto-snapshots current state before restore.'],
+              ]}
+            />
+          </SubSection>
+
+          <SubSection id="api-lucid" title="Lucid — Playback Control">
+            <p>
+              These routes proxy to the Lucid sidecar (port 8001). They return 503 if Lucid is offline.
+            </p>
+            <Table
+              headers={['Method', 'Path', 'Description']}
+              rows={[
+                ['GET', '/api/lucid/status', 'Lucid signal path state and queue. Reads from Redis key lucid:signal_path.'],
+                ['POST', '/api/lucid/play', 'Start playback. Body: {hash: string} — BLAKE3 hash of the track.'],
+                ['POST', '/api/lucid/pause', 'Pause current playback.'],
+                ['POST', '/api/lucid/resume', 'Resume paused playback.'],
+                ['POST', '/api/lucid/stop', 'Stop playback and release the ALSA device.'],
+                ['POST', '/api/lucid/seek', 'Seek within the current track. Body: {position: number} — seconds.'],
+                ['GET', '/api/lucid/devices', 'Available ALSA output devices and discovered AirPlay endpoints.'],
+              ]}
+            />
+          </SubSection>
+
+          <SubSection id="api-versions" title="Versions — Multi-Version Comparison">
+            <Table
+              headers={['Method', 'Path', 'Description']}
+              rows={[
+                ['GET', '/api/versions', 'Albums with multiple library files (different masters/pressings). Returns albums with version count.'],
+                ['GET', '/api/versions/[albumId]', 'All versions of an album with DR scores, bit-depth, sample-rate, format, and quality tier badge.'],
+              ]}
+            />
+          </SubSection>
+
           <SubSection id="api-analyst" title="Analyst Sidecar (port 8000)">
             <p>
               The analyst sidecar exposes its own HTTP API. These routes are called by the Next.js app and
@@ -1552,6 +1617,9 @@ docker compose logs -f analyst`}</CodeBlock>
                 ['LIBRARY_PATH', '(empty)', 'Host path mounted into analyst container as /music.'],
                 ['APP_PORT', '3000', 'Host port for the Next.js app.'],
                 ['ANALYST_PORT', '8000', 'Host port for the analyst sidecar.'],
+                ['LUCID_URL', 'http://lucid:8001', 'Base URL of the Lucid playback sidecar (audio profile only).'],
+                ['LUCID_PORT', '8001', 'Host port for Lucid (audio profile only).'],
+                ['CREDENTIAL_KEY', '(none)', 'AES-256-GCM key for encrypting SMB/NFS credentials. Generate: openssl rand -hex 32. Falls back to SHA-256 of DATABASE_URL if unset (not for production).'],
               ]}
             />
           </SubSection>
