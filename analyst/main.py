@@ -231,11 +231,12 @@ async def fingerprint_file(req: FingerprintRequest):
 
 class AccurateRipRequest(BaseModel):
     path: str
+    duration_ms: int | None = None
 
 @app.post("/accuraterip")
 async def accuraterip(req: AccurateRipRequest):
     from accuraterip import verify_track
-    result = await asyncio.to_thread(verify_track, req.path)
+    result = await asyncio.to_thread(verify_track, req.path, req.duration_ms)
     return result
 
 

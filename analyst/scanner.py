@@ -159,7 +159,8 @@ def index_file(path: str, waveform_path: str, display_path: str | None = None) -
         if fmt in ('flac', 'wav', 'aiff'):
             try:
                 from accuraterip import verify_track
-                accuraterip_result = verify_track(path)
+                dur_ms = int(tags.get("length", 0) * 1000) if tags.get("length") else None
+                accuraterip_result = verify_track(path, dur_ms)
             except Exception:
                 pass
 
