@@ -242,11 +242,27 @@ async def accuraterip(req: AccurateRipRequest):
 
 class DeepScanRequest(BaseModel):
     path: str
+    source_type: str = "local"
+    config: dict = {}
+    source_id: int | None = None
 
 
 @app.post("/deep-scan")
 async def deep_scan(req: DeepScanRequest):
-    """Full analysis pass on a single already-indexed file (DR, spectral, waveform, AcoustID)."""
+    """Full analysis pass on a single already-indexed file (DR, spectral, waveform, AcoustID).
+
+    For `source_type == "smb"`, `path` is the file's stored display path
+    (e.g. "//host/share/sub/track.flac") and `config` carries the SMB
+    connection info (host/share/subfolder/credentials) — the full file is
+    downloaded to a temp file before analysis, since waveform rendering
+    needs the complete decoded audio stream, not just a header.
+    """
+    if req.source_type == "smb":
+        if not req.config.get("host") or not req.config.get("share"):
+            return {"ok": False, "error": "Missing SMB connection config"}
+        asyncio.create_task(_run_deep_scan_smb(req.path, req.config, req.source_id))
+        return {"ok": True, "message": "Deep scan started"}
+
     if not os.path.isfile(req.path):
         return {"ok": False, "error": f"File not found: {req.path}"}
     asyncio.create_task(_run_deep_scan(req.path))
@@ -263,6 +279,18 @@ async def _run_deep_scan(path: str):
             log.warning("Deep scan returned no record: %s", path)
     except Exception:
         log.exception("Deep scan failed: %s", path)
+
+
+async def _run_deep_scan_smb(display_path: str, config: dict, source_id: int | None):
+    from scanner import deep_scan_smb_file
+    try:
+        record = await asyncio.to_thread(deep_scan_smb_file, display_path, config, WAVEFORM_PATH, source_id)
+        if record:
+            log.info("SMB deep scan complete: %s", display_path)
+        else:
+            log.warning("SMB deep scan returned no record: %s", display_path)
+    except Exception:
+        log.exception("SMB deep scan failed: %s", display_path)
 
 
 @app.post("/deep-scan-pending")

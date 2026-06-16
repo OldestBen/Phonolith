@@ -1,7 +1,7 @@
 'use client'
 
 import Link from 'next/link'
-import { usePathname } from 'next/navigation'
+import { usePathname, useRouter } from 'next/navigation'
 import { useState } from 'react'
 
 function SearchIcon() {
@@ -80,6 +80,16 @@ function DocsIcon() {
   )
 }
 
+function SignOutIcon() {
+  return (
+    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" />
+      <polyline points="16 17 21 12 16 7" />
+      <line x1="21" y1="12" x2="9" y2="12" />
+    </svg>
+  )
+}
+
 const NAV_ITEMS = [
   { href: '/', icon: SearchIcon, label: 'Search' },
   { href: '/library', icon: LibraryIcon, label: 'Library' },
@@ -129,10 +139,21 @@ function NavIcon({ href, icon: Icon, label, isActive }: {
 
 export default function Sidebar() {
   const pathname = usePathname()
+  const router = useRouter()
+  const [hovered, setHovered] = useState(false)
 
   const isActive = (href: string) => {
     if (href === '/') return pathname === '/'
     return pathname.startsWith(href)
+  }
+
+  const handleSignOut = async () => {
+    try {
+      await fetch('/api/auth/logout', { method: 'POST' })
+    } finally {
+      router.push('/login')
+      router.refresh()
+    }
   }
 
   return (
@@ -154,6 +175,32 @@ export default function Sidebar() {
             isActive={isActive(item.href)}
           />
         ))}
+
+        <div
+          className="relative mt-auto"
+          onMouseEnter={() => setHovered(true)}
+          onMouseLeave={() => setHovered(false)}
+        >
+          <button
+            type="button"
+            onClick={handleSignOut}
+            aria-label="Sign out"
+            className="flex items-center justify-center w-10 h-10 rounded-lg transition-all duration-150
+                       text-text-muted hover:text-text-primary hover:bg-surface-2"
+          >
+            <SignOutIcon />
+          </button>
+          {hovered && (
+            <div
+              className="absolute left-14 top-1/2 -translate-y-1/2 z-50 px-2 py-1 rounded
+                         bg-surface-2 border border-border text-text-primary text-sm whitespace-nowrap
+                         pointer-events-none"
+            >
+              Sign out
+              <div className="absolute right-full top-1/2 -translate-y-1/2 border-4 border-transparent border-r-surface-2" />
+            </div>
+          )}
+        </div>
       </nav>
 
       {/* Mobile bottom nav */}

@@ -254,8 +254,20 @@ def index_file(
     display_path: str | None = None,
     source_id: int | None = None,
     source_root: str | None = None,
+    relative_path_override: str | None = None,
+    use_path_stat: bool = True,
 ) -> dict | None:
-    """Full analysis: hash + tags + librosa DR + waveform. Used for local sources."""
+    """Full analysis: hash + tags + librosa DR + waveform. Used for local sources
+    and (via a downloaded temp file) for SMB deep-scans.
+
+    `relative_path_override`: when the file being analysed lives at a temp path
+    that doesn't reflect the original source layout (e.g. a downloaded SMB temp
+    file), pass the real relative path here instead of relying on `source_root`.
+
+    `use_path_stat`: when False, skip os.stat(path) for inode/size/mtime — used
+    for SMB temp files where those values would describe the temp file, not the
+    real remote file, and would corrupt the fast-path identity check.
+    """
     try:
         h = _hash_file(path)
         tags = _read_tags(path)
@@ -283,18 +295,23 @@ def index_file(
                 pass
 
         # Stat fields for fast-path identity check
-        try:
-            st = os.stat(path)
-            inode = st.st_ino
-            file_size = st.st_size
-            mtime = int(st.st_mtime)
-        except OSError:
-            inode = file_size = mtime = None
+        inode = file_size = mtime = None
+        if use_path_stat:
+            try:
+                st = os.stat(path)
+                inode = st.st_ino
+                file_size = st.st_size
+                mtime = int(st.st_mtime)
+            except OSError:
+                pass
 
         # Relative path computation
-        relative_path = None
-        if source_root and path.startswith(source_root):
-            relative_path = os.path.relpath(path, source_root)
+        if relative_path_override is not None:
+            relative_path = relative_path_override
+        else:
+            relative_path = None
+            if source_root and path.startswith(source_root):
+                relative_path = os.path.relpath(path, source_root)
 
         record = {
             "blake3_hash": h,
@@ -438,6 +455,61 @@ def scan_library(
     return indexed
 
 
+def deep_scan_smb(
+    smb_path: str,
+    display: str,
+    waveform_path: str,
+    config: dict,
+    source_id: int | None = None,
+    smb_root: str | None = None,
+) -> dict | None:
+    """
+    Full deep-scan for an SMB-sourced file: downloads the *entire* file to a
+    local temp file via smbclient (full waveform rendering needs the complete
+    decoded stream, unlike the 512 KB header used by `_smb_fast_index`), then
+    runs the same full analysis pipeline (`index_file`) used for local sources.
+    The temp file is always removed afterward, even on failure.
+    """
+    import smbclient
+    import tempfile
+
+    host = config.get("host", "")
+    username = config.get("username") or None
+    password = config.get("password") or None
+    domain = config.get("domain") or None
+
+    effective_user = username
+    if effective_user and domain:
+        effective_user = f"{domain}\\{effective_user}"
+    smbclient.register_session(host, username=effective_user, password=password)
+
+    relative_path = None
+    if smb_root and smb_path.startswith(smb_root):
+        relative_path = smb_path[len(smb_root):].lstrip("\\/").replace("\\", "/")
+
+    suffix = Path(display).suffix
+    tmp_fd, tmp_path = tempfile.mkstemp(suffix=suffix, prefix="phonolith_deepscan_")
+    os.close(tmp_fd)
+    try:
+        with smbclient.open_file(smb_path, mode="rb") as src, open(tmp_path, "wb") as dst:
+            while chunk := src.read(1048576):
+                dst.write(chunk)
+
+        return index_file(
+            tmp_path,
+            waveform_path,
+            display_path=display,
+            source_id=source_id,
+            relative_path_override=relative_path,
+            use_path_stat=False,
+        )
+    finally:
+        try:
+            os.remove(tmp_path)
+        except OSError:
+            pass
+
+
 def scan_smb(
     config: dict,
     waveform_path: str,
@@ -517,6 +589,38 @@ def scan_smb(
                 progress_cb(len(all_files), local_done, display, error)
 
     return indexed
+
+
+def deep_scan_smb_file(
+    display_path: str,
+    config: dict,
+    waveform_path: str,
+    source_id: int | None = None,
+) -> dict | None:
+    """
+    Entry point for deep-scanning a single SMB file given its stored
+    `file_path` (display form, e.g. "//host/share/sub/track.flac") and the
+    source's connection config. Rebuilds the UNC path the same way
+    `scan_smb` does, then delegates to `deep_scan_smb`.
+    """
+    host = config.get("host", "")
+    share = config.get("share", "")
+    subfolder = config.get("subfolder", "").strip("/\\")
+
+    smb_root = rf"\\{host}\{share}"
+    if subfolder:
+        smb_root = rf"{smb_root}\{subfolder}"
+
+    smb_path = display_path.replace("/", "\\")
+
+    return deep_scan_smb(
+        smb_path,
+        display_path,
+        waveform_path,
+        config,
+        source_id=source_id,
+        smb_root=smb_root,
+    )
 
 
 def scan_source_config(

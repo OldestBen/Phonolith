@@ -296,17 +296,15 @@ export default function FileDetailPage() {
           <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75"><rect x="2" y="3" width="20" height="14" rx="2" /><line x1="8" y1="21" x2="16" y2="21" /><line x1="12" y1="17" x2="12" y2="21" /></svg>
           {browserPlayer.currentHash === hash && browserPlayer.isPlaying ? 'Pause (Browser)' : 'Play in Browser'}
         </button>
-        {isLocal && (
-          <button
-            onClick={handleDeepScan}
-            disabled={deepScanning}
-            className="flex items-center gap-2 px-4 py-2 rounded-xl bg-surface border border-border text-text-primary text-sm font-medium hover:border-accent/40 transition-colors disabled:opacity-40"
-          >
-            <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/><line x1="11" y1="8" x2="11" y2="14"/><line x1="8" y1="11" x2="14" y2="11"/></svg>
-            {deepScanning ? 'Scanning…' : 'Deep Scan'}
-          </button>
-        )}
-        {file.dr_score == null && isLocal && (
+        <button
+          onClick={handleDeepScan}
+          disabled={deepScanning}
+          className="flex items-center gap-2 px-4 py-2 rounded-xl bg-surface border border-border text-text-primary text-sm font-medium hover:border-accent/40 transition-colors disabled:opacity-40"
+        >
+          <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/><line x1="11" y1="8" x2="11" y2="14"/><line x1="8" y1="11" x2="14" y2="11"/></svg>
+          {deepScanning ? 'Scanning…' : 'Deep Scan'}
+        </button>
+        {file.dr_score == null && (
           <span className="flex items-center px-3 py-2 rounded-xl bg-warning/10 border border-warning/20 text-warning text-xs">
             ⚠ Fast-indexed — no DR or waveform yet. Use Deep Scan.
           </span>
@@ -396,7 +394,7 @@ export default function FileDetailPage() {
             <div className="bg-surface rounded-xl border border-border overflow-hidden">
               {waveformError ? (
                 <div className="flex items-center justify-center h-24 text-text-muted text-sm">
-                  {isLocal ? 'Waveform not generated yet — run a Deep Scan.' : 'Waveform not available for SMB sources.'}
+                  Waveform not generated yet — run a Deep Scan.
                 </div>
               ) : (
                 // eslint-disable-next-line @next/next/no-img-element

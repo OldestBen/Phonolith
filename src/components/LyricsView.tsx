@@ -6,10 +6,11 @@ interface LyricsViewProps {
   lyrics: string
   songTitle: string
   artistName: string
+  synced?: boolean
   onMarkRead?: () => void
 }
 
-export default function LyricsView({ lyrics, songTitle, artistName, onMarkRead }: LyricsViewProps) {
+export default function LyricsView({ lyrics, songTitle, artistName, synced, onMarkRead }: LyricsViewProps) {
   const [copied, setCopied] = useState(false)
 
   const handleCopy = useCallback(() => {
@@ -31,7 +32,12 @@ export default function LyricsView({ lyrics, songTitle, artistName, onMarkRead }
 
   return (
     <div>
-      <div className="flex gap-2 mb-6">
+      <div className="flex gap-2 mb-6 items-center">
+        {synced && (
+          <span className="px-2 py-1 rounded-full bg-accent/10 text-accent text-xs font-medium">
+            Time-synced
+          </span>
+        )}
         <button
           onClick={handleCopy}
           className="px-4 py-2 rounded-lg border border-border text-text-muted hover:border-accent/40

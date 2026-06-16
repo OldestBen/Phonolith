@@ -73,6 +73,7 @@ function SongSkeleton() {
 // ── Lyrics tab ────────────────────────────────────────────────────────────────
 function LyricsTab({ song }: { song: Song }) {
   const [lyrics, setLyrics] = useState<string | null>(null)
+  const [synced, setSynced] = useState(false)
   const [lyricsLoading, setLyricsLoading] = useState(true)
   const [copied, setCopied] = useState(false)
   const [marked, setMarked] = useState(false)
@@ -80,8 +81,11 @@ function LyricsTab({ song }: { song: Song }) {
   useEffect(() => {
     setLyricsLoading(true)
     fetch(`/api/song/${song.genius_id}/lyrics`)
-      .then(r => r.ok ? r.json() : { content: null })
-      .then(data => setLyrics(data.content ?? null))
+      .then(r => r.ok ? r.json() : { content: null, synced_lyrics: null })
+      .then(data => {
+        setLyrics(data.content ?? null)
+        setSynced(!!data.synced_lyrics)
+      })
       .catch(() => setLyrics(null))
       .finally(() => setLyricsLoading(false))
   }, [song.genius_id])
@@ -192,9 +196,16 @@ function LyricsTab({ song }: { song: Song }) {
             ))}
           </div>
         ) : lyrics ? (
-          <pre className="font-serif italic text-lg leading-relaxed whitespace-pre-wrap text-text-primary">
-            {lyrics}
-          </pre>
+          <>
+            {synced && (
+              <span className="inline-block mb-3 px-2 py-1 rounded-full bg-accent/10 text-accent text-xs font-medium">
+                Time-synced
+              </span>
+            )}
+            <pre className="font-serif italic text-lg leading-relaxed whitespace-pre-wrap text-text-primary">
+              {lyrics}
+            </pre>
+          </>
         ) : (
           <p className="text-text-muted text-sm">
             Lyrics not available. They may not have been fetched yet.

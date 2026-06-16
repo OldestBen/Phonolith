@@ -44,6 +44,7 @@ export interface Song {
 export interface Lyrics {
   song_id: number
   content: string
+  synced_lyrics?: string | null
   scraped_at: string
 }
 
@@ -153,6 +154,15 @@ export interface LibraryFile {
   source_online?: boolean
   metadata_locked?: boolean
   metadata_overrides?: Record<string, unknown>
+}
+
+export interface AlbumSummary {
+  album: string
+  artist: string
+  year?: string
+  track_count: number
+  cover_hash?: string
+  has_cover: boolean
 }
 
 export interface Tag {

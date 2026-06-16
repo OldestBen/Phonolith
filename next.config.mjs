@@ -18,6 +18,10 @@ const nextConfig = {
         source: '/api/waveforms/:hash',
         destination: `${analystUrl}/waveforms/:hash`,
       },
+      {
+        source: '/api/library/:hash/cover',
+        destination: `${analystUrl}/waveforms/:hash/cover`,
+      },
     ]
   },
 }
