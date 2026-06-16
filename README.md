@@ -53,6 +53,11 @@ Phonolith is a self-hosted music intelligence platform. It indexes your local au
 - PostgreSQL backup to S3 on demand or scheduled
 - AES-256-GCM encryption of SMB/NFS credentials at rest (`CREDENTIAL_KEY`)
 
+### Soulcatcher (Soulseek)
+- Search the Soulseek network for tracks via the `slskd` sidecar
+- Queue downloads from any peer; download history tracked in PostgreSQL
+- One-click "Add to Library" triggers an analyst rescan of the downloads folder once a transfer completes
+
 ---
 
 ## Architecture
@@ -109,7 +114,42 @@ docker compose up -d
 
 Open **http://localhost:8080** in your browser — Caddy is the single public entry point, routing media bytes and the realtime transport socket directly to Lucid and everything else to the app.
 
-To get automatic HTTPS, point a domain's DNS at your host and set `SITE_ADDRESS=your.domain.com` in `.env` before starting — Caddy will obtain and renew a Let's Encrypt certificate and serve on 443 (`HTTPS_PORT`) with no further configuration.
+To get automatic HTTPS, point a domain's DNS at your host and set `SITE_ADDRESS=your.domain.com` in `.env` before starting — Caddy will obtain and renew a Let's Encrypt certificate and serve on 443 (`HTTPS_PORT`) with no further configuration. This requires your router to forward ports 80 and 443 to this host (Caddy uses the HTTP-01 challenge on 80 to prove domain ownership) — if those ports aren't reachable from the internet, certificate issuance will fail and Caddy will refuse to start. If you can't forward those ports, skip `SITE_ADDRESS` and use the Tailscale or Cloudflare Tunnel sidecars below instead, which don't need any inbound ports open.
+
+---
+
+## Remote Access
+
+Phonolith can be reached remotely without manually exposing ports, via two optional
+Docker Compose sidecars. Both are configured from **Settings → Remote Access** (or
+directly in `.env`) and are harmless to leave undeployed if you don't need them.
+
+**Tailscale** joins this instance to your private tailnet — zero-config private
+remote access, no port forwarding. Generate an auth key from the
+[Tailscale admin console](https://login.tailscale.com/admin/settings/keys), set
+`TAILSCALE_AUTHKEY` in `.env` or in Settings, then run:
+
+```bash
+docker compose up -d tailscale
+```
+
+The container joins your tailnet and is reachable at its Tailscale IP; use
+`docker compose exec tailscale tailscale serve ...` (or `funnel`) to publish Caddy
+over the tailnet or the public internet.
+
+**Cloudflare Tunnel** exposes this instance through Cloudflare's edge — good for
+sharing with others without revealing your home IP. Create a tunnel in the
+[Cloudflare Zero Trust dashboard](https://one.dash.cloudflare.com/) (Networks →
+Tunnels) and copy its token into `CLOUDFLARE_TUNNEL_TOKEN`, then run:
+
+```bash
+docker compose up -d cloudflared
+```
+
+Without a token set, the `cloudflared` container will fail to start cleanly — that's
+expected; just don't bring it up. Whichever option you use, after saving a new token
+in Settings you must re-run `docker compose up -d` (or the specific service) yourself
+— the Next.js app cannot restart sibling containers.
 
 ---
 
@@ -166,6 +206,11 @@ docker compose -f docker-compose.yml -f docker-compose.alsa.yml up -d
 | `LUCID_URL` | Optional | Base URL of the Lucid playback daemon (default: `http://lucid:8001`) |
 | `LUCID_PORT` | Optional | Host port for Lucid directly, bypassing Caddy (default: `8001`) |
 | `CREDENTIAL_KEY` | Recommended | AES-256-GCM key for encrypting SMB/NFS credentials at rest. Generate: `openssl rand -hex 32`. Falls back to a SHA-256 of `DATABASE_URL` if unset (not suitable for production). |
+| `TAILSCALE_AUTHKEY` | Optional | Tailscale auth key — joins the `tailscale` sidecar to your private tailnet for zero-config remote access |
+| `CLOUDFLARE_TUNNEL_TOKEN` | Optional | Cloudflare Tunnel token — connects the `cloudflared` sidecar to a tunnel created in the Cloudflare Zero Trust dashboard |
+| `SOULSEEK_USERNAME` | Optional | Soulseek network username, passed to the `slskd` sidecar |
+| `SOULSEEK_PASSWORD` | Optional | Soulseek network password, passed to the `slskd` sidecar |
+| `SLSKD_API_KEY` | Optional | API key protecting slskd's own REST API; sent by the app as the `X-API-Key` header |
 
 ---
 
@@ -241,6 +286,11 @@ All routes are under `/api`. Full documentation is available at `/docs` inside t
 | POST | `/api/lucid/stop` | Stop Lucid playback |
 | POST | `/api/lucid/seek` | Seek to position in current track |
 | GET | `/api/lucid/devices` | Available ALSA devices and AirPlay endpoints |
+| GET | `/api/soulcatcher/status` | slskd connectivity status |
+| GET | `/api/soulcatcher/search?q=` | Search the Soulseek network |
+| GET | `/api/soulcatcher/downloads` | List tracked downloads, reconciled against live slskd transfer state |
+| POST | `/api/soulcatcher/download` | Enqueue a download from a search result |
+| POST | `/api/soulcatcher/downloads/[id]/ingest` | Trigger an analyst rescan to bring a completed download into the library |
 
 ---
 

@@ -501,10 +501,10 @@ analyst ← POST /scan-source {type, config, name}
               ['Aegis', 'Vaulting', 'Immutable S3 backup, encryption & chunking engine', <StatusBadge key="ag" status="partial" />],
               ['Bit-Forge', 'Vaulting', 'BLAKE3 hashing service & deduplication index', <StatusBadge key="bf" status="implemented" />],
               ['Lucid', 'Playback', 'Bit-perfect ALSA-exclusive audio transport daemon', <StatusBadge key="lu" status="partial" />],
-              ['Flux', 'Playback', 'AirPlay endpoint discovery & routing sidecar', <StatusBadge key="fl" status="partial" />],
+              ['Flux', 'Playback', 'AirPlay endpoint discovery & RTSP/ALAC streaming sidecar', <StatusBadge key="fl" status="implemented" />],
               ['EchoGraph', 'Analytics', 'Scrobble history, Sankey diagrams & genre-evolution engine', <StatusBadge key="eg" status="partial" />],
               ['Cathode', 'Analytics', 'Hardware endpoint tracker & burn-in accountant', <StatusBadge key="ca" status="planned" />],
-              ['Polyphony', 'Ecosystem', 'Cryptographic peer-network ("Syndicate") for trusted node cross-referencing', <StatusBadge key="po" status="planned" />],
+              ['Polyphony', 'Ecosystem', 'Peer network: trusted library sharing, presence, backup mirroring, LAN discovery', <StatusBadge key="po" status="implemented" />],
               ['Sonic Codex', 'Ecosystem', 'Portable library manifest format (.codex) — the blueprint, not the bits', <StatusBadge key="sc" status="planned" />],
             ]}
           />
@@ -938,31 +938,29 @@ Example:    phonolith-backup-2026-06-15T00:00:00Z.sql.gz`}</CodeBlock>
             <SubsystemCard
               name="Flux"
               layer="Playback"
-              status="partial"
-              role="AirPlay endpoint discovery & routing sidecar"
+              status="implemented"
+              role="AirPlay endpoint discovery & RTSP/ALAC streaming sidecar"
             >
               <p>
-                Flux is the AirPlay discovery layer, running as part of the Lucid sidecar. It browses
+                Flux is the AirPlay layer, running as part of the Lucid sidecar. It browses
                 the local network for <code className="text-accent">_raop._tcp.local.</code> service records
                 via <code className="text-accent">zeroconf</code>, discovering HomePods, Apple TVs, AirPlay
-                AVRs, and any other AirPlay-capable endpoint.
+                AVRs, and any other AirPlay-capable endpoint, and streams to them over RTSP/ALAC via{' '}
+                <code className="text-accent">pyatv</code>.
               </p>
               <SubSubSection title="Current Implementation">
                 <ul className="list-disc list-inside space-y-1">
                   <li>Automatic mDNS browsing for <code className="text-accent">_raop._tcp.local.</code> — discovers AirPlay and AirPlay 2 endpoints on the LAN</li>
                   <li><code className="text-accent">GET /airplay/endpoints</code> returns all discovered devices (name, host, port, model)</li>
-                  <li>Discovery runs continuously in the background while Lucid is online</li>
+                  <li>Selecting an AirPlay endpoint as the play target (<code className="text-accent">POST /play</code> with <code className="text-accent">endpoint_name</code>) opens an RTSP/ALAC session via pyatv and streams the file — the same path the Endpoint Picker modal uses</li>
+                  <li>Switching to ALSA or stopping playback cancels any in-flight AirPlay stream cleanly</li>
                 </ul>
               </SubSubSection>
-              <SubSubSection title="Future Milestone: RTSP/ALAC Streaming">
-                <p>
-                  Full AirPlay streaming — RTSP session negotiation, ALAC encoding, and synchronised
-                  multi-room playback — is planned for a future Flux release. The current release handles
-                  discovery and logs intent; no audio is yet sent to AirPlay endpoints.
-                </p>
-              </SubSubSection>
               <Note>
-                Flux requires the Docker container to have network visibility to AirPlay receivers. Run with
+                Streaming is implemented via <code className="text-accent">pyatv</code> rather than a hand-rolled
+                RTSP/ALAC stack — it already handles per-device quirks and, where required, AirPlay 2
+                pairing/encryption, which would be substantial and fragile to reimplement from scratch.
+                Flux also requires the Docker container to have network visibility to AirPlay receivers. Run with
                 <code className="text-accent"> network_mode: host</code> or configure mDNS reflection through
                 the gateway for cross-subnet discovery.
               </Note>
@@ -1040,29 +1038,38 @@ Example:    phonolith-backup-2026-06-15T00:00:00Z.sql.gz`}</CodeBlock>
             <SubsystemCard
               name="Polyphony"
               layer="Ecosystem"
-              status="planned"
-              role='Cryptographic peer-network ("Syndicate") for trusted node cross-referencing'
+              status="implemented"
+              role="Peer network: trusted library sharing, presence, backup mirroring, LAN discovery"
             >
               <p>
-                Polyphony enables multiple Phonolith instances — owned by different users who trust each other —
-                to form a private encrypted peer network called a <strong>Syndicate</strong>. Syndicates allow
-                members to cross-reference their libraries, share metadata corrections, and broadcast quality
-                assessments (DR scores, upscale detections) without exposing raw audio data.
+                Polyphony lets multiple Phonolith instances — owned by people who trust each other — pair up
+                and share capabilities directly, instance to instance. There is no central server: every
+                capability is gated by an explicit pairing handshake and a per-peer, independently toggleable
+                permission.
               </p>
-              <SubSubSection title="Design Principles">
+              <SubSubSection title="Pairing & Trust">
                 <ul className="list-disc list-inside space-y-1">
-                  <li>No central server — purely peer-to-peer via WireGuard tunnels or mutual TLS</li>
-                  <li>Membership requires an explicit invitation signed with the inviting node&apos;s private key</li>
-                  <li>Only Bit-Forge hashes, Prism/Crest scores, and Lexicon-verified metadata are shared — no audio bytes</li>
-                  <li>A Syndicate member can query: &quot;Does anyone in my trust network have a verified DR score for this BLAKE3 hash?&quot;</li>
-                  <li>Metadata corrections from a trusted peer can be applied locally, subject to Engram lock rules</li>
+                  <li>An admin generates a short-lived, single-use pairing code in Settings → Polyphony</li>
+                  <li>The other instance submits that code (plus its own host/identity) to <code className="text-accent">POST /api/polyphony/pair</code>; a fresh HMAC shared secret is minted and stored on both sides</li>
+                  <li>Every subsequent peer-to-peer request is signed with that secret (<code className="text-accent">X-Polyphony-Peer-Id</code> / <code className="text-accent">X-Polyphony-Signature</code> headers) and verified with a timing-safe comparison</li>
+                  <li>Possession of the code is the entire trust decision — nothing is exposed to an unpaired caller</li>
                 </ul>
               </SubSubSection>
-              <SubSubSection title="Privacy Model">
+              <SubSubSection title="Capabilities (each independently toggleable per peer)">
+                <ul className="list-disc list-inside space-y-1">
+                  <li><strong>Library</strong> — a trusted peer can list your library (hash + display metadata, never filesystem paths) and stream tracks from it</li>
+                  <li><strong>Presence</strong> — a trusted peer can see what&apos;s currently playing on your instance; aggregated into a live feed at <code className="text-accent">/polyphony</code></li>
+                  <li><strong>Backup</strong> — off, by default — a trusted peer can push <code className="text-accent">pg_dump</code> snapshots to you for off-site mirroring, capped at 5 retained snapshots per peer</li>
+                </ul>
+              </SubSubSection>
+              <SubSubSection title="LAN Discovery (the &quot;public discovery&quot; option)">
                 <p>
-                  Polyphony is designed to be zero-trust by default. No file paths, no play history, and no
-                  personal data are shared. Only content hashes and quality metrics leave your node, and only
-                  to nodes you have explicitly added to your Syndicate.
+                  Enabling LAN discovery in Settings broadcasts only your instance name and peer ID via mDNS
+                  (<code className="text-accent">_polyphony._tcp.local.</code>, reusing the same zeroconf machinery
+                  Flux uses for AirPlay) so other instances on your network can find your host without you typing
+                  it in — it never exposes library contents, presence, or backups, and pairing still requires the
+                  one-time code. True public, internet-wide discovery would need a hosted directory service and a
+                  much larger trust/abuse model — LAN discovery is the scoped, honest version of that idea.
                 </p>
               </SubSubSection>
             </SubsystemCard>

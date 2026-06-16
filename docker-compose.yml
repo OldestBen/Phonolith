@@ -22,6 +22,11 @@ services:
       - S3_REGION=${S3_REGION:-}
       - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID:-}
       - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY:-}
+      - POLYPHONY_BACKUP_DIR=/data/polyphony-backups
+      - SLSKD_URL=http://slskd:5030
+      - SLSKD_API_KEY=${SLSKD_API_KEY:-}
+    volumes:
+      - polyphony_backups:/data/polyphony-backups
     depends_on:
       db:
         condition: service_healthy
@@ -42,6 +47,10 @@ services:
       - ACOUSTID_API_KEY=${ACOUSTID_API_KEY:-}
     volumes:
       - ${LIBRARY_PATH:-./music}:/music:ro
+      # Soulcatcher downloads land here via the slskd service below. Mounted into
+      # the analyst's /music tree (not just slskd's) so a library rescan picks up
+      # completed downloads — see src/app/api/soulcatcher/downloads/[id]/ingest.
+      - soulcatcher_downloads:/music/soulcatcher-downloads
       - waveforms:/waveforms
     depends_on:
       - redis
@@ -87,6 +96,59 @@ services:
       - lucid
     restart: unless-stopped
 
+  # Tailscale — optional sidecar that joins this instance to your private tailnet,
+  # giving zero-config remote access without forwarding any ports. Reachable at the
+  # container's Tailscale IP once authenticated; combine with `tailscale serve`/`funnel`
+  # (run via `docker compose exec tailscale tailscale serve ...`) to publish Caddy over
+  # the tailnet or the public internet. Harmless if TAILSCALE_AUTHKEY is left unset —
+  # the container will simply sit idle without joining a tailnet.
+  tailscale:
+    image: tailscale/tailscale:latest
+    cap_add:
+      - NET_ADMIN
+      - NET_RAW
+    devices:
+      - /dev/net/tun:/dev/net/tun
+    environment:
+      - TS_AUTHKEY=${TAILSCALE_AUTHKEY:-}
+      - TS_STATE_DIR=/var/lib/tailscale
+      - TS_EXTRA_ARGS=--accept-routes
+    volumes:
+      - tailscale_state:/var/lib/tailscale
+    restart: unless-stopped
+
+  # Cloudflare Tunnel — optional sidecar that exposes Caddy through Cloudflare's edge,
+  # useful for sharing this instance without revealing your home IP. Requires a tunnel
+  # token created in the Cloudflare Zero Trust dashboard (Networks → Tunnels). Without
+  # CLOUDFLARE_TUNNEL_TOKEN set, this container will fail to start cleanly — that's
+  # expected and harmless; leave it stopped (or never run `docker compose up cloudflared`)
+  # if you don't use Cloudflare Tunnel.
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    command: tunnel run
+    environment:
+      - TUNNEL_TOKEN=${CLOUDFLARE_TUNNEL_TOKEN:-}
+    depends_on:
+      - caddy
+    restart: unless-stopped
+
+  # slskd — Soulseek client daemon, headless. Provides the REST API that
+  # src/lib/soulcatcher.ts talks to (search, browse, enqueue downloads).
+  # Only reachable on the internal Docker network — the Next.js app proxies
+  # to it via SLSKD_URL, so no host port is published here.
+  slskd:
+    image: slskd/slskd:latest
+    environment:
+      - SLSKD_REMOTE_CONFIGURATION=true
+      - SLSKD_SLSK_USERNAME=${SOULSEEK_USERNAME:-}
+      - SLSKD_SLSK_PASSWORD=${SOULSEEK_PASSWORD:-}
+      - SLSKD_HTTP_PORT=5030
+      - SLSKD_API_KEY=${SLSKD_API_KEY:-}
+    volumes:
+      - slskd_config:/app
+      - soulcatcher_downloads:/downloads
+    restart: unless-stopped
+
   db:
     image: postgres:16-alpine
     environment:
@@ -120,3 +182,7 @@ volumes:
   waveforms:
   caddy_data:
   caddy_config:
+  polyphony_backups:
+  tailscale_state:
+  slskd_config:
+  soulcatcher_downloads:

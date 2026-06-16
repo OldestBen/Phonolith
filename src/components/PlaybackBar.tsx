@@ -27,6 +27,19 @@ function basename(p: string | null): string {
   return p.split('/').pop()?.replace(/\.[^.]+$/, '') ?? p
 }
 
+let lastNowPlayingTitle: string | null = null
+
+/** Feeds the Polyphony "now playing" beacon so trusted peers can see what's playing here. */
+function postNowPlaying(title: string | null, artist: string | null) {
+  if (title === lastNowPlayingTitle) return
+  lastNowPlayingTitle = title
+  fetch('/api/polyphony/now-playing', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ title, artist }),
+  }).catch(() => {})
+}
+
 // ── Playback controls SVGs ────────────────────────────────────────────────────
 
 const PrevIcon = () => (
@@ -162,6 +175,7 @@ export default function PlaybackBar() {
   useEffect(() => {
     if (!browserPlayer.currentHash) {
       setBrowserTrackName(null)
+      postNowPlaying(null, null)
       return
     }
     let cancelled = false
@@ -169,11 +183,19 @@ export default function PlaybackBar() {
       .then(r => r.json())
       .then(data => {
         if (cancelled) return
-        setBrowserTrackName(data.title || basename(data.file_path) || browserPlayer.currentHash)
+        const title = data.title || basename(data.file_path) || browserPlayer.currentHash
+        setBrowserTrackName(title)
+        postNowPlaying(title, data.artist ?? null)
       })
       .catch(() => { if (!cancelled) setBrowserTrackName(browserPlayer.currentHash) })
     return () => { cancelled = true }
   }, [browserPlayer.currentHash])
+
+  // Lucid-driven (ALSA/AirPlay) playback also feeds the Polyphony presence beacon.
+  useEffect(() => {
+    const current = status?.queue?.current
+    postNowPlaying(current ? basename(current) : null, null)
+  }, [status?.queue?.current])
 
   const isBrowserActive = endpoint.type === 'browser' && browserPlayer.currentHash !== null
 

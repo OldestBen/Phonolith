@@ -29,6 +29,7 @@ from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel
 
 from flux import FluxManager
+from polyphony_discovery import PolyphonyDiscovery
 from player import Player
 from queue_manager import QueueManager
 from signal_path import SignalPathManager
@@ -75,6 +76,7 @@ sp_manager.signal_path.alsa_device = _DEFAULT_ALSA_DEVICE
 queue_mgr = QueueManager()
 player = Player(sp_manager, queue_mgr, redis_client)
 flux_mgr = FluxManager()
+polyphony_mgr = PolyphonyDiscovery()
 
 # ── Lifespan ───────────────────────────────────────────────────────────────────
 
@@ -82,10 +84,13 @@ flux_mgr = FluxManager()
 async def lifespan(app: FastAPI):  # noqa: ARG001
     log.info("Lucid starting — REDIS_URL=%s, ALSA_DEVICE=%s", _REDIS_URL, _DEFAULT_ALSA_DEVICE)
     flux_mgr.start()
+    polyphony_mgr.start()
     yield
     log.info("Lucid shutting down")
     player.stop()
+    await flux_mgr.stop_streaming()
     flux_mgr.stop()
+    polyphony_mgr.stop()
     await redis_async_client.close()
 
 # ── App ────────────────────────────────────────────────────────────────────────
@@ -140,23 +145,27 @@ def devices() -> dict[str, Any]:
 
 
 @app.post("/play")
-def play(req: PlayRequest) -> dict[str, Any]:
+async def play(req: PlayRequest) -> dict[str, Any]:
     """
     Start playback of the given file path.
 
     Optionally specify an ALSA ``device`` or an AirPlay ``endpoint_name``.
-    When ``endpoint_name`` is provided, the FluxManager routing stub is called
-    (full AirPlay support is future work).
+    When ``endpoint_name`` is provided, playback is routed over RTSP/ALAC to
+    the named AirPlay receiver via FluxManager instead of ALSA.
     """
     if not req.path:
         raise HTTPException(status_code=422, detail="path is required")
 
     if req.endpoint_name:
-        # AirPlay routing (placeholder)
-        flux_mgr.stream_to(req.endpoint_name, req.path)
-        sp_manager.update(endpoint_name=req.endpoint_name)
-        return {"status": "airplay_not_implemented", "endpoint": req.endpoint_name}
+        player.stop()
+        try:
+            await flux_mgr.stream_to(req.endpoint_name, req.path)
+        except ValueError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        sp_manager.update(endpoint_name=req.endpoint_name, alsa_device=None)
+        return {"status": "playing", "path": req.path, "endpoint": req.endpoint_name}
 
+    await flux_mgr.stop_streaming()
     device = req.device or sp_manager.signal_path.alsa_device or _DEFAULT_ALSA_DEVICE
     sp_manager.update(alsa_device=device, endpoint_name=None)
 
@@ -185,8 +194,9 @@ def resume() -> dict[str, str]:
 
 
 @app.post("/stop")
-def stop() -> dict[str, str]:
+async def stop() -> dict[str, str]:
     player.stop()
+    await flux_mgr.stop_streaming()
     return {"status": "stopped"}
 
 
@@ -236,6 +246,31 @@ def airplay_endpoints() -> list[dict[str, Any]]:
     return flux_mgr.list_endpoints()
 
 
+# ── Polyphony LAN discovery ──────────────────────────────────────────────────
+
+class PolyphonyAnnounceRequest(BaseModel):
+    enabled: bool
+    peer_id: str
+    name: str
+    port: int = 80
+
+
+@app.post("/polyphony/announce")
+def polyphony_announce(req: PolyphonyAnnounceRequest) -> dict[str, str]:
+    """Start or stop broadcasting this instance's existence on the LAN via mDNS."""
+    if req.enabled:
+        polyphony_mgr.announce(req.peer_id, req.name, req.port)
+        return {"status": "announcing"}
+    polyphony_mgr.unannounce()
+    return {"status": "stopped"}
+
+
+@app.get("/polyphony/discovered")
+def polyphony_discovered() -> list[dict[str, Any]]:
+    """List other Polyphony instances discovered on the LAN."""
+    return polyphony_mgr.list_discovered()
+
+
 # ── Browser streaming (RAAT-style: server resolves, endpoint owns nothing) ──────
 #
 # The browser is just another endpoint. We never proxy these bytes through the
@@ -273,7 +308,12 @@ _DEFAULT_OPUS_BITRATE = "96"
 async def _transcode_opus(path: str, bitrate: str):
     """Yield Ogg/Opus bytes from ffmpeg transcoding `path` on the fly."""
     proc = await asyncio.create_subprocess_exec(
-        "ffmpeg", "-nostdin", "-v", "error",
+        # -threads 1: a single thread is plenty for real-time Opus encoding
+        # at these bitrates, and keeps a remote-streaming transcode from
+        # competing with a concurrent bit-perfect ALSA playback on the same
+        # host (libopus is multi-threaded by default and would otherwise
+        # try to claim every core).
+        "ffmpeg", "-nostdin", "-v", "error", "-threads", "1",
         "-i", path,
         "-map", "0:a:0",
         "-c:a", "libopus", "-b:a", f"{bitrate}k", "-vbr", "on",

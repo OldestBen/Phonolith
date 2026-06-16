@@ -1,18 +1,25 @@
 """
-flux.py — AirPlay endpoint discovery and routing for Lucid.
+flux.py — AirPlay endpoint discovery and streaming for Lucid.
 
 Uses zeroconf to browse ``_raop._tcp.local.`` (Remote Audio Output Protocol)
 service announcements, maintaining a live registry of discovered AirPlay
-receivers.  Full RTSP/ALAC streaming is future work; this module provides
-discovery and a placeholder routing method.
+receivers. Actual streaming is delegated to ``pyatv``, which implements the
+RTSP session negotiation and ALAC encoding required to speak to both legacy
+AirPlay (RAOP) and AirPlay 2 receivers — reimplementing that protocol stack
+by hand would be a large, fragile undertaking with no real upside over a
+maintained library that already handles device-specific quirks and, where
+required, AirPlay 2 pairing/encryption.
 """
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import threading
 from typing import Any
 
+import pyatv
+from pyatv.const import Protocol
 from zeroconf import ServiceBrowser, ServiceListener, Zeroconf
 
 log = logging.getLogger("lucid.flux")
@@ -77,6 +84,8 @@ class FluxManager:
         self._zeroconf: Zeroconf | None = None
         self._browser: ServiceBrowser | None = None
         self._lock = threading.Lock()
+        self._stream_task: asyncio.Task[None] | None = None
+        self._active_endpoint: str | None = None
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -125,22 +134,55 @@ class FluxManager:
         return self.discovered.get(name)
 
     # ------------------------------------------------------------------
-    # Routing (placeholder)
+    # Streaming (RTSP/ALAC via pyatv)
     # ------------------------------------------------------------------
 
-    def stream_to(self, endpoint_name: str, file_path: str) -> None:
+    async def stream_to(self, endpoint_name: str, file_path: str) -> None:
         """
-        Route *file_path* to the named AirPlay endpoint.
+        Stream *file_path* to the named AirPlay endpoint over RTSP/ALAC.
 
-        .. note::
-            Full RTSP/ALAC AirPlay streaming is not yet implemented.
-            This method logs a notice and returns immediately.  Direct ALSA
-            output via :class:`~player.Player` is the recommended path for
-            bit-perfect playback.
+        Any in-flight AirPlay stream started by a previous call is cancelled
+        first — Lucid only ever drives one output at a time.
         """
-        log.info(
-            "stream_to(%r, %r): AirPlay streaming not yet implemented — "
-            "use Lucid for direct ALSA output",
-            endpoint_name,
-            file_path,
-        )
+        entry = self.discovered.get(endpoint_name)
+        if entry is None:
+            raise ValueError(f"Unknown AirPlay endpoint: {endpoint_name!r}")
+
+        await self.stop_streaming()
+
+        self._active_endpoint = endpoint_name
+        self._stream_task = asyncio.create_task(self._do_stream(entry["host"], file_path, endpoint_name))
+
+    async def _do_stream(self, host: str, file_path: str, endpoint_name: str) -> None:
+        loop = asyncio.get_running_loop()
+        try:
+            atvs = await pyatv.scan(loop, hosts=[host], protocol={Protocol.RAOP})
+            if not atvs:
+                log.warning("AirPlay endpoint %s (%s) did not respond to scan", endpoint_name, host)
+                return
+            atv = await pyatv.connect(atvs[0], loop)
+        except Exception:
+            log.exception("Failed to connect to AirPlay endpoint %s (%s)", endpoint_name, host)
+            return
+
+        try:
+            log.info("Streaming %s to AirPlay endpoint %s (%s)", file_path, endpoint_name, host)
+            await atv.stream.stream_file(file_path)
+        except asyncio.CancelledError:
+            log.info("AirPlay stream to %s cancelled", endpoint_name)
+            raise
+        except Exception:
+            log.exception("AirPlay stream to %s (%s) failed", endpoint_name, host)
+        finally:
+            atv.close()
+
+    async def stop_streaming(self) -> None:
+        """Cancel any in-flight AirPlay stream."""
+        if self._stream_task is not None and not self._stream_task.done():
+            self._stream_task.cancel()
+            try:
+                await self._stream_task
+            except (asyncio.CancelledError, Exception):
+                pass
+        self._stream_task = None
+        self._active_endpoint = None

@@ -80,6 +80,27 @@ function DocsIcon() {
   )
 }
 
+function PolyphonyIcon() {
+  return (
+    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <circle cx="12" cy="12" r="3" />
+      <circle cx="4" cy="4" r="2" /><circle cx="20" cy="4" r="2" /><circle cx="4" cy="20" r="2" /><circle cx="20" cy="20" r="2" />
+      <line x1="6" y1="6" x2="10" y2="10" /><line x1="18" y1="6" x2="14" y2="10" /><line x1="6" y1="18" x2="10" y2="14" /><line x1="18" y1="18" x2="14" y2="14" />
+    </svg>
+  )
+}
+
+function SoulcatcherIcon() {
+  return (
+    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <circle cx="12" cy="12" r="2" />
+      <path d="M8 12a4 4 0 0 1 8 0" />
+      <path d="M5 12a7 7 0 0 1 14 0" />
+      <path d="M2 12a10 10 0 0 1 20 0" />
+    </svg>
+  )
+}
+
 function SignOutIcon() {
   return (
     <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -98,6 +119,8 @@ const NAV_ITEMS = [
   { href: '/history', icon: HistoryIcon, label: 'History' },
   { href: '/tags', icon: TagIcon, label: 'Tags' },
   { href: '/cathode', icon: CathodeIcon, label: 'Cathode' },
+  { href: '/polyphony', icon: PolyphonyIcon, label: 'Polyphony' },
+  { href: '/soulcatcher', icon: SoulcatcherIcon, label: 'Soulcatcher' },
   { href: '/docs', icon: DocsIcon, label: 'Docs' },
   { href: '/settings', icon: SettingsIcon, label: 'Settings' },
 ]

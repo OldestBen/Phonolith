@@ -626,6 +626,259 @@ function MetadataSection() {
   )
 }
 
+interface PeerRow {
+  id: string
+  name: string
+  host: string
+  trust_status: 'trusted' | 'blocked'
+  share_library: boolean
+  share_presence: boolean
+  share_backup: boolean
+  paired_at: string
+  last_seen_at: string | null
+}
+
+interface DiscoveredPeer {
+  peerId: string
+  name: string
+  host: string
+  port: string
+}
+
+function PolyphonySection() {
+  const [identity, setIdentity] = useState<{ peerId: string; name: string } | null>(null)
+  const [discoveryEnabled, setDiscoveryEnabled] = useState(false)
+  const [discovered, setDiscovered] = useState<DiscoveredPeer[]>([])
+  const [peers, setPeers] = useState<PeerRow[]>([])
+  const [pairingCode, setPairingCode] = useState<string | null>(null)
+  const [connectHost, setConnectHost] = useState('')
+  const [connectCode, setConnectCode] = useState('')
+  const [connecting, setConnecting] = useState(false)
+  const [statusMsg, setStatusMsg] = useState<string | null>(null)
+  const [mirroring, setMirroring] = useState<string | null>(null)
+
+  const loadPeers = useCallback(() => {
+    fetch('/api/polyphony/peers').then(r => r.json()).then(d => setPeers(d.peers ?? [])).catch(() => {})
+  }, [])
+
+  const loadDiscovery = useCallback(() => {
+    fetch('/api/polyphony/discovery').then(r => r.json()).then(d => {
+      setDiscoveryEnabled(!!d.enabled)
+      setDiscovered(d.discovered ?? [])
+    }).catch(() => {})
+  }, [])
+
+  useEffect(() => {
+    fetch('/api/polyphony/identity').then(r => r.json()).then(d => setIdentity({ peerId: d.peerId, name: d.name })).catch(() => {})
+    loadPeers()
+    loadDiscovery()
+  }, [loadPeers, loadDiscovery])
+
+  const toggleDiscovery = async () => {
+    const next = !discoveryEnabled
+    setDiscoveryEnabled(next)
+    await fetch('/api/polyphony/discovery', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ enabled: next }),
+    }).catch(() => {})
+  }
+
+  const generateCode = async () => {
+    const r = await fetch('/api/polyphony/pairing-code', { method: 'POST' })
+    const d = await r.json()
+    setPairingCode(d.code)
+  }
+
+  const connect = async (host: string, code: string) => {
+    setConnecting(true)
+    setStatusMsg(null)
+    try {
+      const r = await fetch('/api/polyphony/peers', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ host, code }),
+      })
+      const d = await r.json()
+      if (!r.ok) {
+        setStatusMsg(d.error ?? 'Pairing failed.')
+      } else {
+        setStatusMsg(`Paired with ${d.name}.`)
+        setConnectHost('')
+        setConnectCode('')
+        loadPeers()
+      }
+    } finally {
+      setConnecting(false)
+    }
+  }
+
+  const updatePeer = async (id: string, patch: Partial<PeerRow>) => {
+    await fetch(`/api/polyphony/peers/${id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(patch),
+    })
+    loadPeers()
+  }
+
+  const unpair = async (id: string) => {
+    if (!confirm('Unpair this Phonolith instance? They will no longer be able to browse your library or presence.')) return
+    await fetch(`/api/polyphony/peers/${id}`, { method: 'DELETE' })
+    loadPeers()
+  }
+
+  const mirrorBackup = async (id: string, name: string) => {
+    setMirroring(id)
+    try {
+      const r = await fetch(`/api/polyphony/backup/mirror/${id}`, { method: 'POST' })
+      const d = await r.json()
+      setStatusMsg(r.ok ? `Backup mirrored to ${name}.` : (d.error ?? 'Mirroring failed.'))
+    } finally {
+      setMirroring(null)
+    }
+  }
+
+  return (
+    <div className="flex flex-col gap-6">
+      {identity && (
+        <div className="text-xs text-text-muted">
+          This instance: <span className="text-text-primary font-medium">{identity.name}</span>{' '}
+          <span className="font-mono">({identity.peerId.slice(0, 8)})</span>
+        </div>
+      )}
+
+      <div className="flex items-start justify-between gap-4">
+        <div>
+          <p className="text-text-primary text-sm font-medium">LAN discovery</p>
+          <p className="text-text-muted text-xs mt-1 max-w-md">
+            Broadcast this instance&apos;s name on the local network so other Phonolith instances can
+            find it without typing a hostname. Only your name and ID are broadcast — never your
+            library, presence, or backups. Pairing still requires a one-time code.
+          </p>
+        </div>
+        <button
+          onClick={toggleDiscovery}
+          role="switch"
+          aria-checked={discoveryEnabled}
+          className={`shrink-0 mt-0.5 w-11 h-6 rounded-full relative transition-colors ${
+            discoveryEnabled ? 'bg-accent' : 'bg-surface-2 border border-border'
+          }`}
+        >
+          <span className={`absolute top-0.5 left-0.5 w-5 h-5 rounded-full bg-white transition-transform ${discoveryEnabled ? 'translate-x-5' : ''}`} />
+        </button>
+      </div>
+
+      {discovered.length > 0 && (
+        <div>
+          <p className="text-text-muted text-xs mb-2">Discovered on this network:</p>
+          <div className="flex flex-col gap-1.5">
+            {discovered.map(d => (
+              <div key={d.peerId} className="flex items-center justify-between bg-surface-2 border border-border rounded-lg px-3 py-2">
+                <span className="text-text-primary text-sm">{d.name}</span>
+                <button
+                  onClick={() => setConnectHost(`http://${d.host}:${d.port}`)}
+                  className="text-accent text-xs font-medium hover:underline"
+                >
+                  Use host →
+                </button>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      <div className="bg-surface-2 rounded-xl border border-border p-4">
+        <p className="text-text-primary text-sm font-medium mb-2">Pair a new instance</p>
+        <div className="flex flex-col gap-3 md:flex-row md:items-end">
+          <div className="flex-1">
+            <p className="text-text-muted text-xs mb-1">Generate a code for someone to pair to you</p>
+            <button onClick={generateCode} className="px-3 py-1.5 bg-surface border border-border rounded-lg text-text-primary text-xs font-medium hover:border-accent/40 transition-colors">
+              Generate pairing code
+            </button>
+            {pairingCode && (
+              <p className="text-accent text-lg font-mono font-bold mt-2 tracking-wider">{pairingCode}</p>
+            )}
+          </div>
+        </div>
+
+        <div className="border-t border-border mt-4 pt-4">
+          <p className="text-text-muted text-xs mb-2">Or pair to a code from another instance</p>
+          <div className="flex flex-col gap-2 md:flex-row">
+            <input
+              value={connectHost}
+              onChange={e => setConnectHost(e.target.value)}
+              placeholder="https://their-host"
+              className="flex-1 bg-surface border border-border rounded-lg px-3 py-1.5 text-sm text-text-primary"
+            />
+            <input
+              value={connectCode}
+              onChange={e => setConnectCode(e.target.value)}
+              placeholder="Pairing code"
+              className="md:w-40 bg-surface border border-border rounded-lg px-3 py-1.5 text-sm text-text-primary font-mono"
+            />
+            <button
+              onClick={() => connect(connectHost, connectCode)}
+              disabled={connecting || !connectHost || !connectCode}
+              className="px-3 py-1.5 bg-accent text-background rounded-lg text-xs font-semibold disabled:opacity-50"
+            >
+              {connecting ? 'Pairing…' : 'Pair'}
+            </button>
+          </div>
+          {statusMsg && <p className="text-text-muted text-xs mt-2">{statusMsg}</p>}
+        </div>
+      </div>
+
+      <div>
+        <p className="text-text-primary text-sm font-medium mb-2">Paired instances ({peers.length})</p>
+        {peers.length === 0 && <p className="text-text-muted text-xs">No paired instances yet.</p>}
+        <div className="flex flex-col gap-2">
+          {peers.map(p => (
+            <div key={p.id} className="bg-surface-2 border border-border rounded-xl p-3">
+              <div className="flex items-center justify-between gap-3">
+                <div className="min-w-0">
+                  <p className="text-text-primary text-sm font-medium truncate">{p.name}</p>
+                  <p className="text-text-muted text-xs truncate">{p.host}</p>
+                </div>
+                <div className="flex items-center gap-2 shrink-0">
+                  <button
+                    onClick={() => mirrorBackup(p.id, p.name)}
+                    disabled={mirroring === p.id}
+                    className="px-2 py-1 bg-surface border border-border rounded text-xs text-text-muted hover:text-accent disabled:opacity-50"
+                  >
+                    {mirroring === p.id ? 'Mirroring…' : 'Mirror backup'}
+                  </button>
+                  <button onClick={() => unpair(p.id)} className="px-2 py-1 bg-surface border border-border rounded text-xs text-danger hover:border-danger/40">
+                    Unpair
+                  </button>
+                </div>
+              </div>
+              <div className="flex flex-wrap gap-3 mt-2">
+                <PeerToggle label="Library" value={p.share_library} onChange={v => updatePeer(p.id, { share_library: v })} />
+                <PeerToggle label="Presence" value={p.share_presence} onChange={v => updatePeer(p.id, { share_presence: v })} />
+                <PeerToggle label="Accept backups" value={p.share_backup} onChange={v => updatePeer(p.id, { share_backup: v })} />
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function PeerToggle({ label, value, onChange }: { label: string; value: boolean; onChange: (v: boolean) => void }) {
+  return (
+    <button
+      onClick={() => onChange(!value)}
+      className={`text-xs px-2 py-1 rounded-full border transition-colors ${
+        value ? 'bg-accent/10 border-accent/40 text-accent' : 'bg-surface border-border text-text-muted'
+      }`}
+    >
+      {label}: {value ? 'on' : 'off'}
+    </button>
+  )
+}
+
 // ── Main page ─────────────────────────────────────────────────────────────────
 export default function SettingsPage() {
   return (
@@ -650,8 +903,35 @@ export default function SettingsPage() {
         <BackupSection />
       </Section>
 
+      <Section title="Remote Access">
+        <p className="text-text-muted text-xs mb-5 max-w-md">
+          Reach this instance remotely without manually forwarding ports. Both options
+          run as separate sidecar containers — saving a token here only stores it;
+          re-run <code className="font-mono">docker compose up -d</code> (or target the
+          specific service, e.g. <code className="font-mono">docker compose up -d tailscale</code>)
+          for the sidecar to pick up the new credential. The Next.js app cannot restart
+          sibling containers itself.
+        </p>
+        <p className="text-text-muted text-xs mb-1.5 max-w-md">
+          Tailscale joins this instance to your private tailnet — zero-config private
+          remote access, no port forwarding. Generate a key from the Tailscale admin
+          console (Settings → Keys).
+        </p>
+        <ApiKeyField label="Tailscale Auth Key" settingKey="TAILSCALE_AUTHKEY" />
+        <p className="text-text-muted text-xs mb-1.5 max-w-md">
+          Cloudflare Tunnel exposes this instance through Cloudflare&apos;s edge — good
+          for sharing with others without exposing your home IP. Create a tunnel and
+          copy its token from the Cloudflare Zero Trust dashboard (Networks → Tunnels).
+        </p>
+        <ApiKeyField label="Cloudflare Tunnel Token" settingKey="CLOUDFLARE_TUNNEL_TOKEN" />
+      </Section>
+
       <Section title="Metadata">
         <MetadataSection />
+      </Section>
+
+      <Section title="Polyphony">
+        <PolyphonySection />
       </Section>
 
       <Section title="Appearance">

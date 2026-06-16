@@ -16,6 +16,8 @@ const ALLOWED_KEYS = new Set([
   'LUCID_DEVICE',
   'LUCID_ENDPOINT_NAME',
   'id3_writeback_enabled',
+  'TAILSCALE_AUTHKEY',
+  'CLOUDFLARE_TUNNEL_TOKEN',
 ])
 
 export async function GET(req: NextRequest) {
