@@ -66,15 +66,22 @@ services:
       - redis
     restart: unless-stopped
 
-  # NGINX — single public entry point. Routes media bytes and the realtime
+  # Caddy — single public entry point. Routes media bytes and the realtime
   # transport WebSocket directly to Lucid (never through the Next.js app),
-  # everything else to the Next.js app.
-  nginx:
-    image: nginx:1.27-alpine
+  # everything else to the Next.js app. Set SITE_ADDRESS to a real domain
+  # to get automatic Let's Encrypt HTTPS; left unset, it serves plain HTTP
+  # on HTTP_PORT for LAN/no-domain use.
+  caddy:
+    image: caddy:2-alpine
     ports:
       - "${HTTP_PORT:-8080}:80"
+      - "${HTTPS_PORT:-8443}:443"
+    environment:
+      - SITE_ADDRESS=${SITE_ADDRESS:-}
     volumes:
-      - ./nginx/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
     depends_on:
       - app
       - lucid
@@ -111,3 +118,5 @@ volumes:
   pgdata:
   redisdata:
   waveforms:
+  caddy_data:
+  caddy_config:

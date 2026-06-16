@@ -107,7 +107,9 @@ Then start everything:
 docker compose up -d
 ```
 
-Open **http://localhost:8080** in your browser — NGINX is the single public entry point, routing media bytes and the realtime transport socket directly to Lucid and everything else to the app.
+Open **http://localhost:8080** in your browser — Caddy is the single public entry point, routing media bytes and the realtime transport socket directly to Lucid and everything else to the app.
+
+To get automatic HTTPS, point a domain's DNS at your host and set `SITE_ADDRESS=your.domain.com` in `.env` before starting — Caddy will obtain and renew a Let's Encrypt certificate and serve on 443 (`HTTPS_PORT`) with no further configuration.
 
 ---
 
@@ -156,11 +158,13 @@ docker compose -f docker-compose.yml -f docker-compose.alsa.yml up -d
 | `S3_REGION` | Optional | AWS region for the S3 bucket |
 | `AWS_ACCESS_KEY_ID` | Optional | AWS credentials for S3 backup |
 | `AWS_SECRET_ACCESS_KEY` | Optional | AWS credentials for S3 backup |
-| `HTTP_PORT` | Optional | Host port for NGINX, the public entry point (default: `8080`) |
-| `APP_PORT` | Optional | Host port for the Next.js app directly, bypassing NGINX (default: `3000`) |
+| `HTTP_PORT` | Optional | Host port for Caddy, the public entry point (default: `8080`) |
+| `HTTPS_PORT` | Optional | Host port for Caddy's HTTPS listener (default: `8443`) |
+| `SITE_ADDRESS` | Optional | Domain name for automatic Let's Encrypt HTTPS via Caddy; blank serves plain HTTP |
+| `APP_PORT` | Optional | Host port for the Next.js app directly, bypassing Caddy (default: `3000`) |
 | `ANALYST_PORT` | Optional | Host port for the analyst sidecar (default: `8000`) |
 | `LUCID_URL` | Optional | Base URL of the Lucid playback daemon (default: `http://lucid:8001`) |
-| `LUCID_PORT` | Optional | Host port for Lucid directly, bypassing NGINX (default: `8001`) |
+| `LUCID_PORT` | Optional | Host port for Lucid directly, bypassing Caddy (default: `8001`) |
 | `CREDENTIAL_KEY` | Recommended | AES-256-GCM key for encrypting SMB/NFS credentials at rest. Generate: `openssl rand -hex 32`. Falls back to a SHA-256 of `DATABASE_URL` if unset (not suitable for production). |
 
 ---

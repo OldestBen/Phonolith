@@ -1,0 +1,30 @@
+# Phonolith reverse proxy.
+#
+# Media bytes (/stream/*) and the realtime transport socket (/ws/*) go
+# straight to Lucid — they must never pass through the Next.js app process.
+# Everything else goes to the Next.js app.
+#
+# SITE_ADDRESS controls automatic HTTPS:
+#   - Default ":80" serves plain HTTP on port 80 (LAN / no domain).
+#   - Set SITE_ADDRESS to a real domain (e.g. music.example.com) and Caddy
+#     will automatically obtain and renew a Let's Encrypt certificate and
+#     serve HTTPS on 443, redirecting HTTP to HTTPS.
+
+{$SITE_ADDRESS::80} {
+	@stream path /stream/*
+	@ws path /ws/*
+
+	handle @stream {
+		reverse_proxy lucid:8001 {
+			flush_interval -1
+		}
+	}
+
+	handle @ws {
+		reverse_proxy lucid:8001
+	}
+
+	handle {
+		reverse_proxy app:3000
+	}
+}

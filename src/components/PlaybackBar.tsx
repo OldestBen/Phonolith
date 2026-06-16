@@ -3,6 +3,18 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import type { LucidStatus, SignalPathState } from '@/lib/types'
 import SignalPath from './SignalPath'
+import EndpointPickerModal from './EndpointPickerModal'
+import { useBrowserPlayer } from '@/contexts/BrowserPlayerContext'
+import { useSelectedEndpoint, endpointLabel } from '@/lib/endpoint'
+import type { StreamQuality } from '@/hooks/useGaplessPlayer'
+
+const QUALITY_OPTIONS: { value: StreamQuality; label: string }[] = [
+  { value: 'lossless', label: 'Lossless' },
+  { value: 'opus-128', label: 'Opus 128k' },
+  { value: 'opus-96', label: 'Opus 96k' },
+  { value: 'opus-64', label: 'Opus 64k' },
+  { value: 'opus-32', label: 'Opus 32k (cellular)' },
+]
 
 function formatTime(ms: number): string {
   const s = Math.floor(ms / 1000)
@@ -53,13 +65,24 @@ const GlassBoxIcon = () => (
   </svg>
 )
 
+const SpeakerIcon = () => (
+  <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75">
+    <path d="M11 5L6 9H2v6h4l5 4V5z" />
+    <path d="M19.07 4.93a10 10 0 0 1 0 14.14M15.54 8.46a5 5 0 0 1 0 7.07" />
+  </svg>
+)
+
 // ── Main bar ──────────────────────────────────────────────────────────────────
 
 export default function PlaybackBar() {
   const [status, setStatus] = useState<LucidStatus | null>(null)
   const [showSignalPath, setShowSignalPath] = useState(false)
+  const [showEndpointPicker, setShowEndpointPicker] = useState(false)
   const [online, setOnline] = useState(false)
   const wsRef = useRef<WebSocket | null>(null)
+  const browserPlayer = useBrowserPlayer()
+  const [endpoint] = useSelectedEndpoint()
+  const [browserTrackName, setBrowserTrackName] = useState<string | null>(null)
 
   // HTTP polling fallback — used until the realtime socket connects, and
   // again if it drops, so the bar never goes silently stale.
@@ -133,10 +156,99 @@ export default function PlaybackBar() {
     setTimeout(poll, 300)
   }
 
-  // Only render the bar if Lucid is online and something is loaded
-  if (!online || !status) return null
+  // The browser is just another endpoint — when it's selected and has a
+  // track loaded, show metadata for the currently playing track since the
+  // player itself only knows the hash.
+  useEffect(() => {
+    if (!browserPlayer.currentHash) {
+      setBrowserTrackName(null)
+      return
+    }
+    let cancelled = false
+    fetch(`/api/library/${browserPlayer.currentHash}`)
+      .then(r => r.json())
+      .then(data => {
+        if (cancelled) return
+        setBrowserTrackName(data.title || basename(data.file_path) || browserPlayer.currentHash)
+      })
+      .catch(() => { if (!cancelled) setBrowserTrackName(browserPlayer.currentHash) })
+    return () => { cancelled = true }
+  }, [browserPlayer.currentHash])
 
-  const sp = status.signal_path
+  const isBrowserActive = endpoint.type === 'browser' && browserPlayer.currentHash !== null
+
+  // Nothing to show: Lucid is offline/idle and the browser endpoint isn't playing.
+  if (!isBrowserActive && (!online || !status)) return null
+
+  const endpointPicker = showEndpointPicker && <EndpointPickerModal onClose={() => setShowEndpointPicker(false)} />
+
+  if (isBrowserActive) {
+    const progress = browserPlayer.duration > 0 ? (browserPlayer.currentTime / browserPlayer.duration) * 100 : 0
+    return (
+      <>
+        {endpointPicker}
+        <div className="fixed bottom-0 left-16 right-0 z-30 border-t border-border bg-surface/95 backdrop-blur-sm">
+          <div className="h-0.5 bg-accent/20">
+            <div className="h-full bg-accent transition-all duration-1000" style={{ width: `${progress}%` }} />
+          </div>
+
+          <div className="flex items-center gap-4 px-4 py-2.5">
+            <div className="flex items-center gap-3 min-w-0 flex-1">
+              <div className="w-8 h-8 rounded-lg bg-accent/20 border border-accent/30 flex items-center justify-center shrink-0">
+                <svg className="w-4 h-4 text-accent" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75">
+                  <rect x="2" y="3" width="20" height="14" rx="2" /><line x1="8" y1="21" x2="16" y2="21" /><line x1="12" y1="17" x2="12" y2="21" />
+                </svg>
+              </div>
+              <div className="min-w-0">
+                <p className="text-text-primary text-sm font-medium truncate">{browserTrackName ?? browserPlayer.currentHash}</p>
+                <p className="text-text-muted text-xs font-mono">
+                  {formatTime(browserPlayer.currentTime)} / {formatTime(browserPlayer.duration)} — This Browser
+                  {browserPlayer.signalPath?.transcoded ? ' (transcoded)' : ''}
+                </p>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-1 shrink-0">
+              <button
+                onClick={() => browserPlayer.isPlaying ? browserPlayer.pause() : browserPlayer.resume()}
+                className="w-9 h-9 rounded-full bg-accent flex items-center justify-center text-white hover:bg-accent/80 transition-colors"
+              >
+                {browserPlayer.isPlaying ? <PauseIcon /> : <PlayIcon />}
+              </button>
+              <button
+                onClick={() => browserPlayer.stop()}
+                className="p-2 rounded-lg text-text-muted hover:text-accent transition-colors"
+              >
+                <StopIcon />
+              </button>
+            </div>
+
+            <div className="flex items-center gap-2 shrink-0">
+              <select
+                value={browserPlayer.quality}
+                onChange={e => browserPlayer.setQuality(e.target.value as StreamQuality)}
+                title="Network-adaptive streaming quality"
+                className="hidden sm:block bg-surface-2 border border-border text-text-muted text-xs rounded-lg px-2 py-1.5 focus:outline-none focus:border-accent transition-colors"
+              >
+                {QUALITY_OPTIONS.map(o => (
+                  <option key={o.value} value={o.value}>{o.label}</option>
+                ))}
+              </select>
+              <button
+                onClick={() => setShowEndpointPicker(true)}
+                className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border bg-surface-2 border-border text-text-muted hover:text-accent hover:border-accent/40 text-xs font-medium transition-colors"
+              >
+                <SpeakerIcon />
+                <span className="hidden sm:inline">{endpointLabel(endpoint)}</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      </>
+    )
+  }
+
+  const sp = status!.signal_path
   const playing = sp.status === 'playing'
   const paused = sp.status === 'paused'
   const hasTrack = sp.source_file !== null
@@ -145,6 +257,7 @@ export default function PlaybackBar() {
 
   return (
     <>
+      {endpointPicker}
       {/* Glass-Box overlay */}
       {showSignalPath && (
         <div
@@ -308,6 +421,13 @@ export default function PlaybackBar() {
             >
               <GlassBoxIcon />
               <span className="hidden sm:inline">Signal Path</span>
+            </button>
+            <button
+              onClick={() => setShowEndpointPicker(true)}
+              className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border bg-surface-2 border-border text-text-muted hover:text-accent hover:border-accent/40 text-xs font-medium transition-colors"
+            >
+              <SpeakerIcon />
+              <span className="hidden sm:inline">{endpointLabel(endpoint)}</span>
             </button>
           </div>
         </div>

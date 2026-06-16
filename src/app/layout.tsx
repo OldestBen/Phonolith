@@ -6,6 +6,7 @@ import './globals.css'
 import Sidebar from '@/components/Sidebar'
 import Notifications from '@/components/Notifications'
 import PlaybackBar from '@/components/PlaybackBar'
+import { BrowserPlayerProvider } from '@/contexts/BrowserPlayerContext'
 import { getUserFromSessionCookie, hasAnyUsers, SESSION_COOKIE_NAME } from '@/lib/auth'
 
 const inter = Inter({
@@ -63,12 +64,14 @@ export default async function RootLayout({
   return (
     <html lang="en">
       <body className={`${inter.variable} ${playfair.variable} font-sans`}>
-        <Sidebar />
-        <Notifications />
-        <main className="ml-16 pb-16">
-          {children}
-        </main>
-        <PlaybackBar />
+        <BrowserPlayerProvider>
+          <Sidebar />
+          <Notifications />
+          <main className="ml-16 pb-16">
+            {children}
+          </main>
+          <PlaybackBar />
+        </BrowserPlayerProvider>
       </body>
     </html>
   )

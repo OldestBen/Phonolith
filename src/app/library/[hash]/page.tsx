@@ -4,7 +4,7 @@ import { useState, useEffect } from 'react'
 import Link from 'next/link'
 import { useParams } from 'next/navigation'
 import type { LibraryFile, MetadataVersion } from '@/lib/types'
-import { useGaplessPlayer } from '@/hooks/useGaplessPlayer'
+import { useBrowserPlayer } from '@/contexts/BrowserPlayerContext'
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 function formatDuration(ms?: number): string {
@@ -337,7 +337,7 @@ export default function FileDetailPage() {
   const [playing, setPlaying] = useState(false)
   const [playMsg, setPlayMsg] = useState<string | null>(null)
   const [editingMeta, setEditingMeta] = useState(false)
-  const browserPlayer = useGaplessPlayer()
+  const browserPlayer = useBrowserPlayer()
 
   useEffect(() => {
     setLoading(true)

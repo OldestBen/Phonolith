@@ -24,8 +24,8 @@ import httpx
 import redis as redis_lib
 import redis.asyncio as redis_async
 import uvicorn
-from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
-from fastapi.responses import FileResponse
+from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
+from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel
 
 from flux import FluxManager
@@ -239,7 +239,7 @@ def airplay_endpoints() -> list[dict[str, Any]]:
 # ── Browser streaming (RAAT-style: server resolves, endpoint owns nothing) ──────
 #
 # The browser is just another endpoint. We never proxy these bytes through the
-# Next.js app — NGINX routes /stream/* straight here. FileResponse handles
+# Next.js app — Caddy routes /stream/* straight here. FileResponse handles
 # HTTP Range requests natively, so seeking and MSE pre-fetch both work without
 # any custom byte-range code.
 
@@ -263,15 +263,63 @@ async def _resolve_file_path(track_hash: str) -> str:
     return path
 
 
-@app.get("/stream/{track_hash}")
-async def stream(track_hash: str) -> FileResponse:
-    """
-    Stream the original file bytes for a library track, unmodified.
+# Network-adaptive streaming: opt-in lossy transcode for constrained links
+# (e.g. cellular). Bitrate is whitelisted, never taken verbatim from the
+# client, to keep the ffmpeg command line fixed-shape.
+_OPUS_BITRATES = {"32", "64", "96", "128"}
+_DEFAULT_OPUS_BITRATE = "96"
 
-    Passthrough only — no transcoding. Lossless and hi-res formats are
-    served exactly as stored; the browser endpoint decodes them locally.
+
+async def _transcode_opus(path: str, bitrate: str):
+    """Yield Ogg/Opus bytes from ffmpeg transcoding `path` on the fly."""
+    proc = await asyncio.create_subprocess_exec(
+        "ffmpeg", "-nostdin", "-v", "error",
+        "-i", path,
+        "-map", "0:a:0",
+        "-c:a", "libopus", "-b:a", f"{bitrate}k", "-vbr", "on",
+        "-f", "ogg", "-",
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+    )
+    try:
+        assert proc.stdout is not None
+        while True:
+            chunk = await proc.stdout.read(64 * 1024)
+            if not chunk:
+                break
+            yield chunk
+    finally:
+        if proc.returncode is None:
+            proc.kill()
+        stderr = await proc.stderr.read() if proc.stderr else b""
+        await proc.wait()
+        if proc.returncode not in (0, None, -9):
+            log.warning("ffmpeg transcode exited %s for %s: %s", proc.returncode, path, stderr.decode(errors="replace"))
+
+
+@app.get("/stream/{track_hash}")
+async def stream(track_hash: str, request: Request):
+    """
+    Stream a library track.
+
+    Passthrough by default — no transcoding. Lossless and hi-res formats are
+    served exactly as stored; the browser endpoint decodes them locally and
+    HTTP Range requests work natively for seeking.
+
+    Pass `?format=opus[&bitrate=32|64|96|128]` to request an on-the-fly
+    lossy transcode instead, for network-adaptive (e.g. cellular) playback.
+    Transcoded streams are not seekable via Range — the endpoint should
+    restart the request at a new position if it needs to seek.
     """
     path = await _resolve_file_path(track_hash)
+
+    fmt = request.query_params.get("format")
+    if fmt == "opus":
+        bitrate = request.query_params.get("bitrate", _DEFAULT_OPUS_BITRATE)
+        if bitrate not in _OPUS_BITRATES:
+            bitrate = _DEFAULT_OPUS_BITRATE
+        return StreamingResponse(_transcode_opus(path, bitrate), media_type="audio/ogg")
+
     media_type = mimetypes.guess_type(path)[0] or "application/octet-stream"
     return FileResponse(path, media_type=media_type, filename=os.path.basename(path))
 
