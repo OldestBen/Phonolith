@@ -338,7 +338,7 @@ function PlaybackSection() {
     fetch('/api/lucid/devices')
       .then(r => r.ok ? r.json() : null)
       .then(data => {
-        if (data && !data.online === false) {
+        if (data && data.online !== false) {
           setLucidOnline(true)
           const devList: AlsaDevice[] = Array.isArray(data) ? data : (data.devices ?? [])
           setDevices(devList)
