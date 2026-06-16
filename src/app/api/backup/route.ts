@@ -14,7 +14,7 @@ export async function GET(req: NextRequest) {
   const user = await getUserFromSessionCookie(req.cookies.get(SESSION_COOKIE_NAME)?.value)
   if (!user) return NextResponse.json({ error: 'Not authenticated.' }, { status: 401 })
 
-  const configured = !!(process.env.S3_BUCKET && process.env.AWS_ACCESS_KEY_ID)
+  const configured = !!(await getSetting('S3_BUCKET') && await getSetting('AWS_ACCESS_KEY_ID'))
 
   let lastBackup = null
   const raw = await getSetting(LAST_BACKUP_KEY)
@@ -36,10 +36,10 @@ export async function POST(req: NextRequest) {
   const user = await getUserFromSessionCookie(req.cookies.get(SESSION_COOKIE_NAME)?.value)
   if (!user) return NextResponse.json({ error: 'Not authenticated.' }, { status: 401 })
 
-  const bucket = process.env.S3_BUCKET
-  const region = process.env.S3_REGION
-  const accessKeyId = process.env.AWS_ACCESS_KEY_ID
-  const secretAccessKey = process.env.AWS_SECRET_ACCESS_KEY
+  const bucket = await getSetting('S3_BUCKET')
+  const region = await getSetting('S3_REGION')
+  const accessKeyId = await getSetting('AWS_ACCESS_KEY_ID')
+  const secretAccessKey = await getSetting('AWS_SECRET_ACCESS_KEY')
 
   if (!bucket || !region || !accessKeyId || !secretAccessKey) {
     return NextResponse.json({ error: 'S3 not configured' }, { status: 500 })

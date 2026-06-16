@@ -1,10 +1,12 @@
+import { getSetting } from './settings'
+
 const LRCLIB_BASE = 'https://lrclib.net/api'
 const TIMEOUT_MS = 5000
 
-function lrclibHeaders() {
+async function lrclibHeaders() {
   const app = process.env.MUSICBRAINZ_APP_NAME || 'Phonolith'
   const version = process.env.MUSICBRAINZ_APP_VERSION || '1.0'
-  const contact = process.env.MUSICBRAINZ_CONTACT || 'user@example.com'
+  const contact = (await getSetting('MUSICBRAINZ_CONTACT')) || 'user@example.com'
   return {
     'User-Agent': `${app}/${version} ( ${contact} )`,
     'Accept': 'application/json',
@@ -25,7 +27,7 @@ async function fetchWithTimeout(url: string): Promise<Response> {
   const controller = new AbortController()
   const timer = setTimeout(() => controller.abort(), TIMEOUT_MS)
   try {
-    return await fetch(url, { headers: lrclibHeaders(), signal: controller.signal })
+    return await fetch(url, { headers: await lrclibHeaders(), signal: controller.signal })
   } finally {
     clearTimeout(timer)
   }

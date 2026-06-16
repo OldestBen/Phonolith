@@ -1,12 +1,15 @@
+import { getSetting } from './settings'
+
 const DISCOGS_BASE = 'https://api.discogs.com'
 
-function discogsHeaders() {
+async function discogsHeaders() {
   const app = process.env.MUSICBRAINZ_APP_NAME || 'Phonolith'
   const version = process.env.MUSICBRAINZ_APP_VERSION || '1.0'
-  const contact = process.env.MUSICBRAINZ_CONTACT || 'user@example.com'
+  const contact = (await getSetting('MUSICBRAINZ_CONTACT')) || 'user@example.com'
+  const token = (await getSetting('DISCOGS_USER_TOKEN')) || ''
   return {
     'User-Agent': `${app}/${version} ( ${contact} )`,
-    'Authorization': `Discogs token=${process.env.DISCOGS_USER_TOKEN ?? ''}`,
+    'Authorization': `Discogs token=${token}`,
     'Accept': 'application/json',
   }
 }
@@ -34,16 +37,17 @@ export interface DiscogsReleaseDetail {
 
 export async function searchRelease(artist: string, title: string, year?: string): Promise<DiscogsRelease[] | null> {
   try {
+    const token = (await getSetting('DISCOGS_USER_TOKEN')) || ''
     const params = new URLSearchParams({
       type: 'release',
       artist,
       release_title: title,
-      token: process.env.DISCOGS_USER_TOKEN ?? '',
+      token,
     })
     if (year) params.set('year', year)
 
     const res = await fetch(`${DISCOGS_BASE}/database/search?${params.toString()}`, {
-      headers: discogsHeaders(),
+      headers: await discogsHeaders(),
     })
     if (!res.ok) return null
     const data = await res.json()
@@ -56,7 +60,7 @@ export async function searchRelease(artist: string, title: string, year?: string
 export async function getRelease(id: number): Promise<DiscogsReleaseDetail | null> {
   try {
     const res = await fetch(`${DISCOGS_BASE}/releases/${id}`, {
-      headers: discogsHeaders(),
+      headers: await discogsHeaders(),
     })
     if (!res.ok) return null
     return (await res.json()) as DiscogsReleaseDetail

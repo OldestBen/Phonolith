@@ -531,6 +531,11 @@ function BackupSection() {
 
   return (
     <div className="space-y-4">
+      <ApiKeyField label="S3 Bucket" settingKey="S3_BUCKET" />
+      <ApiKeyField label="S3 Region" settingKey="S3_REGION" />
+      <ApiKeyField label="AWS Access Key ID" settingKey="AWS_ACCESS_KEY_ID" />
+      <ApiKeyField label="AWS Secret Access Key" settingKey="AWS_SECRET_ACCESS_KEY" />
+
       <div className="flex items-center gap-2">
         <span className={`w-2 h-2 rounded-full shrink-0 ${
           configured === null ? 'bg-text-muted animate-pulse' :
@@ -539,7 +544,7 @@ function BackupSection() {
         <span className="text-text-muted text-xs">
           {configured === null ? 'Checking S3 configuration…' :
            configured ? 'S3 configured' :
-           'S3 not configured — set S3_BUCKET, S3_REGION, AWS_ACCESS_KEY_ID, and AWS_SECRET_ACCESS_KEY'}
+           'S3 not configured — fill in the fields above to enable backups'}
         </span>
       </div>
 
@@ -889,6 +894,7 @@ export default function SettingsPage() {
         <ApiKeyField label="Genius Access Token" settingKey="GENIUS_ACCESS_TOKEN" testEndpoint="/api/settings/genius" />
         <ApiKeyField label="Discogs User Token" settingKey="DISCOGS_USER_TOKEN" />
         <ApiKeyField label="AcoustID API Key" settingKey="ACOUSTID_API_KEY" />
+        <ApiKeyField label="MusicBrainz Contact Email" settingKey="MUSICBRAINZ_CONTACT" />
       </Section>
 
       <Section title="Playback">
@@ -932,6 +938,17 @@ export default function SettingsPage() {
           primary streaming path.
         </p>
         <ApiKeyField label="Cloudflare Tunnel Token" settingKey="CLOUDFLARE_TUNNEL_TOKEN" />
+      </Section>
+
+      <Section title="Soulcatcher">
+        <p className="text-text-muted text-xs mb-5 max-w-md">
+          Soulcatcher searches and downloads from the Soulseek network via the slskd sidecar.
+          Saving credentials here stores them; re-run{' '}
+          <code className="font-mono">docker compose up -d slskd</code> for slskd to pick them up.
+        </p>
+        <ApiKeyField label="Soulseek Username" settingKey="SOULSEEK_USERNAME" />
+        <ApiKeyField label="Soulseek Password" settingKey="SOULSEEK_PASSWORD" />
+        <ApiKeyField label="slskd API Key" settingKey="SLSKD_API_KEY" />
       </Section>
 
       <Section title="Metadata">

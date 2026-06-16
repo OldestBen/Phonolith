@@ -1,11 +1,12 @@
 import axios from 'axios'
+import { getSetting } from './settings'
 
 const MB_BASE = 'https://musicbrainz.org/ws/2'
 
-function mbHeaders() {
+async function mbHeaders() {
   const app = process.env.MUSICBRAINZ_APP_NAME || 'Phonolith'
   const version = process.env.MUSICBRAINZ_APP_VERSION || '1.0'
-  const contact = process.env.MUSICBRAINZ_CONTACT || 'user@example.com'
+  const contact = (await getSetting('MUSICBRAINZ_CONTACT')) || 'user@example.com'
   return {
     'User-Agent': `${app}/${version} ( ${contact} )`,
     'Accept': 'application/json',
@@ -39,7 +40,7 @@ export interface MBRecording {
 export async function searchArtist(name: string): Promise<MBArtist | null> {
   return rateLimited(async () => {
     const res = await axios.get(`${MB_BASE}/artist`, {
-      headers: mbHeaders(),
+      headers: await mbHeaders(),
       params: { query: `artist:${name}`, limit: 1, fmt: 'json' },
     })
     const artists = res.data.artists as MBArtist[]
@@ -50,7 +51,7 @@ export async function searchArtist(name: string): Promise<MBArtist | null> {
 export async function lookupArtist(mbid: string): Promise<MBArtist | null> {
   return rateLimited(async () => {
     const res = await axios.get(`${MB_BASE}/artist/${mbid}`, {
-      headers: mbHeaders(),
+      headers: await mbHeaders(),
       params: { fmt: 'json' },
     })
     return res.data as MBArtist
@@ -60,7 +61,7 @@ export async function lookupArtist(mbid: string): Promise<MBArtist | null> {
 export async function lookupRecording(mbid: string): Promise<MBRecording | null> {
   return rateLimited(async () => {
     const res = await axios.get(`${MB_BASE}/recording/${mbid}`, {
-      headers: mbHeaders(),
+      headers: await mbHeaders(),
       params: { inc: 'releases', fmt: 'json' },
     })
     return res.data as MBRecording
@@ -70,7 +71,7 @@ export async function lookupRecording(mbid: string): Promise<MBRecording | null>
 export async function searchRecording(title: string, artist: string): Promise<MBRecording | null> {
   return rateLimited(async () => {
     const res = await axios.get(`${MB_BASE}/recording`, {
-      headers: mbHeaders(),
+      headers: await mbHeaders(),
       params: {
         query: `recording:${title} AND artist:${artist}`,
         limit: 1,

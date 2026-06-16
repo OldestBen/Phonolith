@@ -19,6 +19,9 @@ const ALLOWED_KEYS = new Set([
   'id3_writeback_enabled',
   'TAILSCALE_AUTHKEY',
   'CLOUDFLARE_TUNNEL_TOKEN',
+  'SOULSEEK_USERNAME',
+  'SOULSEEK_PASSWORD',
+  'SLSKD_API_KEY',
 ])
 
 export async function GET(req: NextRequest) {

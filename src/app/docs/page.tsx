@@ -363,10 +363,10 @@ docker compose up --build`}</CodeBlock>
             </p>
             <Tip>
               The Genius Access Token is the only credential required to start. MusicBrainz is queried automatically
-              with no key (identify your instance via <code className="text-accent">MUSICBRAINZ_APP_NAME</code> and{' '}
-              <code className="text-accent">MUSICBRAINZ_CONTACT</code> in <code className="text-accent">.env</code>
-              — this is required by their fair-use policy). Discogs, AcoustID, and S3 can be added at any time via
-              Settings → API Keys without restarting the stack.
+              with no key — you should set <code className="text-accent">MUSICBRAINZ_CONTACT</code> to your email
+              (MusicBrainz fair-use policy) either in <code className="text-accent">.env</code> or via
+              Settings → API Keys at any time. Discogs, AcoustID, S3 backup credentials, remote-access tokens,
+              and Soulcatcher credentials can all be set via Settings without restarting the stack.
             </Tip>
           </SubSection>
 
@@ -1422,16 +1422,36 @@ Credentials → Local Users → Add
         {/* ═══════════════════════════════════════════════════════════ */}
         <Section id="settings" title="Settings">
           <SubSection id="api-keys" title="API Keys">
+            <p>
+              All credentials below can be entered directly in the Settings page without restarting the stack.
+              A key saved via the UI always takes precedence over the same key set in{' '}
+              <code className="text-accent">.env</code>.
+            </p>
             <Table
-              headers={['Key', 'Where to Get', 'Required']}
+              headers={["Key", "Where to Get", "Required"]}
               rows={[
-                ['GENIUS_ACCESS_TOKEN', 'genius.com/api-clients — create a client, copy the Access Token', 'Yes'],
-                ['DISCOGS_USER_TOKEN', 'discogs.com/settings/developers — generate a Personal Access Token', 'No'],
-                ['ACOUSTID_API_KEY', 'acoustid.org/login — register an application', 'No'],
-                ['AWS_ACCESS_KEY_ID', 'AWS IAM console — create a user with s3:PutObject', 'No (Aegis only)'],
-                ['AWS_SECRET_ACCESS_KEY', 'AWS IAM console — same user as above', 'No (Aegis only)'],
+                ["GENIUS_ACCESS_TOKEN", "genius.com/api-clients — create a client, copy the Access Token", "Yes"],
+                ["DISCOGS_USER_TOKEN", "discogs.com/settings/developers — generate a Personal Access Token", "No"],
+                ["ACOUSTID_API_KEY", "acoustid.org/login — register an application", "No"],
+                ["MUSICBRAINZ_CONTACT", "Your email address — required by MusicBrainz fair-use policy", "Recommended"],
+                ["AWS_ACCESS_KEY_ID", "AWS IAM console — create a user with s3:PutObject on your backup bucket", "No (Aegis only)"],
+                ["AWS_SECRET_ACCESS_KEY", "AWS IAM console — same user as above", "No (Aegis only)"],
+                ["S3_BUCKET", "Name of your S3 bucket for backups", "No (Aegis only)"],
+                ["S3_REGION", "AWS region the bucket lives in (e.g. us-east-1)", "No (Aegis only)"],
+                ["TAILSCALE_AUTHKEY", "Tailscale admin console → Settings → Keys", "No (remote access)"],
+                ["CLOUDFLARE_TUNNEL_TOKEN", "Cloudflare Zero Trust → Networks → Tunnels", "No (remote access)"],
+                ["SOULSEEK_USERNAME", "Your Soulseek network account username", "No (Soulcatcher)"],
+                ["SOULSEEK_PASSWORD", "Your Soulseek network account password", "No (Soulcatcher)"],
+                ["SLSKD_API_KEY", "Any secret string — protects slskd REST API on the internal network", "No (Soulcatcher)"],
               ]}
             />
+            <p className="text-text-muted text-sm mt-2">
+              Tailscale, Cloudflare, and Soulcatcher credentials are consumed by their respective sidecar
+              containers, not by the Next.js app itself. After saving them here, re-run{' '}
+              <code className="text-accent">docker compose up -d &lt;service&gt;</code> (e.g.{' '}
+              <code className="text-accent">docker compose up -d tailscale</code>) for the sidecar to pick
+              up the new value.
+            </p>
           </SubSection>
 
           <SubSection id="runtime-keys" title="Runtime Key Management">
@@ -1452,9 +1472,11 @@ Credentials → Local Users → Add
 
           <SubSection id="backup-settings" title="S3 Backup (Aegis)">
             <p>
-              Fill in S3 Bucket and Region, then click <strong>Backup Now</strong>. Aegis runs a{' '}
-              <code className="text-accent">pg_dump</code> inside the app container, compresses it, and uploads
-              it to <code className="text-accent">s3://{'{bucket}'}/phonolith-backup-{'{timestamp}'}.sql.gz</code>.
+              Enter your S3 credentials in Settings → Backup (S3 Bucket, S3 Region, AWS Access Key ID,
+              AWS Secret Access Key), then click <strong>Backup Now</strong>. Aegis runs a{' '}
+              <code className="text-accent">pg_dump</code> inside the app container and uploads it to{' '}
+              <code className="text-accent">s3://{"{bucket}"}/backups/phonolith-{"{timestamp}"}.sql</code>.
+              No stack restart needed — credentials take effect immediately after saving.
             </p>
             <Tip>
               The S3 bucket should have Object Lock enabled (Compliance mode) for truly immutable backups.
@@ -1623,20 +1645,25 @@ docker compose logs -f analyst`}</CodeBlock>
             <Table
               headers={['Variable', 'Default', 'Description']}
               rows={[
-                ['GENIUS_ACCESS_TOKEN', '(none)', 'Genius API access token. Required.'],
+                ["GENIUS_ACCESS_TOKEN", "(none)", "Genius API access token. Required. Also settable via Settings."],
                 ['DATABASE_URL', 'postgresql://phonolith:phonolith@db:5432/phonolith', 'PostgreSQL connection string.'],
                 ['REDIS_URL', 'redis://redis:6379', 'Redis connection string.'],
                 ['ANALYST_URL', 'http://analyst:8000', 'Analyst sidecar base URL.'],
                 ['MUSICBRAINZ_APP_NAME', 'Phonolith', 'User-Agent app name for MusicBrainz.'],
                 ['MUSICBRAINZ_APP_VERSION', '1.0', 'User-Agent app version for MusicBrainz.'],
-                ['MUSICBRAINZ_CONTACT', '(none)', 'Your email for MusicBrainz User-Agent.'],
-                ['DISCOGS_USER_TOKEN', '(none)', 'Discogs Personal Access Token. Optional.'],
-                ['ACOUSTID_API_KEY', '(none)', 'AcoustID application key. Optional.'],
-                ['S3_BUCKET', '(none)', 'S3 bucket name for Aegis backups.'],
-                ['S3_REGION', '(none)', 'AWS region for S3 bucket.'],
-                ['AWS_ACCESS_KEY_ID', '(none)', 'AWS IAM access key for S3.'],
-                ['AWS_SECRET_ACCESS_KEY', '(none)', 'AWS IAM secret key for S3.'],
-                ['LIBRARY_PATH', '(empty)', 'Host path mounted into analyst container as /music.'],
+                ["MUSICBRAINZ_CONTACT", "(none)", "Your email for MusicBrainz User-Agent. Required by their fair-use policy. Also settable via Settings."],
+                ["DISCOGS_USER_TOKEN", "(none)", "Discogs Personal Access Token. Optional. Also settable via Settings."],
+                ["ACOUSTID_API_KEY", "(none)", "AcoustID application key. Optional. Also settable via Settings."],
+                ["S3_BUCKET", "(none)", "S3 bucket name for Aegis backups. Also settable via Settings → Backup."],
+                ["S3_REGION", "(none)", "AWS region for S3 bucket. Also settable via Settings → Backup."],
+                ["AWS_ACCESS_KEY_ID", "(none)", "AWS IAM access key for S3. Also settable via Settings → Backup."],
+                ["AWS_SECRET_ACCESS_KEY", "(none)", "AWS IAM secret key for S3. Also settable via Settings → Backup."],
+                ["TAILSCALE_AUTHKEY", "(none)", "Tailscale auth key for remote access. Also settable via Settings → Remote Access."],
+                ["CLOUDFLARE_TUNNEL_TOKEN", "(none)", "Cloudflare Tunnel token. Also settable via Settings → Remote Access."],
+                ["SOULSEEK_USERNAME", "(none)", "Soulseek username for slskd. Also settable via Settings → Soulcatcher."],
+                ["SOULSEEK_PASSWORD", "(none)", "Soulseek password for slskd. Also settable via Settings → Soulcatcher."],
+                ["SLSKD_API_KEY", "(none)", "Optional API key protecting slskd REST API. Also settable via Settings → Soulcatcher."],
+                ["LIBRARY_PATH", "(empty)", "Host path mounted into analyst container as /music."],
                 ['HTTP_PORT', '8080', 'Host port for Caddy — the public entry point.'],
                 ['HTTPS_PORT', '8443', "Host port for Caddy's HTTPS listener."],
                 ['SITE_ADDRESS', '(empty)', 'Domain name for automatic Let’s Encrypt HTTPS via Caddy; blank serves plain HTTP.'],
