@@ -378,7 +378,8 @@ docker compose up --build`}</CodeBlock>
               <li><strong className="text-text-primary">Add a library source</strong> — Settings → Library Sources → Add Source. Choose Local, SMB, NFS, or iSCSI.</li>
               <li><strong className="text-text-primary">Scan your library</strong> — press Scan on the source row. The bell icon in the top-right shows live progress.</li>
               <li><strong className="text-text-primary">Visualize an artist</strong> — open any artist page and click Visualize, or go to the Visualize section and search for an artist.</li>
-              <li><strong className="text-text-primary">Enable bit-perfect playback (Linux only)</strong> — run <code className="text-accent">docker compose --profile audio up lucid</code>. Ensure your user is in the <code className="text-accent">audio</code> group and your USB DAC&apos;s ALSA device appears in Settings → Playback.</li>
+              <li><strong className="text-text-primary">Play in the browser</strong> — Lucid streams the original file bytes straight to the browser via NGINX, no audio hardware needed; open any file in the Library and click Play in Browser.</li>
+              <li><strong className="text-text-primary">Enable bit-perfect ALSA playback (Linux only)</strong> — run <code className="text-accent">docker compose -f docker-compose.yml -f docker-compose.alsa.yml up -d</code>. Ensure your user is in the <code className="text-accent">audio</code> group and your USB DAC&apos;s ALSA device appears in Settings → Playback.</li>
             </ol>
           </SubSection>
         </Section>
@@ -901,10 +902,12 @@ Example:    phonolith-backup-2026-06-15T00:00:00Z.sql.gz`}</CodeBlock>
               role="Bit-perfect ALSA-exclusive audio transport daemon"
             >
               <p>
-                Lucid is a Python FastAPI daemon (port 8001) that provides bit-perfect audio output via
-                exclusive ALSA access, bypassing the Linux kernel mixer (dmix / PulseAudio / PipeWire)
-                entirely. It ships as a separate Docker service under the <code className="text-accent">audio</code> profile
-                and only starts when you opt in: <code className="text-accent">docker compose --profile audio up</code>.
+                Lucid is a Python FastAPI daemon (port 8001) modelled on Roon&apos;s RAAT transport
+                philosophy. Browser playback — passthrough streaming of the original file bytes via
+                <code className="text-accent">/stream/{'{hash}'}</code>, decoded locally by the browser&apos;s Web
+                Audio API — is the always-on baseline and needs no audio hardware. Bit-perfect output via
+                exclusive ALSA access (bypassing the kernel mixer entirely) is an optional addon enabled
+                with the <code className="text-accent">docker-compose.alsa.yml</code> overlay.
               </p>
               <SubSubSection title="Current Implementation">
                 <ul className="list-disc list-inside space-y-1">
@@ -1615,10 +1618,11 @@ docker compose logs -f analyst`}</CodeBlock>
                 ['AWS_ACCESS_KEY_ID', '(none)', 'AWS IAM access key for S3.'],
                 ['AWS_SECRET_ACCESS_KEY', '(none)', 'AWS IAM secret key for S3.'],
                 ['LIBRARY_PATH', '(empty)', 'Host path mounted into analyst container as /music.'],
-                ['APP_PORT', '3000', 'Host port for the Next.js app.'],
+                ['HTTP_PORT', '8080', 'Host port for NGINX — the public entry point.'],
+                ['APP_PORT', '3000', 'Host port for the Next.js app directly, bypassing NGINX.'],
                 ['ANALYST_PORT', '8000', 'Host port for the analyst sidecar.'],
-                ['LUCID_URL', 'http://lucid:8001', 'Base URL of the Lucid playback sidecar (audio profile only).'],
-                ['LUCID_PORT', '8001', 'Host port for Lucid (audio profile only).'],
+                ['LUCID_URL', 'http://lucid:8001', 'Base URL of the Lucid playback sidecar.'],
+                ['LUCID_PORT', '8001', 'Host port for Lucid directly, bypassing NGINX.'],
                 ['CREDENTIAL_KEY', '(none)', 'AES-256-GCM key for encrypting SMB/NFS credentials. Generate: openssl rand -hex 32. Falls back to SHA-256 of DATABASE_URL if unset (not for production).'],
               ]}
             />

@@ -47,9 +47,10 @@ services:
       - redis
     restart: unless-stopped
 
-  # Lucid — bit-perfect ALSA audio transport daemon
-  # Requires a USB DAC or ALSA-compatible audio device on the Docker host.
-  # Remove this service if running without local audio hardware.
+  # Lucid — audio transport daemon (browser streaming + optional ALSA exclusive output)
+  # Browser playback (the RAAT-style baseline) needs no audio hardware on the host.
+  # ALSA exclusive output for enthusiast DACs requires the docker-compose.alsa.yml
+  # overlay (adds /dev/snd passthrough) — see README.
   lucid:
     build:
       context: ./lucid
@@ -59,19 +60,25 @@ services:
     environment:
       - REDIS_URL=redis://redis:6379
       - APP_URL=http://app:3000
-    # Grant access to ALSA audio devices. On Linux, add your user to the 'audio' group.
-    devices:
-      - /dev/snd:/dev/snd
-    group_add:
-      - audio
     volumes:
       - ${LIBRARY_PATH:-./music}:/music:ro
     depends_on:
       - redis
     restart: unless-stopped
-    # Disable on macOS / Windows or if no audio hardware is present:
-    profiles:
-      - audio
+
+  # NGINX — single public entry point. Routes media bytes and the realtime
+  # transport WebSocket directly to Lucid (never through the Next.js app),
+  # everything else to the Next.js app.
+  nginx:
+    image: nginx:1.27-alpine
+    ports:
+      - "${HTTP_PORT:-8080}:80"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+    depends_on:
+      - app
+      - lucid
+    restart: unless-stopped
 
   db:
     image: postgres:16-alpine

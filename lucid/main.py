@@ -12,14 +12,20 @@ Environment variables:
 
 from __future__ import annotations
 
+import asyncio
+import json
 import logging
+import mimetypes
 import os
 from contextlib import asynccontextmanager
 from typing import Any
 
+import httpx
 import redis as redis_lib
+import redis.asyncio as redis_async
 import uvicorn
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
 from flux import FluxManager
@@ -58,8 +64,10 @@ def _alsa_devices() -> list[str]:
 
 _REDIS_URL = os.environ.get("REDIS_URL", "redis://redis:6379")
 _DEFAULT_ALSA_DEVICE = os.environ.get("ALSA_DEVICE", "default")
+_APP_URL = os.environ.get("APP_URL", "http://app:3000")
 
 redis_client = redis_lib.from_url(_REDIS_URL, decode_responses=False)
+redis_async_client = redis_async.from_url(_REDIS_URL, decode_responses=True)
 
 sp_manager = SignalPathManager()
 sp_manager.signal_path.alsa_device = _DEFAULT_ALSA_DEVICE
@@ -78,6 +86,7 @@ async def lifespan(app: FastAPI):  # noqa: ARG001
     log.info("Lucid shutting down")
     player.stop()
     flux_mgr.stop()
+    await redis_async_client.close()
 
 # ── App ────────────────────────────────────────────────────────────────────────
 
@@ -225,6 +234,84 @@ def queue_prev() -> dict[str, Any]:
 def airplay_endpoints() -> list[dict[str, Any]]:
     """Return discovered AirPlay (RAOP) endpoints."""
     return flux_mgr.list_endpoints()
+
+
+# ── Browser streaming (RAAT-style: server resolves, endpoint owns nothing) ──────
+#
+# The browser is just another endpoint. We never proxy these bytes through the
+# Next.js app — NGINX routes /stream/* straight here. FileResponse handles
+# HTTP Range requests natively, so seeking and MSE pre-fetch both work without
+# any custom byte-range code.
+
+async def _resolve_file_path(track_hash: str) -> str:
+    """Resolve a BLAKE3 hash to an on-disk path via the app's library API."""
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            r = await client.get(f"{_APP_URL}/api/library/{track_hash}")
+    except httpx.HTTPError as exc:
+        raise HTTPException(status_code=502, detail=f"Library lookup failed: {exc}") from exc
+
+    if r.status_code == 404:
+        raise HTTPException(status_code=404, detail="Unknown track hash")
+    if r.status_code != 200:
+        raise HTTPException(status_code=502, detail="Library lookup failed")
+
+    data = r.json()
+    path = data.get("file_path")
+    if not path or not os.path.isfile(path):
+        raise HTTPException(status_code=404, detail="Source file not accessible to Lucid")
+    return path
+
+
+@app.get("/stream/{track_hash}")
+async def stream(track_hash: str) -> FileResponse:
+    """
+    Stream the original file bytes for a library track, unmodified.
+
+    Passthrough only — no transcoding. Lossless and hi-res formats are
+    served exactly as stored; the browser endpoint decodes them locally.
+    """
+    path = await _resolve_file_path(track_hash)
+    media_type = mimetypes.guess_type(path)[0] or "application/octet-stream"
+    return FileResponse(path, media_type=media_type, filename=os.path.basename(path))
+
+
+# ── Realtime transport state (replaces HTTP polling) ─────────────────────────────
+
+@app.websocket("/ws/state")
+async def ws_state(websocket: WebSocket) -> None:
+    """
+    Push signal-path/transport state to the browser the moment it changes,
+    by forwarding Lucid's existing Redis pub-sub channel. Sends the current
+    state immediately on connect so the UI never has to wait for the next
+    change to render.
+    """
+    await websocket.accept()
+    pubsub = redis_async_client.pubsub()
+    await pubsub.subscribe(sp_manager.REDIS_CHANNEL)
+
+    try:
+        await websocket.send_text(json.dumps(sp_manager.to_dict()))
+
+        listen_task = asyncio.create_task(_forward_pubsub(pubsub, websocket))
+        recv_task = asyncio.create_task(websocket.receive_text())
+        done, pending = await asyncio.wait(
+            {listen_task, recv_task}, return_when=asyncio.FIRST_COMPLETED
+        )
+        for task in pending:
+            task.cancel()
+    except WebSocketDisconnect:
+        pass
+    finally:
+        await pubsub.unsubscribe(sp_manager.REDIS_CHANNEL)
+        await pubsub.close()
+
+
+async def _forward_pubsub(pubsub: Any, websocket: WebSocket) -> None:
+    async for message in pubsub.listen():
+        if message.get("type") != "message":
+            continue
+        await websocket.send_text(message["data"])
 
 
 # ── Entry point ────────────────────────────────────────────────────────────────

@@ -401,7 +401,7 @@ function PlaybackSection() {
         <span className="text-text-muted text-xs">
           {lucidOnline === null ? 'Checking Lucid sidecar…' :
            lucidOnline ? 'Lucid sidecar online — bit-perfect ALSA playback available' :
-           'Lucid sidecar offline — start with docker compose --profile audio up lucid'}
+           'Lucid sidecar offline — start it with docker compose up -d lucid'}
         </span>
       </div>
 

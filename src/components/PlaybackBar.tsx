@@ -1,7 +1,7 @@
 'use client'
 
-import { useState, useEffect, useCallback } from 'react'
-import type { LucidStatus } from '@/lib/types'
+import { useState, useEffect, useRef, useCallback } from 'react'
+import type { LucidStatus, SignalPathState } from '@/lib/types'
 import SignalPath from './SignalPath'
 
 function formatTime(ms: number): string {
@@ -59,7 +59,10 @@ export default function PlaybackBar() {
   const [status, setStatus] = useState<LucidStatus | null>(null)
   const [showSignalPath, setShowSignalPath] = useState(false)
   const [online, setOnline] = useState(false)
+  const wsRef = useRef<WebSocket | null>(null)
 
+  // HTTP polling fallback — used until the realtime socket connects, and
+  // again if it drops, so the bar never goes silently stale.
   const poll = useCallback(async () => {
     try {
       const r = await fetch('/api/lucid/status', { signal: AbortSignal.timeout(3000) })
@@ -81,8 +84,44 @@ export default function PlaybackBar() {
 
   useEffect(() => {
     poll()
-    const id = setInterval(poll, 2000)
-    return () => clearInterval(id)
+    const pollId = setInterval(poll, 2000)
+
+    let cancelled = false
+    let reconnectTimer: ReturnType<typeof setTimeout> | null = null
+
+    const connect = () => {
+      if (cancelled) return
+      const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
+      const ws = new WebSocket(`${proto}//${window.location.host}/ws/state`)
+      wsRef.current = ws
+
+      ws.onmessage = (ev) => {
+        try {
+          const sp: SignalPathState = JSON.parse(ev.data)
+          setOnline(true)
+          setStatus(prev => ({
+            signal_path: sp,
+            queue: prev?.queue ?? { tracks: [], position: 0, current: null },
+            online: true,
+          }))
+        } catch {
+          // malformed frame — ignore, next push will recover state
+        }
+      }
+      ws.onclose = () => {
+        if (cancelled) return
+        reconnectTimer = setTimeout(connect, 2000)
+      }
+      ws.onerror = () => ws.close()
+    }
+    connect()
+
+    return () => {
+      cancelled = true
+      clearInterval(pollId)
+      if (reconnectTimer) clearTimeout(reconnectTimer)
+      wsRef.current?.close()
+    }
   }, [poll])
 
   const cmd = async (path: string, body?: object) => {
@@ -187,6 +226,13 @@ export default function PlaybackBar() {
             style={{ width: `${progress}%` }}
           />
         </div>
+
+        {/* Signal path — always visible, not hidden behind a toggle */}
+        {hasTrack && (
+          <div className="hidden lg:block px-4 pt-2 border-b border-border/40">
+            <SignalPath signalPath={sp} className="scale-[0.85] origin-left" />
+          </div>
+        )}
 
         <div className="flex items-center gap-4 px-4 py-2.5">
           {/* Track info */}

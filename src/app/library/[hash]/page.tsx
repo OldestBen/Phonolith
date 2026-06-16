@@ -4,6 +4,7 @@ import { useState, useEffect } from 'react'
 import Link from 'next/link'
 import { useParams } from 'next/navigation'
 import type { LibraryFile, MetadataVersion } from '@/lib/types'
+import { useGaplessPlayer } from '@/hooks/useGaplessPlayer'
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 function formatDuration(ms?: number): string {
@@ -150,6 +151,7 @@ export default function FileDetailPage() {
   const [deepScanMsg, setDeepScanMsg] = useState<string | null>(null)
   const [playing, setPlaying] = useState(false)
   const [playMsg, setPlayMsg] = useState<string | null>(null)
+  const browserPlayer = useGaplessPlayer()
 
   useEffect(() => {
     setLoading(true)
@@ -284,6 +286,16 @@ export default function FileDetailPage() {
           <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg>
           Add to Queue
         </button>
+        <button
+          onClick={() => browserPlayer.currentHash === hash && browserPlayer.isPlaying
+            ? browserPlayer.pause()
+            : browserPlayer.playQueue([hash])}
+          className="flex items-center gap-2 px-4 py-2 rounded-xl bg-surface border border-border text-text-primary text-sm font-medium hover:border-accent/40 transition-colors"
+          title="Decode and play directly in this browser tab — no ALSA hardware required"
+        >
+          <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75"><rect x="2" y="3" width="20" height="14" rx="2" /><line x1="8" y1="21" x2="16" y2="21" /><line x1="12" y1="17" x2="12" y2="21" /></svg>
+          {browserPlayer.currentHash === hash && browserPlayer.isPlaying ? 'Pause (Browser)' : 'Play in Browser'}
+        </button>
         {isLocal && (
           <button
             onClick={handleDeepScan}
@@ -302,6 +314,19 @@ export default function FileDetailPage() {
       </div>
       {(playMsg || deepScanMsg) && (
         <p className="text-text-muted text-sm mb-4">{playMsg ?? deepScanMsg}</p>
+      )}
+      {browserPlayer.currentHash === hash && browserPlayer.signalPath && (
+        <p className="text-text-muted text-xs font-mono mb-4">
+          Browser decode: {browserPlayer.signalPath.sourceSampleRate}Hz → output {browserPlayer.signalPath.outputSampleRate}Hz{' '}
+          {browserPlayer.signalPath.bitPerfect ? (
+            <span className="text-success">● bit-perfect</span>
+          ) : (
+            <span className="text-warning">⚠ resampled by the browser</span>
+          )}
+        </p>
+      )}
+      {browserPlayer.error && browserPlayer.currentHash === null && (
+        <p className="text-danger text-xs mb-4">{browserPlayer.error}</p>
       )}
 
       {/* Tabs */}

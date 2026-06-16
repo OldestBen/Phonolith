@@ -107,36 +107,34 @@ Then start everything:
 docker compose up -d
 ```
 
-Open **http://localhost:3000** in your browser.
+Open **http://localhost:8080** in your browser — NGINX is the single public entry point, routing media bytes and the realtime transport socket directly to Lucid and everything else to the app.
 
 ---
 
-## Lucid — Bit-Perfect Playback
+## Lucid — Audio Transport
 
-Lucid is an optional Python/FastAPI daemon (port 8001) that provides bit-perfect audio output via exclusive ALSA access, bypassing the Linux kernel mixer entirely. It runs as a separate Docker service under the `audio` profile.
+Lucid is a Python/FastAPI daemon (port 8001) that serves as Phonolith's playback transport, modelled on Roon's RAAT philosophy: the server resolves and (when needed) decodes, the endpoint owns the clock, and the signal path is disclosed honestly rather than hidden.
+
+**Browser playback** (no audio hardware required) is the baseline — Lucid passes the original file bytes through `/stream/{hash}` (HTTP Range supported, no transcoding) and the browser decodes locally via the Web Audio API. This works on any host as soon as `docker compose up -d` is running.
+
+**ALSA exclusive output** (bit-perfect, for a USB DAC or other ALSA-compatible hardware) is an optional addon on top of the same Lucid container:
 
 **Requirements (Linux only):**
 - Linux host with the ALSA sound subsystem available
 - `/dev/snd` device directory exposed to the container
 - Your host user must be a member of the `audio` group: `sudo usermod -aG audio $USER`
 
-**Start Lucid alongside the core stack:**
+**Enable it with the ALSA overlay:**
 
 ```bash
-docker compose --profile audio up -d
+docker compose -f docker-compose.yml -f docker-compose.alsa.yml up -d
 ```
 
-Or start only Lucid:
+**Signal path state** is published to the Redis key `lucid:signal_path` on every state change and forwarded in realtime over `ws://.../ws/state` — the Playback Bar's signal path display subscribes to this socket rather than polling.
 
-```bash
-docker compose --profile audio up lucid -d
-```
+**REST API** (port 8001): `/play`, `/pause`, `/resume`, `/stop`, `/seek`, `/status`, `/devices`, `/queue/*`, `/airplay/endpoints`, `/stream/{hash}` (GET), `/ws/state` (WebSocket)
 
-**Signal path state** is published to the Redis key `lucid:signal_path` on every state change, enabling the Signal Path Visualizer in the web UI to reflect the live chain in real time.
-
-**REST API** (port 8001): `/play`, `/pause`, `/resume`, `/stop`, `/seek`, `/status`, `/devices`, `/queue/*`, `/airplay/endpoints`
-
-> Lucid is Linux-only. macOS and Windows users can use AirPlay (Flux) as an alternative output path once RTSP/ALAC streaming is implemented.
+> AirPlay (Flux) is available as an alternative output path once RTSP/ALAC streaming is implemented.
 
 ---
 
@@ -158,10 +156,11 @@ docker compose --profile audio up lucid -d
 | `S3_REGION` | Optional | AWS region for the S3 bucket |
 | `AWS_ACCESS_KEY_ID` | Optional | AWS credentials for S3 backup |
 | `AWS_SECRET_ACCESS_KEY` | Optional | AWS credentials for S3 backup |
-| `APP_PORT` | Optional | Host port for the web UI (default: `3000`) |
+| `HTTP_PORT` | Optional | Host port for NGINX, the public entry point (default: `8080`) |
+| `APP_PORT` | Optional | Host port for the Next.js app directly, bypassing NGINX (default: `3000`) |
 | `ANALYST_PORT` | Optional | Host port for the analyst sidecar (default: `8000`) |
 | `LUCID_URL` | Optional | Base URL of the Lucid playback daemon (default: `http://lucid:8001`) |
-| `LUCID_PORT` | Optional | Host port for Lucid (default: `8001`; only used with `--profile audio`) |
+| `LUCID_PORT` | Optional | Host port for Lucid directly, bypassing NGINX (default: `8001`) |
 | `CREDENTIAL_KEY` | Recommended | AES-256-GCM key for encrypting SMB/NFS credentials at rest. Generate: `openssl rand -hex 32`. Falls back to a SHA-256 of `DATABASE_URL` if unset (not suitable for production). |
 
 ---
