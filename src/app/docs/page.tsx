@@ -1072,6 +1072,18 @@ Example:    phonolith-backup-2026-06-15T00:00:00Z.sql.gz`}</CodeBlock>
                   much larger trust/abuse model — LAN discovery is the scoped, honest version of that idea.
                 </p>
               </SubSubSection>
+              <SubSubSection title="WAN Connectivity">
+                <p>
+                  A peer&apos;s <code className="text-accent">host</code> is whatever address it was paired with —
+                  Polyphony itself does no NAT traversal. On the same LAN, a bare local IP works. Across the
+                  internet, plain residential IPs usually don&apos;t: most home connections sit behind
+                  carrier-grade NAT, so a public hostname alone can&apos;t route inbound traffic back to either
+                  side, and self-hosting relay infrastructure to work around that is explicitly out of scope.
+                  The supported path for WAN pairing is to put both instances on the same Tailscale tailnet
+                  first and pair using the Tailscale IP or MagicDNS name — Tailscale&apos;s own relays handle
+                  CGNAT for free, so no ports need to be forwarded on either end.
+                </p>
+              </SubSubSection>
             </SubsystemCard>
           </SubSection>
 
