@@ -28,6 +28,7 @@ type IngestPayload = {
   year?: string
   track_number?: number
   disc_number?: number
+  engineer?: string
   inode?: number
   file_size?: number
   mtime?: number
@@ -74,7 +75,7 @@ export async function POST(req: NextRequest) {
       duration_ms, dr_score, spectral_ok, waveform_path,
       fingerprint, accuraterip_status,
       track_id, title, artist, album, year,
-      track_number, disc_number,
+      track_number, disc_number, engineer,
       inode, file_size, mtime,
       cover_art_path,
       indexed_at
@@ -84,7 +85,7 @@ export async function POST(req: NextRequest) {
       ${data.duration_ms ?? null}, ${data.dr_score ?? null}, ${data.spectral_ok ?? null}, ${data.waveform_path ?? null},
       ${data.fingerprint ?? null}, ${data.accuraterip_status ?? null},
       ${trackId}, ${data.title ?? null}, ${data.artist ?? null}, ${data.album ?? null}, ${data.year ?? null},
-      ${data.track_number ?? null}, ${data.disc_number ?? 1},
+      ${data.track_number ?? null}, ${data.disc_number ?? 1}, ${data.engineer ?? null},
       ${data.inode ?? null}, ${data.file_size ?? null}, ${data.mtime ?? null},
       ${data.cover_art_path ?? null},
       NOW()
@@ -111,6 +112,7 @@ export async function POST(req: NextRequest) {
         year = EXCLUDED.year,
         track_number = EXCLUDED.track_number,
         disc_number = EXCLUDED.disc_number,
+        engineer = EXCLUDED.engineer,
         inode = EXCLUDED.inode,
         file_size = EXCLUDED.file_size,
         mtime = EXCLUDED.mtime,
@@ -139,6 +141,7 @@ export async function POST(req: NextRequest) {
         year: data.year,
         track_number: data.track_number,
         disc_number: data.disc_number,
+        engineer: data.engineer,
         cover_art_path: data.cover_art_path,
       })},
       'ingest'

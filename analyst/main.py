@@ -337,6 +337,45 @@ async def _run_pending_deep_scans():
         STATUS["scan_progress"]["current_file"] = None
 
 
+class WriteTagsRequest(BaseModel):
+    path: str
+    title: str | None = None
+    artist: str | None = None
+    album: str | None = None
+    year: str | None = None
+    track_number: int | None = None
+    disc_number: int | None = None
+    engineer: str | None = None
+
+
+@app.post("/write-tags/{hash}")
+async def write_tags_endpoint(hash: str, req: WriteTagsRequest):
+    """Rewrite embedded tags on disk for an opted-in metadata override.
+
+    Only ever called for local files — writing requires direct filesystem
+    access, so the path must resolve under LIBRARY_PATH. This guards against
+    a misconfigured caller pointing this at an SMB/NFS mount path string that
+    happens to look local.
+    """
+    real_library = os.path.realpath(LIBRARY_PATH)
+    real_path = os.path.realpath(req.path)
+    if os.path.commonpath([real_library, real_path]) != real_library:
+        raise HTTPException(status_code=400, detail="Path is not under the local library root")
+
+    if not os.path.isfile(real_path):
+        raise HTTPException(status_code=404, detail="File not found")
+
+    fields = req.model_dump(exclude={"path"}, exclude_none=True)
+    try:
+        from scanner import write_tags
+        await asyncio.to_thread(write_tags, real_path, fields)
+    except Exception as e:
+        log.exception("Tag write-back failed: %s", real_path)
+        raise HTTPException(status_code=500, detail=f"Tag write-back failed: {e}")
+
+    return {"ok": True}
+
+
 @app.get("/waveforms/{hash}")
 def get_waveform(hash: str):
     # Try sharded path first, then fall back to legacy flat path

@@ -1,21 +1,30 @@
 export const dynamic = 'force-dynamic'
 
 import { NextResponse } from 'next/server'
-import { exec } from 'child_process'
-import { promisify } from 'util'
-import { S3Client, PutObjectCommand } from '@aws-sdk/client-s3'
-import { sql } from '@/lib/db'
+import { spawn } from 'child_process'
+import { Transform } from 'stream'
+import { S3Client } from '@aws-sdk/client-s3'
+import { Upload } from '@aws-sdk/lib-storage'
+import { getSetting, setSetting } from '@/lib/settings'
 
-const execAsync = promisify(exec)
+const LAST_BACKUP_KEY = 'aegis_last_backup'
 
 export async function GET() {
-  const rows = await sql`
-    SELECT value FROM schema_migrations ORDER BY applied_at DESC LIMIT 1
-  `.catch(() => [])
+  const configured = !!(process.env.S3_BUCKET && process.env.AWS_ACCESS_KEY_ID)
+
+  let lastBackup = null
+  const raw = await getSetting(LAST_BACKUP_KEY)
+  if (raw) {
+    try {
+      lastBackup = JSON.parse(raw)
+    } catch {
+      lastBackup = null
+    }
+  }
 
   return NextResponse.json({
-    configured: !!(process.env.S3_BUCKET && process.env.AWS_ACCESS_KEY_ID),
-    last_backup: null,
+    configured,
+    last_backup: lastBackup,
   })
 }
 
@@ -31,25 +40,54 @@ export async function POST() {
 
   const dbUrl = process.env.DATABASE_URL || 'postgresql://phonolith:phonolith@db:5432/phonolith'
   const timestamp = new Date().toISOString().replace(/[:.]/g, '-')
-  const filename = `/tmp/phonolith-backup-${timestamp}.sql`
+  const s3Key = `backups/phonolith-${timestamp}.sql`
 
   try {
-    await execAsync(`pg_dump ${dbUrl} -f ${filename}`)
+    const child = spawn('pg_dump', [dbUrl])
 
-    const fs = await import('fs')
-    const data = fs.readFileSync(filename)
+    let stderr = ''
+    child.stderr.on('data', chunk => { stderr += chunk.toString() })
+
+    // Counts bytes as they pass through, so we can record the final dump
+    // size without buffering the whole stream to measure it.
+    let bytesWritten = 0
+    const counter = new Transform({
+      transform(chunk, _enc, callback) {
+        bytesWritten += chunk.length
+        callback(null, chunk)
+      },
+    })
+    child.stdout.pipe(counter)
 
     const s3 = new S3Client({ region, credentials: { accessKeyId, secretAccessKey } })
-    await s3.send(new PutObjectCommand({
-      Bucket: bucket,
-      Key: `backups/phonolith-${timestamp}.sql`,
-      Body: data,
-      ContentType: 'application/sql',
+    const upload = new Upload({
+      client: s3,
+      params: {
+        Bucket: bucket,
+        Key: s3Key,
+        Body: counter,
+        ContentType: 'application/sql',
+      },
+    })
+
+    const exitCodePromise: Promise<number> = new Promise((resolve, reject) => {
+      child.on('error', reject)
+      child.on('exit', code => resolve(code ?? 0))
+    })
+
+    const [exitCode] = await Promise.all([exitCodePromise, upload.done()])
+
+    if (exitCode !== 0) {
+      throw new Error(`pg_dump exited with code ${exitCode}: ${stderr.trim()}`)
+    }
+
+    await setSetting(LAST_BACKUP_KEY, JSON.stringify({
+      timestamp,
+      s3_key: s3Key,
+      size_bytes: bytesWritten,
     }))
 
-    fs.unlinkSync(filename)
-
-    return NextResponse.json({ ok: true, timestamp })
+    return NextResponse.json({ ok: true, timestamp, s3_key: s3Key, size_bytes: bytesWritten })
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err)
     return NextResponse.json({ error: msg }, { status: 500 })

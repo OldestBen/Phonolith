@@ -135,6 +135,191 @@ function EngramHistory({ hash }: { hash: string }) {
   )
 }
 
+// ── Pressing info (Discogs) ──────────────────────────────────────────────────
+interface DiscogsPressing {
+  title?: string
+  country?: string
+  released?: string
+  labels?: Array<{ name: string; catno: string }>
+  formats?: Array<{ name: string; qty?: string; descriptions?: string[] }>
+}
+
+function PressingInfo({ hash }: { hash: string }) {
+  const [pressing, setPressing] = useState<DiscogsPressing | null>(null)
+  const [loading, setLoading] = useState(false)
+  const [msg, setMsg] = useState<string | null>(null)
+  const [looked, setLooked] = useState(false)
+
+  const handleLookup = async () => {
+    setLoading(true)
+    setMsg(null)
+    try {
+      const r = await fetch(`/api/library/${hash}/pressing`)
+      const data = await r.json()
+      if (data.pressing) {
+        setPressing(data.pressing)
+      } else {
+        setMsg(data.error ?? 'No pressing info found on Discogs.')
+      }
+    } catch {
+      setMsg('Pressing lookup failed.')
+    } finally {
+      setLooked(true)
+      setLoading(false)
+    }
+  }
+
+  return (
+    <div>
+      <h2 className="text-text-muted text-xs uppercase tracking-widest mb-3 font-medium">Pressing Info</h2>
+      <div className="bg-surface rounded-xl border border-border p-4">
+        {pressing ? (
+          <>
+            <InfoRow label="Country" value={pressing.country ?? '—'} />
+            <InfoRow label="Released" value={pressing.released ?? '—'} />
+            <InfoRow label="Label" value={pressing.labels?.map(l => l.name).join(', ') || '—'} />
+            <InfoRow label="Catalog #" value={pressing.labels?.map(l => l.catno).join(', ') || '—'} />
+            <InfoRow label="Format" value={pressing.formats?.map(f => [f.name, ...(f.descriptions ?? [])].join(', ')).join(' / ') || '—'} />
+          </>
+        ) : (
+          <div className="flex items-center justify-between">
+            <span className="text-text-muted text-sm">{looked ? (msg ?? 'No pressing info found.') : 'Not looked up yet.'}</span>
+            <button onClick={handleLookup} disabled={loading} className="px-3 py-1.5 rounded-lg bg-surface-2 border border-border text-text-primary text-xs font-medium hover:bg-surface transition-colors disabled:opacity-50">
+              {loading ? 'Looking up…' : 'Look Up Pressing'}
+            </button>
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
+
+// ── Metadata edit form ─────────────────────────────────────────────────────────
+interface MetadataEditFields {
+  title: string
+  artist: string
+  album: string
+  year: string
+  track_number: string
+  disc_number: string
+}
+
+function fieldsFromFile(file: LibraryFile): MetadataEditFields {
+  return {
+    title: file.title ?? '',
+    artist: file.artist ?? '',
+    album: file.album ?? '',
+    year: file.year ?? '',
+    track_number: file.track_number?.toString() ?? '',
+    disc_number: file.disc_number?.toString() ?? '',
+  }
+}
+
+function MetadataEditButton({ editing, onClick }: { editing: boolean; onClick: () => void }) {
+  return (
+    <button
+      onClick={onClick}
+      className="px-3 py-1.5 rounded-lg bg-surface-2 border border-border text-text-primary text-xs font-medium hover:bg-surface transition-colors"
+    >
+      {editing ? 'Close' : 'Edit Metadata'}
+    </button>
+  )
+}
+
+function MetadataEditForm({ hash, file, isLocal, onSaved, onClose }: {
+  hash: string
+  file: LibraryFile
+  isLocal: boolean
+  onSaved: (file: LibraryFile) => void
+  onClose: () => void
+}) {
+  const [fields, setFields] = useState<MetadataEditFields>(fieldsFromFile(file))
+  const [saving, setSaving] = useState(false)
+  const [msg, setMsg] = useState<string | null>(null)
+
+  useEffect(() => { setFields(fieldsFromFile(file)) }, [file])
+
+  const handleField = (key: keyof MetadataEditFields) => (e: React.ChangeEvent<HTMLInputElement>) => {
+    setFields(f => ({ ...f, [key]: e.target.value }))
+  }
+
+  const handleSave = async () => {
+    setSaving(true)
+    setMsg(null)
+    try {
+      const body: Record<string, unknown> = {
+        title: fields.title.trim() || null,
+        artist: fields.artist.trim() || null,
+        album: fields.album.trim() || null,
+        year: fields.year.trim() || null,
+        track_number: fields.track_number.trim() ? parseInt(fields.track_number, 10) : null,
+        disc_number: fields.disc_number.trim() ? parseInt(fields.disc_number, 10) : null,
+      }
+      const r = await fetch(`/api/library/${hash}/metadata`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      })
+      const data = await r.json()
+      if (r.ok) {
+        onSaved({ ...file, ...body, metadata_locked: true } as LibraryFile)
+        setMsg(data.writeback_warning ? `Saved — ${data.writeback_warning}` : 'Saved.')
+        onClose()
+      } else {
+        setMsg(data.error ?? 'Save failed')
+      }
+    } catch {
+      setMsg('Save failed')
+    } finally {
+      setSaving(false)
+      setTimeout(() => setMsg(null), 8000)
+    }
+  }
+
+  return (
+    <div className="bg-surface rounded-xl border border-border p-4 mb-4">
+      <div className="grid grid-cols-2 gap-3 mb-3">
+        <label className="text-xs">
+          <span className="text-text-muted block mb-1">Title</span>
+          <input value={fields.title} onChange={handleField('title')} className="bg-background border border-border text-text-primary text-sm rounded-lg px-3 py-1.5 w-full focus:outline-none focus:border-accent transition-colors" />
+        </label>
+        <label className="text-xs">
+          <span className="text-text-muted block mb-1">Artist</span>
+          <input value={fields.artist} onChange={handleField('artist')} className="bg-background border border-border text-text-primary text-sm rounded-lg px-3 py-1.5 w-full focus:outline-none focus:border-accent transition-colors" />
+        </label>
+        <label className="text-xs">
+          <span className="text-text-muted block mb-1">Album</span>
+          <input value={fields.album} onChange={handleField('album')} className="bg-background border border-border text-text-primary text-sm rounded-lg px-3 py-1.5 w-full focus:outline-none focus:border-accent transition-colors" />
+        </label>
+        <label className="text-xs">
+          <span className="text-text-muted block mb-1">Year</span>
+          <input value={fields.year} onChange={handleField('year')} className="bg-background border border-border text-text-primary text-sm rounded-lg px-3 py-1.5 w-full focus:outline-none focus:border-accent transition-colors" />
+        </label>
+        <label className="text-xs">
+          <span className="text-text-muted block mb-1">Track #</span>
+          <input value={fields.track_number} onChange={handleField('track_number')} className="bg-background border border-border text-text-primary text-sm rounded-lg px-3 py-1.5 w-full focus:outline-none focus:border-accent transition-colors" />
+        </label>
+        <label className="text-xs">
+          <span className="text-text-muted block mb-1">Disc #</span>
+          <input value={fields.disc_number} onChange={handleField('disc_number')} className="bg-background border border-border text-text-primary text-sm rounded-lg px-3 py-1.5 w-full focus:outline-none focus:border-accent transition-colors" />
+        </label>
+      </div>
+      {!isLocal && (
+        <p className="text-text-muted text-xs mb-3">This file is on a network share — embedded tag write-back is skipped, only the database override is saved.</p>
+      )}
+      <div className="flex items-center gap-2">
+        <button onClick={handleSave} disabled={saving} className="px-3 py-1.5 rounded-lg bg-accent text-white text-xs font-medium hover:bg-accent/80 transition-colors disabled:opacity-50">
+          {saving ? 'Saving…' : 'Save'}
+        </button>
+        <button onClick={() => { onClose(); setFields(fieldsFromFile(file)) }} disabled={saving} className="px-3 py-1.5 rounded-lg border border-border text-text-muted text-xs hover:text-text-primary transition-colors disabled:opacity-50">
+          Cancel
+        </button>
+        {msg && <span className="text-text-muted text-xs">{msg}</span>}
+      </div>
+    </div>
+  )
+}
+
 // ── Tabs ──────────────────────────────────────────────────────────────────────
 type Tab = 'info' | 'history'
 
@@ -151,6 +336,7 @@ export default function FileDetailPage() {
   const [deepScanMsg, setDeepScanMsg] = useState<string | null>(null)
   const [playing, setPlaying] = useState(false)
   const [playMsg, setPlayMsg] = useState<string | null>(null)
+  const [editingMeta, setEditingMeta] = useState(false)
   const browserPlayer = useGaplessPlayer()
 
   useEffect(() => {
@@ -349,8 +535,28 @@ export default function FileDetailPage() {
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-8 mb-8">
             {/* File info */}
             <div className="lg:col-span-2">
-              <h2 className="text-text-muted text-xs uppercase tracking-widest mb-3 font-medium">File Info</h2>
+              <div className="flex items-center justify-between mb-3">
+                <h2 className="text-text-muted text-xs uppercase tracking-widest font-medium">File Info</h2>
+                <MetadataEditButton editing={editingMeta} onClick={() => setEditingMeta(e => !e)} />
+              </div>
+              {editingMeta && (
+                <MetadataEditForm
+                  hash={hash}
+                  file={file}
+                  isLocal={isLocal}
+                  onSaved={setFile}
+                  onClose={() => setEditingMeta(false)}
+                />
+              )}
               <div className="bg-surface rounded-xl border border-border p-4">
+                <InfoRow label="Title" value={file.title ?? '—'} />
+                <InfoRow label="Artist" value={file.artist ?? '—'} />
+                <InfoRow label="Album" value={file.album ?? '—'} />
+                <InfoRow label="Year" value={file.year ?? '—'} />
+                <InfoRow label="Track / Disc" value={`${file.track_number ?? '—'} / ${file.disc_number ?? 1}`} />
+                {file.metadata_locked && (
+                  <InfoRow label="Metadata" value={<span className="text-accent text-xs">🔒 Locked (manual override)</span>} />
+                )}
                 <InfoRow label="Format" value={file.format?.toUpperCase() ?? '—'} />
                 <InfoRow label="Bitrate" value={file.bitrate ? `${file.bitrate} kbps` : '—'} />
                 <InfoRow label="Sample Rate" value={file.sample_rate ? `${(file.sample_rate / 1000).toFixed(1)} kHz` : '—'} />
@@ -431,7 +637,7 @@ export default function FileDetailPage() {
 
           {/* Fingerprint */}
           {file.fingerprint && (
-            <div>
+            <div className="mb-8">
               <h2 className="text-text-muted text-xs uppercase tracking-widest mb-3 font-medium">AcoustID Fingerprint</h2>
               <div className="bg-surface rounded-xl border border-border p-4">
                 <p className="text-text-muted text-xs font-mono break-all">
@@ -440,6 +646,9 @@ export default function FileDetailPage() {
               </div>
             </div>
           )}
+
+          {/* Pressing info */}
+          <PressingInfo hash={hash} />
         </>
       )}
 

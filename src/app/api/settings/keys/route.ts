@@ -15,6 +15,7 @@ const ALLOWED_KEYS = new Set([
   'MUSICBRAINZ_CONTACT',
   'LUCID_DEVICE',
   'LUCID_ENDPOINT_NAME',
+  'id3_writeback_enabled',
 ])
 
 export async function GET(req: NextRequest) {

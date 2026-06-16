@@ -55,6 +55,47 @@ def _parse_disc_number(raw: str | None) -> int | None:
         return None
 
 
+def _read_engineer_tag(fileobj_or_path) -> str | None:
+    """Read the ENGINEER credit from a non-easy mutagen parse, since this
+    field needs format-specific frame/key access not exposed via easy=True.
+    """
+    try:
+        from mutagen import File as MutagenFile
+        if hasattr(fileobj_or_path, "seek"):
+            fileobj_or_path.seek(0)
+        audio = MutagenFile(fileobj_or_path)
+        if not audio or not audio.tags:
+            return None
+
+        # ID3 — TXXX:ENGINEER user text frame, or TIPL/TMCL involved-people lists
+        if hasattr(audio.tags, "getall"):
+            for frame in audio.tags.getall("TXXX:ENGINEER"):
+                if frame.text:
+                    return str(frame.text[0])
+            for key in ("TIPL", "TMCL"):
+                for frame in audio.tags.getall(key):
+                    for role, name in getattr(frame, "people", []):
+                        if role.strip().lower() == "engineer":
+                            return name
+            return None
+
+        # FLAC / Vorbis comments — plain 'engineer' field
+        if audio.tags.get("engineer"):
+            return str(audio.tags.get("engineer")[0])
+
+        # MP4/AAC — no standard atom for this; freeform '----:com.apple.iTunes:ENGINEER'
+        for key in audio.tags.keys():
+            if key.endswith(":ENGINEER") or key.endswith(":engineer"):
+                val = audio.tags[key]
+                if val:
+                    item = val[0]
+                    return item.decode() if isinstance(item, bytes) else str(item)
+
+        return None
+    except Exception:
+        return None
+
+
 def _read_tags(fileobj_or_path) -> dict:
     try:
         from mutagen import File as MutagenFile
@@ -71,6 +112,8 @@ def _read_tags(fileobj_or_path) -> dict:
             disc_raw = str(audio.get("disk", [""])[0])
         disc_number = _parse_disc_number(disc_raw)
 
+        engineer = _read_engineer_tag(fileobj_or_path)
+
         return {
             "title": str(audio.get("title", [""])[0]) if audio.get("title") else None,
             "artist": str(audio.get("artist", [""])[0]) if audio.get("artist") else None,
@@ -78,12 +121,132 @@ def _read_tags(fileobj_or_path) -> dict:
             "year": str(audio.get("date", [""])[0])[:4] if audio.get("date") else None,
             "track": str(audio.get("tracknumber", [""])[0]) if audio.get("tracknumber") else None,
             "disc_number": disc_number,
+            "engineer": engineer,
             "bitrate": getattr(info, "bitrate", None),
             "sample_rate": getattr(info, "sample_rate", None),
             "length": getattr(info, "length", None),
         }
     except Exception:
         return {}
+
+
+def write_tags(path: str, fields: dict) -> None:
+    """Write the given fields back to the embedded tags of the file at `path`.
+
+    Mirrors the per-format branching in `_read_tags`/`_read_engineer_tag`: easy-tag
+    keys work for ID3/MP3, FLAC/Vorbis, but MP4 and the ENGINEER credit need
+    format-specific access since they aren't exposed via mutagen's easy=True API.
+    Raises on failure — callers are expected to catch and report non-fatally.
+    """
+    from mutagen import File as MutagenFile
+
+    suffix = Path(path).suffix.lower()
+    engineer = fields.get("engineer")
+
+    if suffix == ".mp3":
+        from mutagen.easyid3 import EasyID3
+        from mutagen.id3 import ID3, TXXX
+        try:
+            audio = EasyID3(path)
+        except Exception:
+            audio = EasyID3()
+            audio.save(path)
+            audio = EasyID3(path)
+        _apply_easy_fields(audio, fields)
+        audio.save(path)
+
+        if engineer is not None:
+            id3 = ID3(path)
+            id3.delall("TXXX:ENGINEER")
+            id3.add(TXXX(encoding=3, desc="ENGINEER", text=[str(engineer)]))
+            id3.save(path)
+        return
+
+    if suffix == ".flac":
+        from mutagen.flac import FLAC
+        audio = FLAC(path)
+        _apply_vorbis_fields(audio, fields)
+        if engineer is not None:
+            audio["engineer"] = str(engineer)
+        audio.save()
+        return
+
+    if suffix in (".m4a", ".aac"):
+        from mutagen.mp4 import MP4
+        audio = MP4(path)
+        _apply_mp4_fields(audio, fields)
+        if engineer is not None:
+            audio["----:com.apple.iTunes:ENGINEER"] = str(engineer).encode()
+        audio.save()
+        return
+
+    if suffix == ".ogg" or suffix == ".opus":
+        from mutagen.oggvorbis import OggVorbis
+        from mutagen.oggopus import OggOpus
+        audio = OggOpus(path) if suffix == ".opus" else OggVorbis(path)
+        _apply_vorbis_fields(audio, fields)
+        if engineer is not None:
+            audio["engineer"] = str(engineer)
+        audio.save()
+        return
+
+    # Fall back to generic easy-tag write for any other mutagen-supported format
+    audio = MutagenFile(path, easy=True)
+    if not audio:
+        raise ValueError(f"Unsupported format for tag write-back: {suffix}")
+    _apply_easy_fields(audio, fields)
+    audio.save()
+
+
+def _apply_easy_fields(audio, fields: dict) -> None:
+    if fields.get("title") is not None:
+        audio["title"] = str(fields["title"])
+    if fields.get("artist") is not None:
+        audio["artist"] = str(fields["artist"])
+    if fields.get("album") is not None:
+        audio["album"] = str(fields["album"])
+    if fields.get("year") is not None:
+        audio["date"] = str(fields["year"])
+    if fields.get("track_number") is not None:
+        audio["tracknumber"] = str(fields["track_number"])
+    if fields.get("disc_number") is not None:
+        audio["discnumber"] = str(fields["disc_number"])
+
+
+def _apply_vorbis_fields(audio, fields: dict) -> None:
+    if fields.get("title") is not None:
+        audio["title"] = str(fields["title"])
+    if fields.get("artist") is not None:
+        audio["artist"] = str(fields["artist"])
+    if fields.get("album") is not None:
+        audio["album"] = str(fields["album"])
+    if fields.get("year") is not None:
+        audio["date"] = str(fields["year"])
+    if fields.get("track_number") is not None:
+        audio["tracknumber"] = str(fields["track_number"])
+    if fields.get("disc_number") is not None:
+        audio["discnumber"] = str(fields["disc_number"])
+
+
+def _apply_mp4_fields(audio, fields: dict) -> None:
+    if fields.get("title") is not None:
+        audio["\xa9nam"] = [str(fields["title"])]
+    if fields.get("artist") is not None:
+        audio["\xa9ART"] = [str(fields["artist"])]
+    if fields.get("album") is not None:
+        audio["\xa9alb"] = [str(fields["album"])]
+    if fields.get("year") is not None:
+        audio["\xa9day"] = [str(fields["year"])]
+    if fields.get("track_number") is not None:
+        track = int(str(fields["track_number"]).split("/")[0])
+        existing = audio.get("trkn", [(0, 0)])
+        total = existing[0][1] if existing else 0
+        audio["trkn"] = [(track, total)]
+    if fields.get("disc_number") is not None:
+        disc = int(str(fields["disc_number"]).split("/")[0])
+        existing = audio.get("disk", [(0, 0)])
+        total = existing[0][1] if existing else 0
+        audio["disk"] = [(disc, total)]
 
 
 def _detect_bit_depth(path: str) -> int | None:
@@ -337,6 +500,7 @@ def index_file(
             "album": tags.get("album"),
             "year": tags.get("year"),
             "disc_number": tags.get("disc_number", 1),
+            "engineer": tags.get("engineer"),
             "cover_art_path": cover_art,
         }
         FILE_DB[h] = record
@@ -413,6 +577,7 @@ def _smb_fast_index(
         "album": tags.get("album"),
         "year": tags.get("year"),
         "disc_number": tags.get("disc_number", 1),
+        "engineer": tags.get("engineer"),
         "cover_art_path": cover_art,
     }
     FILE_DB[file_hash] = record

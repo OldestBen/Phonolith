@@ -143,10 +143,12 @@ export interface LibraryFile {
   source_id?: number
   relative_path?: string
   disc_number?: number
+  track_number?: number
   title?: string        // embedded tag (may differ from matched song title)
   artist?: string
   album?: string
   year?: string
+  engineer?: string
   inode?: number
   file_size?: number
   mtime?: number

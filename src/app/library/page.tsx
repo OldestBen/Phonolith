@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, Suspense } from 'react'
+import { Fragment, useState, useEffect, Suspense } from 'react'
 import Link from 'next/link'
 import { useRouter, useSearchParams } from 'next/navigation'
 import type { LibraryFile, AlbumSummary } from '@/lib/types'
@@ -17,6 +17,73 @@ function formatFormat(file: LibraryFile): string {
     parts.push(`${file.bit_depth}/${Math.round(file.sample_rate / 1000)}`)
   }
   return parts.filter(Boolean).join(' ')
+}
+
+interface DiscGroup {
+  disc_number: number
+  files: LibraryFile[]
+}
+
+function groupByDisc(files: LibraryFile[]): DiscGroup[] {
+  const groups = new Map<number, LibraryFile[]>()
+  for (const f of files) {
+    const disc = f.disc_number ?? 1
+    if (!groups.has(disc)) groups.set(disc, [])
+    groups.get(disc)!.push(f)
+  }
+  return Array.from(groups.entries())
+    .sort(([a], [b]) => a - b)
+    .map(([disc_number, discFiles]) => ({
+      disc_number,
+      files: [...discFiles].sort((a, b) => {
+        if (a.track_number == null && b.track_number == null) {
+          return basename(a.file_path).localeCompare(basename(b.file_path))
+        }
+        if (a.track_number == null) return 1
+        if (b.track_number == null) return -1
+        return a.track_number - b.track_number
+      }),
+    }))
+}
+
+function FileRow({ file, onOpen }: { file: LibraryFile; onOpen: () => void }) {
+  return (
+    <tr
+      onClick={onOpen}
+      className="border-b border-border/50 hover:bg-surface-2 cursor-pointer transition-colors"
+    >
+      <td className="py-2.5 pr-4 font-mono text-xs text-text-primary max-w-xs truncate">
+        {basename(file.file_path)}
+      </td>
+      <td className="py-2.5 pr-4 text-text-muted">{formatFormat(file) || '—'}</td>
+      <td className="py-2.5 pr-4 font-mono">
+        <DrScore score={file.dr_score} />
+      </td>
+      <td className="py-2.5 pr-4">
+        {file.spectral_ok == null ? (
+          <span className="text-text-muted">—</span>
+        ) : file.spectral_ok ? (
+          <span className="text-success">✓</span>
+        ) : (
+          <span className="text-danger">✗</span>
+        )}
+      </td>
+      <td className="py-2.5 pr-4 text-text-muted">
+        {file.song_title
+          ? `${file.song_title}${file.song_artist ? ` — ${file.song_artist}` : ''}`
+          : <span className="text-text-muted/50">—</span>
+        }
+      </td>
+      <td className="py-2.5" onClick={e => e.stopPropagation()}>
+        <Link
+          href={`/library/${file.blake3_hash}`}
+          className="text-xs text-text-muted hover:text-accent transition-colors"
+        >
+          Details →
+        </Link>
+      </td>
+    </tr>
+  )
 }
 
 function DrScore({ score }: { score?: number }) {
@@ -82,6 +149,21 @@ function LibraryPageInner() {
       .catch(() => {})
       .finally(() => setLoading(false))
   }, [])
+
+  // Files-view search — refetched server-side via trigram similarity (debounced)
+  useEffect(() => {
+    if (view !== 'files' || albumParam) return
+    const id = setTimeout(() => {
+      setLoading(true)
+      const qs = search.trim() ? `?q=${encodeURIComponent(search.trim())}` : ''
+      fetch(`/api/library${qs}`)
+        .then(r => r.ok ? r.json() : { files: [] })
+        .then(data => setFiles(data.files ?? data ?? []))
+        .catch(() => {})
+        .finally(() => setLoading(false))
+    }, 300)
+    return () => clearTimeout(id)
+  }, [view, search, albumParam])
 
   // Poll while a scan is active — show files as they arrive, like Plex/Roon
   useEffect(() => {
@@ -160,13 +242,12 @@ function LibraryPageInner() {
     if (matchFilter === 'unmatched' && f.song_id) return false
     if (albumParam && f.album !== albumParam) return false
     if (artistParam && f.artist !== artistParam) return false
-    if (search.trim() && !albumParam) {
-      const needle = search.trim().toLowerCase()
-      const haystack = `${basename(f.file_path)} ${f.album ?? ''} ${f.artist ?? ''} ${f.title ?? ''}`.toLowerCase()
-      if (!haystack.includes(needle)) return false
-    }
     return true
   })
+
+  const isAlbumFiltered = Boolean(albumParam && artistParam)
+  const showDiscHeaders = isAlbumFiltered && filtered.some(f => (f.disc_number ?? 1) > 1)
+  const discGroups = isAlbumFiltered ? groupByDisc(filtered) : null
 
   return (
     <div className="min-h-screen px-4 py-8 pb-20 md:pb-8">
@@ -347,44 +428,24 @@ function LibraryPageInner() {
                   </tr>
                 </thead>
                 <tbody>
-                  {filtered.map(file => (
-                    <tr
-                      key={file.blake3_hash}
-                      onClick={() => router.push(`/library/${file.blake3_hash}`)}
-                      className="border-b border-border/50 hover:bg-surface-2 cursor-pointer transition-colors"
-                    >
-                      <td className="py-2.5 pr-4 font-mono text-xs text-text-primary max-w-xs truncate">
-                        {basename(file.file_path)}
-                      </td>
-                      <td className="py-2.5 pr-4 text-text-muted">{formatFormat(file) || '—'}</td>
-                      <td className="py-2.5 pr-4 font-mono">
-                        <DrScore score={file.dr_score} />
-                      </td>
-                      <td className="py-2.5 pr-4">
-                        {file.spectral_ok == null ? (
-                          <span className="text-text-muted">—</span>
-                        ) : file.spectral_ok ? (
-                          <span className="text-success">✓</span>
-                        ) : (
-                          <span className="text-danger">✗</span>
-                        )}
-                      </td>
-                      <td className="py-2.5 pr-4 text-text-muted">
-                        {file.song_title
-                          ? `${file.song_title}${file.song_artist ? ` — ${file.song_artist}` : ''}`
-                          : <span className="text-text-muted/50">—</span>
-                        }
-                      </td>
-                      <td className="py-2.5" onClick={e => e.stopPropagation()}>
-                        <Link
-                          href={`/library/${file.blake3_hash}`}
-                          className="text-xs text-text-muted hover:text-accent transition-colors"
-                        >
-                          Details →
-                        </Link>
-                      </td>
-                    </tr>
-                  ))}
+                  {discGroups
+                    ? discGroups.map(group => (
+                        <Fragment key={group.disc_number}>
+                          {showDiscHeaders && (
+                            <tr>
+                              <td colSpan={6} className="pt-4 pb-1 text-text-muted text-xs uppercase tracking-widest font-medium">
+                                Disc {group.disc_number}
+                              </td>
+                            </tr>
+                          )}
+                          {group.files.map(file => (
+                            <FileRow key={file.blake3_hash} file={file} onOpen={() => router.push(`/library/${file.blake3_hash}`)} />
+                          ))}
+                        </Fragment>
+                      ))
+                    : filtered.map(file => (
+                        <FileRow key={file.blake3_hash} file={file} onOpen={() => router.push(`/library/${file.blake3_hash}`)} />
+                      ))}
                 </tbody>
               </table>
             </div>

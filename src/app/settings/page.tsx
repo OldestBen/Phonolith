@@ -473,24 +473,56 @@ function PlaybackSection() {
 }
 
 // ── Backup ────────────────────────────────────────────────────────────────────
+interface LastBackup {
+  timestamp: string
+  s3_key: string
+  size_bytes: number
+}
+
+function formatBytes(bytes: number): string {
+  if (bytes <= 0) return '0 B'
+  const units = ['B', 'KB', 'MB', 'GB', 'TB']
+  const exp = Math.min(Math.floor(Math.log(bytes) / Math.log(1024)), units.length - 1)
+  const value = bytes / Math.pow(1024, exp)
+  return `${value.toFixed(exp === 0 ? 0 : 1)} ${units[exp]}`
+}
+
 function BackupSection() {
-  const [bucket, setBucket] = useState('')
-  const [region, setRegion] = useState('')
+  const [configured, setConfigured] = useState<boolean | null>(null)
+  const [lastBackup, setLastBackup] = useState<LastBackup | null>(null)
   const [backing, setBacking] = useState(false)
   const [status, setStatus] = useState<string | null>(null)
+  const [statusOk, setStatusOk] = useState(true)
+
+  const load = useCallback(() => {
+    fetch('/api/backup')
+      .then(r => r.ok ? r.json() : null)
+      .then(data => {
+        if (!data) return
+        setConfigured(!!data.configured)
+        setLastBackup(data.last_backup ?? null)
+      })
+      .catch(() => {})
+  }, [])
+
+  useEffect(() => { load() }, [load])
 
   const handleBackup = async () => {
     setBacking(true)
     setStatus(null)
     try {
-      const r = await fetch('/api/backup', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ bucket, region }),
-      })
+      const r = await fetch('/api/backup', { method: 'POST' })
       const data = await r.json()
-      setStatus(data.message ?? (r.ok ? 'Backup started.' : 'Backup failed.'))
+      if (r.ok) {
+        setStatusOk(true)
+        setStatus(`Backup complete — ${formatBytes(data.size_bytes)}`)
+        load()
+      } else {
+        setStatusOk(false)
+        setStatus(data.error ?? 'Backup failed.')
+      }
     } catch {
+      setStatusOk(false)
       setStatus('Backup failed — check your S3 configuration.')
     } finally {
       setBacking(false)
@@ -499,22 +531,97 @@ function BackupSection() {
 
   return (
     <div className="space-y-4">
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-        <div>
-          <label className="text-text-muted text-xs uppercase tracking-widest block mb-1.5">S3 Bucket</label>
-          <input type="text" value={bucket} onChange={e => setBucket(e.target.value)} placeholder="my-phonolith-backup" className="bg-background border border-border text-text-primary text-sm rounded-lg px-3 py-2 w-full focus:outline-none focus:border-accent transition-colors" />
-        </div>
-        <div>
-          <label className="text-text-muted text-xs uppercase tracking-widest block mb-1.5">Region</label>
-          <input type="text" value={region} onChange={e => setRegion(e.target.value)} placeholder="us-east-1" className="bg-background border border-border text-text-primary text-sm rounded-lg px-3 py-2 w-full focus:outline-none focus:border-accent transition-colors" />
-        </div>
+      <div className="flex items-center gap-2">
+        <span className={`w-2 h-2 rounded-full shrink-0 ${
+          configured === null ? 'bg-text-muted animate-pulse' :
+          configured ? 'bg-success' : 'bg-danger'
+        }`} />
+        <span className="text-text-muted text-xs">
+          {configured === null ? 'Checking S3 configuration…' :
+           configured ? 'S3 configured' :
+           'S3 not configured — set S3_BUCKET, S3_REGION, AWS_ACCESS_KEY_ID, and AWS_SECRET_ACCESS_KEY'}
+        </span>
       </div>
+
+      {lastBackup ? (
+        <div className="bg-surface-2 rounded-xl border border-border/50 p-4">
+          <p className="text-text-primary text-sm font-medium">
+            Last backup: {new Date(lastBackup.timestamp).toLocaleString()}
+          </p>
+          <p className="text-text-muted text-xs mt-1">
+            {formatBytes(lastBackup.size_bytes)} — {lastBackup.s3_key}
+          </p>
+        </div>
+      ) : (
+        <div className="bg-surface-2 rounded-xl border border-border/50 p-4">
+          <p className="text-text-muted text-sm">No backups yet.</p>
+        </div>
+      )}
+
       <div className="flex items-center gap-3">
-        <button onClick={handleBackup} disabled={backing} className="px-4 py-2 rounded-lg bg-accent text-white text-sm font-medium hover:bg-accent/80 transition-colors disabled:opacity-50">
+        <button onClick={handleBackup} disabled={backing || !configured} className="px-4 py-2 rounded-lg bg-accent text-white text-sm font-medium hover:bg-accent/80 transition-colors disabled:opacity-50">
           {backing ? 'Backing up…' : 'Backup Now'}
         </button>
-        {status && <span className="text-text-muted text-sm">{status}</span>}
+        {status && <span className={`text-sm ${statusOk ? 'text-text-muted' : 'text-danger'}`}>{status}</span>}
       </div>
+    </div>
+  )
+}
+
+// ── Metadata write-back ───────────────────────────────────────────────────────
+function MetadataSection() {
+  const [enabled, setEnabled] = useState(false)
+  const [loading, setLoading] = useState(true)
+  const [saving, setSaving] = useState(false)
+
+  useEffect(() => {
+    fetch('/api/settings/keys?key=id3_writeback_enabled')
+      .then(r => r.ok ? r.json() : null)
+      .then(d => setEnabled(d?.source === 'db' && d?.masked?.endsWith('true')))
+      .catch(() => {})
+      .finally(() => setLoading(false))
+  }, [])
+
+  const handleToggle = async () => {
+    const next = !enabled
+    setSaving(true)
+    try {
+      await fetch('/api/settings/keys', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ key: 'id3_writeback_enabled', value: next ? 'true' : 'false' }),
+      })
+      setEnabled(next)
+    } catch {} finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <div className="flex items-start justify-between gap-4">
+      <div>
+        <p className="text-text-primary text-sm font-medium">Write metadata edits back to files</p>
+        <p className="text-text-muted text-xs mt-1 max-w-md">
+          When you edit a file&apos;s title/artist/album/year/track/disc number, also rewrite the
+          embedded tags on disk (via the analyst sidecar) instead of only storing the override in
+          the database. Only applies to locally mounted files — never to SMB/NFS shares.
+        </p>
+      </div>
+      <button
+        onClick={handleToggle}
+        disabled={loading || saving}
+        role="switch"
+        aria-checked={enabled}
+        className={`shrink-0 mt-0.5 w-11 h-6 rounded-full relative transition-colors disabled:opacity-50 ${
+          enabled ? 'bg-accent' : 'bg-surface-2 border border-border'
+        }`}
+      >
+        <span
+          className={`absolute top-0.5 left-0.5 w-5 h-5 rounded-full bg-white transition-transform ${
+            enabled ? 'translate-x-5' : ''
+          }`}
+        />
+      </button>
     </div>
   )
 }
@@ -541,6 +648,10 @@ export default function SettingsPage() {
 
       <Section title="Backup">
         <BackupSection />
+      </Section>
+
+      <Section title="Metadata">
+        <MetadataSection />
       </Section>
 
       <Section title="Appearance">
