@@ -48,7 +48,11 @@ services:
       - ACOUSTID_API_KEY=${ACOUSTID_API_KEY:-}
       - INTERNAL_SERVICE_TOKEN=${INTERNAL_SERVICE_TOKEN:-}
     volumes:
-      - ${LIBRARY_PATH:-./music}:/music:ro
+      # Read-write: write_tags (main.py) saves edited ID3/Vorbis/MP4 tags back to
+      # library files, and the nested soulcatcher_downloads mount below needs to
+      # create its mountpoint under /music — Docker can't do that under a
+      # read-only bind mount (mkdir would hit EROFS).
+      - ${LIBRARY_PATH:-./music}:/music
       # Soulcatcher downloads land here via the slskd service below. Mounted into
       # the analyst's /music tree (not just slskd's) so a library rescan picks up
       # completed downloads — see src/app/api/soulcatcher/downloads/[id]/ingest.
