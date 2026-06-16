@@ -4,15 +4,7 @@ import { NextRequest, NextResponse } from "next/server";
 // here (rather than imported) because middleware runs on the Edge runtime
 // in Next.js 14 and cannot import src/lib/auth.ts, which depends on
 // postgres.js / Node's `crypto` module (not Edge-compatible in this Next
-// version). Node.js middleware runtimes are only available starting in
-// later Next.js releases, so this middleware intentionally does the
-// lightest possible check: is there a session cookie at all?
-//
-// The actual work — verifying the HMAC signature, looking up the session
-// in Postgres, and checking whether any users exist yet (first-boot setup)
-// — happens in the root layout server component (src/app/layout.tsx),
-// which runs on the Node.js runtime and can safely use the database and
-// Node crypto APIs.
+// version).
 const SESSION_COOKIE_NAME = "phonolith_session";
 
 const PUBLIC_PATH_PREFIXES = [
@@ -22,6 +14,7 @@ const PUBLIC_PATH_PREFIXES = [
   "/api/auth/login",
   "/api/auth/logout",
   "/api/auth/me",
+  "/api/auth/session-status",
 ];
 
 const PUBLIC_PAGES = ["/setup", "/login"];
@@ -36,32 +29,33 @@ function isPublicPath(pathname: string): boolean {
   return false;
 }
 
-export function middleware(req: NextRequest) {
+export async function middleware(req: NextRequest) {
   const { pathname } = req.nextUrl;
 
-  // Propagate the requested pathname to the root layout (a Node.js runtime
-  // server component) via a request header, since the layout has no other
-  // reliable way to know the current path in Next.js 14's App Router. The
-  // layout uses this to decide whether to redirect to /setup or /login
-  // after performing the DB-backed checks middleware can't do on Edge.
-  const requestHeaders = new Headers(req.headers);
-  requestHeaders.set("x-phonolith-pathname", pathname);
-
   if (isPublicPath(pathname)) {
-    return NextResponse.next({ request: { headers: requestHeaders } });
+    return NextResponse.next();
   }
 
-  const hasSessionCookie = Boolean(req.cookies.get(SESSION_COOKIE_NAME)?.value);
+  // The actual setup/auth check needs Postgres and Node crypto, which this
+  // Edge middleware can't use directly — so it asks the Node.js runtime
+  // session-status route instead. This keeps the gating decision (and the
+  // pathname it's based on) in one place, rather than forwarding pathname
+  // to the root layout via a request header for it to redo the check —
+  // a previous approach that could silently fall back to treating any
+  // pathname as "/" and create a redirect loop back to /setup.
+  const statusRes = await fetch(new URL("/api/auth/session-status", req.url), {
+    headers: { cookie: req.headers.get("cookie") ?? "" },
+  });
+  const status = await statusRes.json().catch(() => ({ needsSetup: false, authenticated: false }));
 
-  if (!hasSessionCookie) {
-    const loginUrl = new URL("/login", req.url);
-    return NextResponse.redirect(loginUrl);
+  if (status.needsSetup) {
+    return NextResponse.redirect(new URL("/setup", req.url));
+  }
+  if (!status.authenticated) {
+    return NextResponse.redirect(new URL("/login", req.url));
   }
 
-  // Cookie is present but may be expired/invalid/signed with a stale key,
-  // or zero users may exist (first boot). Those checks require Postgres
-  // and Node crypto, so they're enforced in the root layout instead.
-  return NextResponse.next({ request: { headers: requestHeaders } });
+  return NextResponse.next();
 }
 
 export const config = {
@@ -69,7 +63,7 @@ export const config = {
     /*
      * Match all paths except static assets. We still run for API routes
      * (other than the auth ones excluded above) so that any future
-     * non-auth API route also gets a baseline cookie-presence check.
+     * non-auth API route also gets a baseline auth check.
      */
     "/((?!_next/static|_next/image|favicon.ico).*)",
   ],

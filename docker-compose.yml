@@ -92,7 +92,13 @@ services:
       - "${HTTP_PORT:-8080}:80"
       - "${HTTPS_PORT:-8443}:443"
     environment:
-      - SITE_ADDRESS=${SITE_ADDRESS:-}
+      # Resolve the default here, not in the Caddyfile: docker-compose always
+      # *defines* this var (just empty if unset on the host), and Caddy's
+      # {$VAR:default} placeholder only applies its default when the var is
+      # unset — not when it's defined-but-empty — so an empty SITE_ADDRESS
+      # would reach Caddy as a literal empty address and corrupt parsing of
+      # the whole site block.
+      - SITE_ADDRESS=${SITE_ADDRESS:-:80}
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
       - caddy_data:/data

@@ -10,7 +10,7 @@
 #     will automatically obtain and renew a Let's Encrypt certificate and
 #     serve HTTPS on 443, redirecting HTTP to HTTPS.
 
-{$SITE_ADDRESS::80} {
+{$SITE_ADDRESS} {
 	@stream path /stream/*
 	@ws path /ws/*
 
