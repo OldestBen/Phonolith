@@ -25,6 +25,7 @@ services:
       - POLYPHONY_BACKUP_DIR=/data/polyphony-backups
       - SLSKD_URL=http://slskd:5030
       - SLSKD_API_KEY=${SLSKD_API_KEY:-}
+      - INTERNAL_SERVICE_TOKEN=${INTERNAL_SERVICE_TOKEN:-}
     volumes:
       - polyphony_backups:/data/polyphony-backups
     depends_on:
@@ -45,6 +46,7 @@ services:
       - REDIS_URL=redis://redis:6379
       - LIBRARY_PATH=/music
       - ACOUSTID_API_KEY=${ACOUSTID_API_KEY:-}
+      - INTERNAL_SERVICE_TOKEN=${INTERNAL_SERVICE_TOKEN:-}
     volumes:
       - ${LIBRARY_PATH:-./music}:/music:ro
       # Soulcatcher downloads land here via the slskd service below. Mounted into

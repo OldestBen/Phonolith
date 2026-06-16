@@ -9,7 +9,7 @@ import uvicorn
 
 log = logging.getLogger("analyst")
 
-from scanner import scan_library, scan_source_config, get_file_record, FILE_DB
+from scanner import scan_library, scan_source_config, get_file_record, FILE_DB, APP_URL, INTERNAL_SERVICE_TOKEN
 from watcher import start_watcher, stop_watcher
 
 LIBRARY_PATH = os.environ.get("LIBRARY_PATH", "/music")
@@ -49,8 +49,33 @@ def make_progress_cb(source_name: str = ""):
     return cb
 
 
+_main_loop: asyncio.AbstractEventLoop | None = None
+
+# Background scan tasks are fire-and-forget from the caller's perspective
+# (the HTTP handler returns immediately), but asyncio silently drops any
+# exception raised in a task whose result/exception is never retrieved, and
+# can even garbage-collect a task early if nothing keeps a reference to it.
+# Keep a reference and log failures instead of losing them.
+_background_tasks: set[asyncio.Task] = set()
+
+
+def _track(coro) -> asyncio.Task:
+    task = asyncio.create_task(coro)
+    _background_tasks.add(task)
+
+    def _on_done(t: asyncio.Task) -> None:
+        _background_tasks.discard(t)
+        if not t.cancelled() and t.exception() is not None:
+            log.error("Background task failed", exc_info=t.exception())
+
+    task.add_done_callback(_on_done)
+    return task
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    global _main_loop
+    _main_loop = asyncio.get_running_loop()
     os.makedirs(WAVEFORM_PATH, exist_ok=True)
     if os.path.isdir(LIBRARY_PATH):
         start_watcher(LIBRARY_PATH, on_file_changed=schedule_scan)
@@ -60,7 +85,14 @@ async def lifespan(app: FastAPI):
 
 
 def schedule_scan():
-    asyncio.create_task(run_scan(LIBRARY_PATH, ""))
+    # Called from the watchdog observer's debounce Timer thread, not the
+    # asyncio event loop thread — asyncio.create_task() requires a running
+    # loop in the *current* thread and would silently fail here (the
+    # exception is swallowed by threading.Timer, only printed to stderr),
+    # so live filesystem changes would never actually trigger a rescan.
+    # run_coroutine_threadsafe schedules onto the loop from any thread.
+    if _main_loop is not None:
+        asyncio.run_coroutine_threadsafe(run_scan(LIBRARY_PATH, ""), _main_loop)
 
 
 async def run_scan(path: str, source_name: str):
@@ -97,7 +129,7 @@ class ScanRequest(BaseModel):
 
 @app.post("/scan")
 async def scan(req: ScanRequest):
-    asyncio.create_task(run_scan(req.path, ""))
+    _track(run_scan(req.path, ""))
     return {"message": "Scan started"}
 
 
@@ -189,7 +221,7 @@ class ScanSourceRequest(BaseModel):
 async def scan_source(req: ScanSourceRequest):
     if STATUS["scanning"]:
         return {"message": "Scan already in progress", "ok": False}
-    asyncio.create_task(_run_source_scan(req))
+    _track(_run_source_scan(req))
     return {"message": "Scan started", "ok": True}
 
 
@@ -260,12 +292,12 @@ async def deep_scan(req: DeepScanRequest):
     if req.source_type == "smb":
         if not req.config.get("host") or not req.config.get("share"):
             return {"ok": False, "error": "Missing SMB connection config"}
-        asyncio.create_task(_run_deep_scan_smb(req.path, req.config, req.source_id))
+        _track(_run_deep_scan_smb(req.path, req.config, req.source_id))
         return {"ok": True, "message": "Deep scan started"}
 
     if not os.path.isfile(req.path):
         return {"ok": False, "error": f"File not found: {req.path}"}
-    asyncio.create_task(_run_deep_scan(req.path))
+    _track(_run_deep_scan(req.path))
     return {"ok": True, "message": "Deep scan started"}
 
 
@@ -298,7 +330,7 @@ async def deep_scan_pending():
     """Deep-analyse all files that were fast-indexed (dr_score IS NULL)."""
     if STATUS["scanning"]:
         return {"ok": False, "message": "Scan already in progress"}
-    asyncio.create_task(_run_pending_deep_scans())
+    _track(_run_pending_deep_scans())
     return {"ok": True, "message": "Pending deep scan started"}
 
 
@@ -307,7 +339,10 @@ async def _run_pending_deep_scans():
     from scanner import index_file
     try:
         async with httpx.AsyncClient(timeout=10) as client:
-            r = await client.get(f"{APP_URL}/api/library/pending-analysis")
+            r = await client.get(
+                f"{APP_URL}/api/library/pending-analysis",
+                headers={"X-Internal-Token": INTERNAL_SERVICE_TOKEN},
+            )
             if not r.is_success:
                 return
             files = r.json()

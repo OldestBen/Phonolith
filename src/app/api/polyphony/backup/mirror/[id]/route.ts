@@ -46,7 +46,10 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     child.on('exit', code => resolve(code ?? 0))
   })
   if (exitCode !== 0) {
-    return NextResponse.json({ error: `pg_dump failed: ${stderr.trim()}` }, { status: 500 })
+    // pg_dump's stderr can include the DSN (with credentials) it was
+    // invoked with — log it server-side only, never echo it to the client.
+    console.error('pg_dump failed:', stderr.trim())
+    return NextResponse.json({ error: 'Backup failed.' }, { status: 500 })
   }
 
   if (!res.ok) {

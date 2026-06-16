@@ -1,13 +1,17 @@
 export const dynamic = 'force-dynamic'
 
-import { NextResponse } from 'next/server'
+import { NextRequest, NextResponse } from 'next/server'
+import { getUserFromSessionCookie, SESSION_COOKIE_NAME } from '@/lib/auth'
 import { sql } from '@/lib/db'
 
 // Returns all library files for songs on this album — for version comparison
 export async function GET(
-  _req: Request,
+  req: NextRequest,
   { params }: { params: { albumId: string } }
 ) {
+  const user = await getUserFromSessionCookie(req.cookies.get(SESSION_COOKIE_NAME)?.value)
+  if (!user) return NextResponse.json({ error: 'Not authenticated.' }, { status: 401 })
+
   const albumId = parseInt(params.albumId)
   if (isNaN(albumId)) return NextResponse.json({ error: 'Invalid album ID' }, { status: 400 })
 

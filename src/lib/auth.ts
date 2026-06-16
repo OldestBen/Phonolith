@@ -163,3 +163,28 @@ export async function hasAnyUsers(): Promise<boolean> {
 }
 
 export const SESSION_COOKIE_NAME = SESSION_COOKIE;
+
+// ---------------------------------------------------------------------
+// Internal service-to-service auth (analyst sidecar -> app ingest route)
+// ---------------------------------------------------------------------
+
+/**
+ * Token shared between the Next.js app and the analyst sidecar to
+ * authenticate internal calls (e.g. POST /api/library/ingest) that have
+ * no browser session to check. Read from INTERNAL_SERVICE_TOKEN if set;
+ * otherwise falls back to a fixed dev value, mirroring getSigningKey()'s
+ * fallback so a zero-config `docker compose up` still works, with a clear
+ * name making it obvious this isn't secure for an internet-exposed deploy.
+ */
+function getInternalServiceToken(): string {
+  return process.env.INTERNAL_SERVICE_TOKEN || "phonolith-dev-internal-token-not-for-production";
+}
+
+/** Timing-safe check of an `X-Internal-Token` header against the expected value. */
+export function verifyInternalServiceToken(headerValue: string | null): boolean {
+  if (!headerValue) return false;
+  const expected = Buffer.from(getInternalServiceToken());
+  const actual = Buffer.from(headerValue);
+  if (actual.length !== expected.length) return false;
+  return crypto.timingSafeEqual(actual, expected);
+}

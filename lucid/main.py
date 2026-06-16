@@ -157,7 +157,10 @@ async def play(req: PlayRequest) -> dict[str, Any]:
         raise HTTPException(status_code=422, detail="path is required")
 
     if req.endpoint_name:
-        player.stop()
+        # player.stop() can block on Thread.join(timeout=5) — run off the
+        # event loop so a slow-to-stop playback thread can't freeze the
+        # websocket pubsub forwarding and health checks for up to 5s.
+        await asyncio.to_thread(player.stop)
         try:
             await flux_mgr.stream_to(req.endpoint_name, req.path)
         except ValueError as exc:
@@ -177,7 +180,7 @@ async def play(req: PlayRequest) -> dict[str, Any]:
         idx = queue_mgr.tracks.index(req.path)
         queue_mgr.position = idx
 
-    player.play(req.path, alsa_device=device)
+    await asyncio.to_thread(player.play, req.path, alsa_device=device)
     return {"status": "playing", "path": req.path, "device": device}
 
 
@@ -195,7 +198,7 @@ def resume() -> dict[str, str]:
 
 @app.post("/stop")
 async def stop() -> dict[str, str]:
-    player.stop()
+    await asyncio.to_thread(player.stop)
     await flux_mgr.stop_streaming()
     return {"status": "stopped"}
 

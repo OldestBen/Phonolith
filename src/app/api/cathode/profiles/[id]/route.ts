@@ -2,11 +2,15 @@ export const dynamic = 'force-dynamic'
 
 import { NextRequest, NextResponse } from 'next/server'
 import { sql } from '@/lib/db'
+import { getUserFromSessionCookie, SESSION_COOKIE_NAME } from '@/lib/auth'
 
 type Params = { params: Promise<{ id: string }> }
 
 // GET /api/cathode/profiles/[id]  → single profile + total_hours
-export async function GET(_req: NextRequest, { params }: Params) {
+export async function GET(req: NextRequest, { params }: Params) {
+  const user = await getUserFromSessionCookie(req.cookies.get(SESSION_COOKIE_NAME)?.value)
+  if (!user) return NextResponse.json({ error: 'Not authenticated.' }, { status: 401 })
+
   const { id } = await params
   const profileId = parseInt(id)
   if (isNaN(profileId)) {
@@ -26,6 +30,9 @@ export async function GET(_req: NextRequest, { params }: Params) {
 
 // PUT /api/cathode/profiles/[id]  → update fields (name, description, components, lucid_device)
 export async function PUT(req: NextRequest, { params }: Params) {
+  const user = await getUserFromSessionCookie(req.cookies.get(SESSION_COOKIE_NAME)?.value)
+  if (!user) return NextResponse.json({ error: 'Not authenticated.' }, { status: 401 })
+
   const { id } = await params
   const profileId = parseInt(id)
   if (isNaN(profileId)) {
@@ -57,7 +64,10 @@ export async function PUT(req: NextRequest, { params }: Params) {
 }
 
 // DELETE /api/cathode/profiles/[id]  → delete profile
-export async function DELETE(_req: NextRequest, { params }: Params) {
+export async function DELETE(req: NextRequest, { params }: Params) {
+  const user = await getUserFromSessionCookie(req.cookies.get(SESSION_COOKIE_NAME)?.value)
+  if (!user) return NextResponse.json({ error: 'Not authenticated.' }, { status: 401 })
+
   const { id } = await params
   const profileId = parseInt(id)
   if (isNaN(profileId)) {

@@ -3,6 +3,7 @@ export const dynamic = 'force-dynamic'
 import { NextRequest, NextResponse } from 'next/server'
 import { sql } from '@/lib/db'
 import { getSetting } from '@/lib/settings'
+import { getUserFromSessionCookie, SESSION_COOKIE_NAME } from '@/lib/auth'
 
 const EDITABLE_FIELDS = ['title', 'artist', 'album', 'year', 'track_number', 'disc_number', 'engineer'] as const
 type EditableField = typeof EDITABLE_FIELDS[number]
@@ -13,6 +14,9 @@ type EditableField = typeof EDITABLE_FIELDS[number]
 // if id3_writeback_enabled is on and the file is local — best-effort rewrites
 // the embedded tags on disk via the analyst sidecar.
 export async function PATCH(req: NextRequest, { params }: { params: { hash: string } }) {
+  const user = await getUserFromSessionCookie(req.cookies.get(SESSION_COOKIE_NAME)?.value)
+  if (!user) return NextResponse.json({ error: 'Not authenticated.' }, { status: 401 })
+
   const body = await req.json() as Record<string, unknown>
 
   const overrides: Record<string, string | number | null> = {}

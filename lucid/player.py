@@ -207,7 +207,8 @@ class Player:
 
     def pause(self) -> None:
         """Pause playback. Safe to call when already paused or stopped."""
-        if self._thread and self._thread.is_alive():
+        thread = self._thread
+        if thread and thread.is_alive():
             self._pause_event.set()
             self._sp.update(status="paused")
             self._sp.publish(self._redis)
@@ -215,7 +216,8 @@ class Player:
 
     def resume(self) -> None:
         """Resume paused playback. Safe to call when already playing."""
-        if self._thread and self._thread.is_alive():
+        thread = self._thread
+        if thread and thread.is_alive():
             self._pause_event.clear()
             self._sp.update(status="playing")
             self._sp.publish(self._redis)
@@ -225,8 +227,14 @@ class Player:
         """Stop playback and release the ALSA PCM handle."""
         self._stop_event.set()
         self._pause_event.clear()
-        if self._thread and self._thread.is_alive():
-            self._thread.join(timeout=5)
+        # Capture the thread reference once: self._thread can be reassigned
+        # concurrently by a gapless track transition (_handle_track_end runs
+        # on the playback thread itself), so re-reading self._thread between
+        # the is_alive() check and join() could end up joining the wrong
+        # (newly-started) thread instead of the one we just checked.
+        thread = self._thread
+        if thread and thread.is_alive():
+            thread.join(timeout=5)
         self._stop_event.clear()
         self._close_pcm()
         self._sp.update(status="stopped", position_ms=0)
@@ -253,8 +261,9 @@ class Player:
         log.info("Seeking to %d ms (frame %d) in %s", ms, target_frame, current)
 
         self._stop_event.set()
-        if self._thread and self._thread.is_alive():
-            self._thread.join(timeout=5)
+        thread = self._thread
+        if thread and thread.is_alive():
+            thread.join(timeout=5)
         self._stop_event.clear()
         self._close_pcm()
 
@@ -403,8 +412,13 @@ class Player:
             frames = info.frames
             duration_ms = int((frames / sample_rate) * 1000) if frames else 0
             bit_depth = self._bit_depth_from_subtype(info.subtype)
-        except Exception:
-            # soundfile cannot read this format — use sensible defaults
+        except Exception as exc:
+            # soundfile cannot read this format — use sensible defaults. If
+            # ffmpeg also can't decode the file, _playback_loop_ffmpeg's read()
+            # will return no bytes immediately and silently advance to the
+            # next queued track, so log loudly here — this is the only place
+            # that failure would otherwise leave a trace.
+            log.warning("soundfile could not probe %s (%s) — using default format assumptions", file_path, exc)
             sample_rate = 44100
             channels = 2
             duration_ms = 0

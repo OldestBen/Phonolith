@@ -14,6 +14,8 @@ except (AttributeError, PermissionError):
     pass
 
 APP_URL = os.environ.get("APP_URL", "http://app:3000")
+# Must match the fallback in src/lib/auth.ts's getInternalServiceToken().
+INTERNAL_SERVICE_TOKEN = os.environ.get("INTERNAL_SERVICE_TOKEN") or "phonolith-dev-internal-token-not-for-production"
 
 AUDIO_EXTENSIONS = {'.flac', '.mp3', '.aac', '.m4a', '.ogg', '.wav', '.aiff', '.wv', '.ape', '.opus'}
 
@@ -382,7 +384,12 @@ def _render_cover_art(path_or_fileobj, file_hash: str, waveform_path: str) -> st
 
 def _post_to_app(data: dict) -> None:
     try:
-        httpx.post(f"{APP_URL}/api/library/ingest", json=data, timeout=10)
+        httpx.post(
+            f"{APP_URL}/api/library/ingest",
+            json=data,
+            headers={"X-Internal-Token": INTERNAL_SERVICE_TOKEN},
+            timeout=10,
+        )
     except Exception:
         pass
 

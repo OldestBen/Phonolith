@@ -86,6 +86,11 @@ class FluxManager:
         self._lock = threading.Lock()
         self._stream_task: asyncio.Task[None] | None = None
         self._active_endpoint: str | None = None
+        # Guards stream_to/stop_streaming against concurrent /play requests
+        # racing each other: without it, two overlapping calls can both pass
+        # the "stop the previous stream" check before either has set
+        # _stream_task, leaving the first stream orphaned and uncancellable.
+        self._stream_lock = asyncio.Lock()
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -148,10 +153,10 @@ class FluxManager:
         if entry is None:
             raise ValueError(f"Unknown AirPlay endpoint: {endpoint_name!r}")
 
-        await self.stop_streaming()
-
-        self._active_endpoint = endpoint_name
-        self._stream_task = asyncio.create_task(self._do_stream(entry["host"], file_path, endpoint_name))
+        async with self._stream_lock:
+            await self._stop_streaming_locked()
+            self._active_endpoint = endpoint_name
+            self._stream_task = asyncio.create_task(self._do_stream(entry["host"], file_path, endpoint_name))
 
     async def _do_stream(self, host: str, file_path: str, endpoint_name: str) -> None:
         loop = asyncio.get_running_loop()
@@ -178,6 +183,11 @@ class FluxManager:
 
     async def stop_streaming(self) -> None:
         """Cancel any in-flight AirPlay stream."""
+        async with self._stream_lock:
+            await self._stop_streaming_locked()
+
+    async def _stop_streaming_locked(self) -> None:
+        """``stop_streaming`` body, assuming ``self._stream_lock`` is already held."""
         if self._stream_task is not None and not self._stream_task.done():
             self._stream_task.cancel()
             try:

@@ -3,6 +3,7 @@ export const dynamic = 'force-dynamic'
 import { NextRequest, NextResponse } from 'next/server'
 import { sql } from '@/lib/db'
 import { redis } from '@/lib/redis'
+import { verifyInternalServiceToken } from '@/lib/auth'
 
 type IngestPayload = {
   blake3_hash: string
@@ -34,8 +35,16 @@ type IngestPayload = {
   mtime?: number
 }
 
-// Internal route called by the analyst sidecar
+// Internal route called by the analyst sidecar — never exposed to browsers,
+// so it's gated by a shared service token (X-Internal-Token) instead of a
+// session cookie. Without this check, anyone who could reach this port
+// (e.g. if it were ever exposed past the Docker-internal network) could
+// inject arbitrary library/metadata rows.
 export async function POST(req: NextRequest) {
+  if (!verifyInternalServiceToken(req.headers.get('x-internal-token'))) {
+    return NextResponse.json({ error: 'Not authenticated.' }, { status: 401 })
+  }
+
   const data = await req.json() as IngestPayload
 
   if (!data.blake3_hash) {

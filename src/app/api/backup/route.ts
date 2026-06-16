@@ -1,15 +1,19 @@
 export const dynamic = 'force-dynamic'
 
-import { NextResponse } from 'next/server'
+import { NextRequest, NextResponse } from 'next/server'
 import { spawn } from 'child_process'
 import { Transform } from 'stream'
 import { S3Client } from '@aws-sdk/client-s3'
 import { Upload } from '@aws-sdk/lib-storage'
 import { getSetting, setSetting } from '@/lib/settings'
+import { getUserFromSessionCookie, SESSION_COOKIE_NAME } from '@/lib/auth'
 
 const LAST_BACKUP_KEY = 'aegis_last_backup'
 
-export async function GET() {
+export async function GET(req: NextRequest) {
+  const user = await getUserFromSessionCookie(req.cookies.get(SESSION_COOKIE_NAME)?.value)
+  if (!user) return NextResponse.json({ error: 'Not authenticated.' }, { status: 401 })
+
   const configured = !!(process.env.S3_BUCKET && process.env.AWS_ACCESS_KEY_ID)
 
   let lastBackup = null
@@ -28,7 +32,10 @@ export async function GET() {
   })
 }
 
-export async function POST() {
+export async function POST(req: NextRequest) {
+  const user = await getUserFromSessionCookie(req.cookies.get(SESSION_COOKIE_NAME)?.value)
+  if (!user) return NextResponse.json({ error: 'Not authenticated.' }, { status: 401 })
+
   const bucket = process.env.S3_BUCKET
   const region = process.env.S3_REGION
   const accessKeyId = process.env.AWS_ACCESS_KEY_ID
@@ -89,7 +96,9 @@ export async function POST() {
 
     return NextResponse.json({ ok: true, timestamp, s3_key: s3Key, size_bytes: bytesWritten })
   } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err)
-    return NextResponse.json({ error: msg }, { status: 500 })
+    // pg_dump's stderr can include the DSN (with credentials) it was
+    // invoked with — log it server-side only, never echo it to the client.
+    console.error('Backup failed:', err)
+    return NextResponse.json({ error: 'Backup failed.' }, { status: 500 })
   }
 }

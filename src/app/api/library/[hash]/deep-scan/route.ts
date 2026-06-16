@@ -1,12 +1,16 @@
 export const dynamic = 'force-dynamic'
 
-import { NextResponse } from 'next/server'
+import { NextRequest, NextResponse } from 'next/server'
 import { sql } from '@/lib/db'
+import { getUserFromSessionCookie, SESSION_COOKIE_NAME } from '@/lib/auth'
 
 export async function POST(
-  _req: Request,
+  req: NextRequest,
   { params }: { params: { hash: string } }
 ) {
+  const user = await getUserFromSessionCookie(req.cookies.get(SESSION_COOKIE_NAME)?.value)
+  if (!user) return NextResponse.json({ error: 'Not authenticated.' }, { status: 401 })
+
   const { hash } = params
   const rows = await sql`
     SELECT lf.file_path, lf.source_id, s.type AS source_type, s.config AS source_config

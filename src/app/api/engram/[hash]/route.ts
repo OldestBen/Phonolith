@@ -1,14 +1,18 @@
 export const dynamic = 'force-dynamic'
 
 import { sql } from '@/lib/db'
-import { NextResponse } from 'next/server'
+import { NextRequest, NextResponse } from 'next/server'
+import { getUserFromSessionCookie, SESSION_COOKIE_NAME } from '@/lib/auth'
 
 // GET /api/engram/[hash]
 // Returns: { versions: MetadataVersion[] }
 export async function GET(
-  _req: Request,
+  req: NextRequest,
   { params }: { params: Promise<{ hash: string }> }
 ) {
+  const user = await getUserFromSessionCookie(req.cookies.get(SESSION_COOKIE_NAME)?.value)
+  if (!user) return NextResponse.json({ error: 'Not authenticated.' }, { status: 401 })
+
   const { hash } = await params
   const rows = await sql<{
     id: number

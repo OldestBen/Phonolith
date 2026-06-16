@@ -1,11 +1,15 @@
 export const dynamic = 'force-dynamic'
 
 import { NextRequest, NextResponse } from 'next/server'
+import { getUserFromSessionCookie, SESSION_COOKIE_NAME } from '@/lib/auth'
 import { searchArtists } from '@/lib/genius'
 import { sql } from '@/lib/db'
 import { rget, rset } from '@/lib/redis'
 
 export async function GET(req: NextRequest) {
+  const user = await getUserFromSessionCookie(req.cookies.get(SESSION_COOKIE_NAME)?.value)
+  if (!user) return NextResponse.json({ error: 'Not authenticated.' }, { status: 401 })
+
   const q = req.nextUrl.searchParams.get('q')
   if (!q?.trim()) {
     return NextResponse.json({ error: 'Missing query' }, { status: 400 })

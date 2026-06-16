@@ -5,6 +5,7 @@ RUN apt-get update && apt-get install -y \
     alsa-utils \
     libasound2-dev \
     gcc \
+    g++ \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app

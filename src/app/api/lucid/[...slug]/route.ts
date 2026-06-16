@@ -1,6 +1,7 @@
 export const dynamic = 'force-dynamic'
 
 import { NextRequest, NextResponse } from 'next/server'
+import { getUserFromSessionCookie, SESSION_COOKIE_NAME } from '@/lib/auth'
 
 const LUCID_URL = process.env.LUCID_URL || 'http://lucid:8001'
 
@@ -25,10 +26,16 @@ async function proxy(req: NextRequest, slug: string[]) {
   }
 }
 
-export function GET(req: NextRequest, { params }: { params: { slug: string[] } }) {
+export async function GET(req: NextRequest, { params }: { params: { slug: string[] } }) {
+  const user = await getUserFromSessionCookie(req.cookies.get(SESSION_COOKIE_NAME)?.value)
+  if (!user) return NextResponse.json({ error: 'Not authenticated.' }, { status: 401 })
+
   return proxy(req, params.slug)
 }
 
-export function POST(req: NextRequest, { params }: { params: { slug: string[] } }) {
+export async function POST(req: NextRequest, { params }: { params: { slug: string[] } }) {
+  const user = await getUserFromSessionCookie(req.cookies.get(SESSION_COOKIE_NAME)?.value)
+  if (!user) return NextResponse.json({ error: 'Not authenticated.' }, { status: 401 })
+
   return proxy(req, params.slug)
 }

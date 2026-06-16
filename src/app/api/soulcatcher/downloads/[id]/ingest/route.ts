@@ -1,5 +1,6 @@
 export const dynamic = 'force-dynamic'
 
+import path from 'path'
 import { NextRequest, NextResponse } from 'next/server'
 import { getUserFromSessionCookie, SESSION_COOKIE_NAME } from '@/lib/auth'
 import { sql } from '@/lib/db'
@@ -38,9 +39,14 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
     return NextResponse.json({ error: 'Analyst sidecar unavailable.' }, { status: 502 })
   }
 
+  // download.filename comes from the remote Soulseek peer's file listing and
+  // is untrusted — path.basename() strips both '/' and '\' separators so a
+  // crafted "../../etc/passwd"-style name can't make local_path point
+  // outside SOULCATCHER_LIBRARY_SUBPATH.
+  const safeName = path.basename(download.filename.replace(/\\/g, '/'))
   await sql`
     UPDATE soulcatcher_downloads
-    SET local_path = ${SOULCATCHER_LIBRARY_SUBPATH + '/' + download.filename.split('/').pop()}
+    SET local_path = ${SOULCATCHER_LIBRARY_SUBPATH + '/' + safeName}
     WHERE id = ${id}
   `
 

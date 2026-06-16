@@ -1,9 +1,13 @@
 export const dynamic = 'force-dynamic'
 
 import { NextRequest, NextResponse } from 'next/server'
+import { getUserFromSessionCookie, SESSION_COOKIE_NAME } from '@/lib/auth'
 import { sql } from '@/lib/db'
 
-export async function DELETE(_req: NextRequest, { params }: { params: { id: string; tagId: string } }) {
+export async function DELETE(req: NextRequest, { params }: { params: { id: string; tagId: string } }) {
+  const user = await getUserFromSessionCookie(req.cookies.get(SESSION_COOKIE_NAME)?.value)
+  if (!user) return NextResponse.json({ error: 'Not authenticated.' }, { status: 401 })
+
   const songGeniusId = parseInt(params.id)
   const tagId = parseInt(params.tagId)
   if (isNaN(songGeniusId) || isNaN(tagId)) {

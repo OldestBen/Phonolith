@@ -1,9 +1,13 @@
 export const dynamic = 'force-dynamic'
 
-import { NextResponse } from 'next/server'
+import { NextRequest, NextResponse } from 'next/server'
 import { getSetting } from '@/lib/settings'
+import { getUserFromSessionCookie, SESSION_COOKIE_NAME } from '@/lib/auth'
 
-export async function GET() {
+export async function GET(req: NextRequest) {
+  const user = await getUserFromSessionCookie(req.cookies.get(SESSION_COOKIE_NAME)?.value)
+  if (!user) return NextResponse.json({ error: 'Not authenticated.' }, { status: 401 })
+
   const token = await getSetting('GENIUS_ACCESS_TOKEN')
   if (!token) {
     return NextResponse.json({ ok: false, error: 'GENIUS_ACCESS_TOKEN is not set in environment or database' })

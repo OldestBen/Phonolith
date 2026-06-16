@@ -2,6 +2,7 @@ export const dynamic = 'force-dynamic'
 
 import { sql } from '@/lib/db'
 import { NextRequest, NextResponse } from 'next/server'
+import { getUserFromSessionCookie, SESSION_COOKIE_NAME } from '@/lib/auth'
 
 const RESTORABLE_FIELDS = [
   'format',
@@ -23,6 +24,9 @@ export async function POST(
   req: NextRequest,
   { params }: { params: Promise<{ hash: string }> }
 ) {
+  const user = await getUserFromSessionCookie(req.cookies.get(SESSION_COOKIE_NAME)?.value)
+  if (!user) return NextResponse.json({ error: 'Not authenticated.' }, { status: 401 })
+
   const { hash } = await params
   const body = await req.json() as { version_id: number; fields?: string[] }
   const { version_id, fields } = body

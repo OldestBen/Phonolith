@@ -2,9 +2,13 @@ export const dynamic = 'force-dynamic'
 
 import { NextRequest, NextResponse } from 'next/server'
 import { sql } from '@/lib/db'
+import { getUserFromSessionCookie, SESSION_COOKIE_NAME } from '@/lib/auth'
 
 // GET /api/cathode/profiles  → list all profiles ordered by name
-export async function GET() {
+export async function GET(req: NextRequest) {
+  const user = await getUserFromSessionCookie(req.cookies.get(SESSION_COOKIE_NAME)?.value)
+  if (!user) return NextResponse.json({ error: 'Not authenticated.' }, { status: 401 })
+
   const rows = await sql`
     SELECT id, name, description, device_type, components, total_hours, lucid_device, created_at
     FROM hardware_profiles
@@ -16,6 +20,9 @@ export async function GET() {
 // POST /api/cathode/profiles  → create new profile
 // body: { name, description?, device_type?, components?: [{role, model}], lucid_device? }
 export async function POST(req: NextRequest) {
+  const user = await getUserFromSessionCookie(req.cookies.get(SESSION_COOKIE_NAME)?.value)
+  if (!user) return NextResponse.json({ error: 'Not authenticated.' }, { status: 401 })
+
   const body = await req.json() as {
     name: string
     description?: string

@@ -3,8 +3,12 @@ export const dynamic = 'force-dynamic'
 import { NextRequest, NextResponse } from 'next/server'
 import { sql } from '@/lib/db'
 import { encryptConfig, resolveConfig } from '@/lib/crypto'
+import { getUserFromSessionCookie, SESSION_COOKIE_NAME } from '@/lib/auth'
 
-export async function GET() {
+export async function GET(req: NextRequest) {
+  const user = await getUserFromSessionCookie(req.cookies.get(SESSION_COOKIE_NAME)?.value)
+  if (!user) return NextResponse.json({ error: 'Not authenticated.' }, { status: 401 })
+
   const sources = await sql`SELECT * FROM library_sources ORDER BY created_at`
   // Decrypt config before returning — strip sensitive credential fields
   const safe = sources.map((s: Record<string, unknown>) => ({
@@ -22,6 +26,9 @@ function sanitiseConfig(cfg: Record<string, unknown>): Record<string, unknown> {
 }
 
 export async function POST(req: NextRequest) {
+  const user = await getUserFromSessionCookie(req.cookies.get(SESSION_COOKIE_NAME)?.value)
+  if (!user) return NextResponse.json({ error: 'Not authenticated.' }, { status: 401 })
+
   const body = await req.json() as {
     name: string
     type: 'local' | 'smb' | 'nfs' | 'iscsi'

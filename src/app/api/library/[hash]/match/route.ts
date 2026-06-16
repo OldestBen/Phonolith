@@ -4,8 +4,12 @@ import { NextRequest, NextResponse } from 'next/server'
 import { sql } from '@/lib/db'
 import { getFile, getFingerprint } from '@/lib/analyst'
 import axios from 'axios'
+import { getUserFromSessionCookie, SESSION_COOKIE_NAME } from '@/lib/auth'
 
-export async function POST(_req: NextRequest, { params }: { params: { hash: string } }) {
+export async function POST(req: NextRequest, { params }: { params: { hash: string } }) {
+  const user = await getUserFromSessionCookie(req.cookies.get(SESSION_COOKIE_NAME)?.value)
+  if (!user) return NextResponse.json({ error: 'Not authenticated.' }, { status: 401 })
+
   const fileRows = await sql`
     SELECT id, file_path, fingerprint FROM library_files WHERE blake3_hash = ${params.hash}
   `
