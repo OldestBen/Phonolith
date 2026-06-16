@@ -923,6 +923,14 @@ export default function SettingsPage() {
           for sharing with others without exposing your home IP. Create a tunnel and
           copy its token from the Cloudflare Zero Trust dashboard (Networks → Tunnels).
         </p>
+        <p className="text-amber-500/90 text-xs mb-1.5 max-w-md">
+          ⚠ Cloudflare&apos;s free/Pro tiers are meant for web traffic, not sustained
+          high-bitrate audio streaming — routing lossless playback through an Argo
+          tunnel for hours at a time risks tripping their ToS and getting the tunnel
+          throttled or the domain flagged. Prefer Tailscale above for day-to-day
+          listening; reach for Cloudflare Tunnel for occasional sharing, not as your
+          primary streaming path.
+        </p>
         <ApiKeyField label="Cloudflare Tunnel Token" settingKey="CLOUDFLARE_TUNNEL_TOKEN" />
       </Section>
 

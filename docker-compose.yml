@@ -146,6 +146,15 @@ services:
       - SLSKD_SLSK_PASSWORD=${SOULSEEK_PASSWORD:-}
       - SLSKD_HTTP_PORT=5030
       - SLSKD_API_KEY=${SLSKD_API_KEY:-}
+      # In-progress transfers are written here, under the /app config volume —
+      # a different volume than soulcatcher_downloads below, so the analyst's
+      # watcher (which only sees soulcatcher_downloads) can never observe a
+      # partially-written file. slskd renames into SLSKD_DOWNLOADS_DIR only
+      # once a transfer completes. Set explicitly rather than relying on
+      # slskd's default (APP_DIR/incomplete) so this guarantee survives a
+      # slskd version bump changing that default.
+      - SLSKD_INCOMPLETE_DIR=/app/incomplete
+      - SLSKD_DOWNLOADS_DIR=/downloads
     volumes:
       - slskd_config:/app
       - soulcatcher_downloads:/downloads
