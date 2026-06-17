@@ -663,18 +663,17 @@ function PolyphonySection() {
   const [mirroring, setMirroring] = useState<string | null>(null)
 
   const loadPeers = useCallback(() => {
-    fetch('/api/polyphony/peers').then(r => r.json()).then(d => setPeers(d.peers ?? [])).catch(() => {})
+    fetch('/api/polyphony/peers').then(r => r.ok ? r.json() : null).then(d => { if (d) setPeers(d.peers ?? []) }).catch(() => {})
   }, [])
 
   const loadDiscovery = useCallback(() => {
-    fetch('/api/polyphony/discovery').then(r => r.json()).then(d => {
-      setDiscoveryEnabled(!!d.enabled)
-      setDiscovered(d.discovered ?? [])
+    fetch('/api/polyphony/discovery').then(r => r.ok ? r.json() : null).then(d => {
+      if (d) { setDiscoveryEnabled(!!d.enabled); setDiscovered(d.discovered ?? []) }
     }).catch(() => {})
   }, [])
 
   useEffect(() => {
-    fetch('/api/polyphony/identity').then(r => r.json()).then(d => setIdentity({ peerId: d.peerId, name: d.name })).catch(() => {})
+    fetch('/api/polyphony/identity').then(r => r.ok ? r.json() : null).then(d => { if (d?.peerId) setIdentity({ peerId: d.peerId, name: d.name }) }).catch(() => {})
     loadPeers()
     loadDiscovery()
   }, [loadPeers, loadDiscovery])
