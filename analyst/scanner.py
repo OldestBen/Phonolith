@@ -261,12 +261,20 @@ def _detect_bit_depth(path: str) -> int | None:
     return None
 
 
-def _compute_dr(path: str) -> float | None:
+def _load_audio(path: str, duration: float = 120.0):
+    """Decode audio once; result shared by DR, upscale detection, and waveform rendering."""
+    try:
+        import librosa
+        y, sr = librosa.load(path, sr=None, mono=True, duration=duration)
+        return y, int(sr)
+    except Exception:
+        return None, None
+
+
+def _compute_dr(y, sr) -> float | None:
     try:
         import numpy as np
-        import librosa
-        y, _ = librosa.load(path, sr=None, mono=True, duration=60)
-        if len(y) == 0:
+        if y is None or len(y) == 0:
             return None
         rms = float(np.sqrt(np.mean(y ** 2)))
         peak = float(np.max(np.abs(y)))
@@ -277,12 +285,10 @@ def _compute_dr(path: str) -> float | None:
         return None
 
 
-def _detect_upscale(path: str) -> bool | None:
+def _detect_upscale(y, sr) -> bool | None:
     try:
         import numpy as np
-        import librosa
-        y, sr = librosa.load(path, sr=None, mono=True, duration=30)
-        if len(y) == 0:
+        if y is None or sr is None or len(y) == 0:
             return None
         fft = np.abs(np.fft.rfft(y))
         freqs = np.fft.rfftfreq(len(y), 1 / sr)
@@ -296,16 +302,16 @@ def _detect_upscale(path: str) -> bool | None:
         return None
 
 
-def _render_waveform(path: str, file_hash: str, waveform_path: str) -> str | None:
+def _render_waveform(y, file_hash: str, waveform_path: str) -> str | None:
     output = os.path.join(waveform_path, file_hash[0:2], file_hash[2:4], f"{file_hash}.png")
     os.makedirs(os.path.dirname(output), exist_ok=True)
     if os.path.exists(output):
         return output
     try:
         import numpy as np
-        import librosa
         from PIL import Image, ImageDraw
-        y, _ = librosa.load(path, sr=None, mono=True, duration=120)
+        if y is None or len(y) == 0:
+            return None
         W, H = 1200, 200
         img = Image.new("RGB", (W, H), "#08080a")
         draw = ImageDraw.Draw(img)
@@ -394,6 +400,26 @@ def _post_to_app(data: dict) -> None:
         pass
 
 
+def _fetch_known_identities() -> frozenset:
+    """Fetch (inode, mtime, file_size) for all fully-indexed local files in one bulk call."""
+    try:
+        r = httpx.get(
+            f"{APP_URL}/api/library/known-files",
+            headers={"X-Internal-Token": INTERNAL_SERVICE_TOKEN},
+            timeout=30,
+        )
+        if r.status_code == 200:
+            files = r.json()
+            return frozenset(
+                (int(f["inode"]), int(f["mtime"]), int(f["file_size"]))
+                for f in files
+                if f.get("inode") and f.get("mtime") and f.get("file_size")
+            )
+    except Exception:
+        pass
+    return frozenset()
+
+
 def ensure_root_marker(source_root: str, marker_uuid: str) -> bool:
     """Write .phonolith_id to source root if not present. Returns True if writable."""
     marker_path = os.path.join(source_root, ".phonolith_id")
@@ -443,9 +469,15 @@ def index_file(
         tags = _read_tags(path)
         fmt = Path(display_path or path).suffix.lower().lstrip(".")
         bit_depth = _detect_bit_depth(path)
-        dr = _compute_dr(path)
-        spectral_ok = _detect_upscale(path)
-        waveform = _render_waveform(path, h, waveform_path)
+
+        # Load audio once — shared by DR, upscale detection, and waveform rendering.
+        y, sr = _load_audio(path)
+        dr = _compute_dr(y, sr)
+        spectral_ok = _detect_upscale(y, sr)
+        waveform = _render_waveform(y, h, waveform_path)
+        # Release the decoded audio array before the remaining I/O steps.
+        del y
+
         cover_art = _render_cover_art(path, h, waveform_path)
         try:
             import acoustid
@@ -613,16 +645,39 @@ def scan_library(
     if progress_cb:
         progress_cb(len(all_files), 0, None, None)
 
+    # Fetch already-indexed identities once so we can skip unchanged files.
+    known = _fetch_known_identities()
+
     indexed = 0
-    for i, path in enumerate(all_files):
-        error = None
+    done_count = 0
+    lock = threading.Lock()
+
+    def process_one(path: str) -> tuple[bool, str, str | None]:
+        # Fast-path: if inode/mtime/size match a known fully-indexed record, skip.
         try:
-            if index_file(path, waveform_path, source_id=source_id, source_root=source_root):
-                indexed += 1
+            st = os.stat(path)
+            if (st.st_ino, int(st.st_mtime), st.st_size) in known:
+                return True, path, None
+        except OSError:
+            pass
+        try:
+            result = index_file(path, waveform_path, source_id=source_id, source_root=source_root)
+            return (result is not None, path, None)
         except Exception as e:
-            error = str(e)
-        if progress_cb:
-            progress_cb(len(all_files), i + 1, path, error)
+            return False, path, str(e)
+
+    workers = min(4, os.cpu_count() or 1)
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        futures = {pool.submit(process_one, p): p for p in all_files}
+        for fut in as_completed(futures):
+            ok, path, error = fut.result()
+            with lock:
+                done_count += 1
+                if ok:
+                    indexed += 1
+                local_done = done_count
+            if progress_cb:
+                progress_cb(len(all_files), local_done, path, error)
 
     return indexed
 
@@ -638,7 +693,7 @@ def deep_scan_smb(
     """
     Full deep-scan for an SMB-sourced file: downloads the *entire* file to a
     local temp file via smbclient (full waveform rendering needs the complete
-    decoded stream, unlike the 512 KB header used by `_smb_fast_index`), then
+    decoded audio stream, unlike the 512 KB header used by `_smb_fast_index`), then
     runs the same full analysis pipeline (`index_file`) used for local sources.
     The temp file is always removed afterward, even on failure.
     """
