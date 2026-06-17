@@ -1,10 +1,11 @@
 'use client'
 
-import { Fragment, useState, useEffect, Suspense } from 'react'
+import { Fragment, useState, useEffect, useRef, Suspense } from 'react'
 import Link from 'next/link'
 import { useRouter, useSearchParams } from 'next/navigation'
 import type { LibraryFile, AlbumSummary } from '@/lib/types'
 import AlbumTile from '@/components/AlbumTile'
+import { useBrowserPlayer } from '@/contexts/BrowserPlayerContext'
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 function basename(filePath: string): string {
@@ -47,11 +48,26 @@ function groupByDisc(files: LibraryFile[]): DiscGroup[] {
 }
 
 function FileRow({ file, onOpen }: { file: LibraryFile; onOpen: () => void }) {
+  const player = useBrowserPlayer()
+  const isPlaying = player.currentHash === file.blake3_hash && player.isPlaying
+
   return (
     <tr
       onClick={onOpen}
       className="border-b border-border/50 hover:bg-surface-2 cursor-pointer transition-colors"
     >
+      <td className="py-2 pr-3 w-8" onClick={e => e.stopPropagation()}>
+        <button
+          onClick={() => isPlaying ? player.pause() : player.playQueue([file.blake3_hash])}
+          className="w-7 h-7 flex items-center justify-center rounded-md text-text-muted hover:text-accent hover:bg-accent/10 transition-colors"
+          title={isPlaying ? 'Pause' : 'Play in browser'}
+        >
+          {isPlaying
+            ? <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg>
+            : <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>
+          }
+        </button>
+      </td>
       <td className="py-2.5 pr-4 font-mono text-xs text-text-primary max-w-xs truncate">
         {basename(file.file_path)}
       </td>
@@ -98,12 +114,21 @@ function DrScore({ score }: { score?: number }) {
 }
 
 // ── Library status ────────────────────────────────────────────────────────────
+interface ScanProgress {
+  phase: 'idle' | 'discovering' | 'indexing'
+  total: number
+  done: number
+  current_file: string | null
+  source_name: string | null
+}
+
 interface LibraryStatus {
   file_count?: number
   last_scan?: string
   watcher_status?: string
   library_path?: string
   scanning?: boolean
+  scan_progress?: ScanProgress
 }
 
 // ── Filter types ──────────────────────────────────────────────────────────────
@@ -128,12 +153,25 @@ function LibraryPageInner() {
   const [scanMsg, setScanMsg] = useState<string | null>(null)
   const [activeScan, setActiveScan] = useState(false)
   const [deepScanning, setDeepScanning] = useState(false)
+  const [showProgress, setShowProgress] = useState(false)
+  const progressRef = useRef<HTMLDivElement>(null)
 
   // Filters
   const [formatFilter, setFormatFilter] = useState<string>('all')
   const [drFilter, setDrFilter] = useState<DRFilter>('all')
   const [matchFilter, setMatchFilter] = useState<MatchFilter>('all')
   const [search, setSearch] = useState(albumParam ?? '')
+
+  // Close progress popover on outside click
+  useEffect(() => {
+    const handler = (e: MouseEvent) => {
+      if (progressRef.current && !progressRef.current.contains(e.target as Node)) {
+        setShowProgress(false)
+      }
+    }
+    document.addEventListener('mousedown', handler)
+    return () => document.removeEventListener('mousedown', handler)
+  }, [])
 
   // Initial load
   useEffect(() => {
@@ -255,11 +293,52 @@ function LibraryPageInner() {
       <div className="flex flex-wrap items-center gap-4 mb-6">
         <div className="flex items-center gap-3">
           <h1 className="text-text-primary text-xl font-bold">Library</h1>
-          <span className="px-2 py-0.5 rounded-full bg-surface-2 border border-border text-text-muted text-xs flex items-center gap-1.5">
-            {activeScan && <span className="w-1.5 h-1.5 rounded-full bg-accent animate-pulse shrink-0" />}
-            {files.length} file{files.length !== 1 ? 's' : ''}
-            {activeScan && ' — scanning…'}
-          </span>
+          <div className="relative" ref={progressRef}>
+            <button
+              onClick={() => setShowProgress(o => !o)}
+              className="px-2 py-0.5 rounded-full bg-surface-2 border border-border text-text-muted text-xs flex items-center gap-1.5 hover:border-accent/40 transition-colors"
+            >
+              {activeScan && <span className="w-1.5 h-1.5 rounded-full bg-accent animate-pulse shrink-0" />}
+              {files.length} file{files.length !== 1 ? 's' : ''}
+              {activeScan && ' — scanning…'}
+            </button>
+            {showProgress && status && (
+              <div className="absolute top-7 left-0 z-50 w-72 bg-surface border border-border rounded-xl shadow-2xl p-3 space-y-2">
+                {activeScan && status.scan_progress ? (
+                  <>
+                    <p className="text-text-primary text-xs font-medium">
+                      {status.scan_progress.source_name ? `Scanning ${status.scan_progress.source_name}` : 'Scan in progress'}
+                    </p>
+                    {status.scan_progress.phase === 'discovering' ? (
+                      <p className="text-text-muted text-[11px]">Discovering… {status.scan_progress.done.toLocaleString()} found</p>
+                    ) : status.scan_progress.total > 0 ? (
+                      <>
+                        <div className="w-full h-1.5 bg-background rounded-full overflow-hidden">
+                          <div
+                            className="h-full bg-accent rounded-full transition-all duration-300"
+                            style={{ width: `${Math.round((status.scan_progress.done / status.scan_progress.total) * 100)}%` }}
+                          />
+                        </div>
+                        <p className="text-text-muted text-[11px]">{status.scan_progress.done.toLocaleString()} / {status.scan_progress.total.toLocaleString()}</p>
+                      </>
+                    ) : (
+                      <p className="text-text-muted text-[11px] animate-pulse">Starting…</p>
+                    )}
+                    {status.scan_progress.current_file && (
+                      <p className="text-text-muted text-[10px] font-mono truncate">{status.scan_progress.current_file.split(/[/\\]/).pop()}</p>
+                    )}
+                  </>
+                ) : status.last_scan ? (
+                  <>
+                    <p className="text-text-primary text-xs font-medium">Last scan complete</p>
+                    <p className="text-text-muted text-[11px]">{new Date(status.last_scan).toLocaleString()}</p>
+                  </>
+                ) : (
+                  <p className="text-text-muted text-xs">No scan yet — click Scan Library to start.</p>
+                )}
+              </div>
+            )}
+          </div>
         </div>
         <div className="flex items-center gap-2 ml-auto">
           {status?.last_scan && (
@@ -419,6 +498,7 @@ function LibraryPageInner() {
               <table className="w-full text-sm min-w-[640px]">
                 <thead>
                   <tr className="border-b border-border">
+                    <th className="py-2 w-8" />
                     <th className="text-left text-text-muted font-medium py-2 pr-4">File</th>
                     <th className="text-left text-text-muted font-medium py-2 pr-4">Format</th>
                     <th className="text-left text-text-muted font-medium py-2 pr-4">DR</th>
@@ -433,7 +513,7 @@ function LibraryPageInner() {
                         <Fragment key={group.disc_number}>
                           {showDiscHeaders && (
                             <tr>
-                              <td colSpan={6} className="pt-4 pb-1 text-text-muted text-xs uppercase tracking-widest font-medium">
+                              <td colSpan={7} className="pt-4 pb-1 text-text-muted text-xs uppercase tracking-widest font-medium">
                                 Disc {group.disc_number}
                               </td>
                             </tr>
