@@ -388,6 +388,61 @@ def _render_cover_art(path_or_fileobj, file_hash: str, waveform_path: str) -> st
         return None
 
 
+def _fast_index_local(
+    path: str,
+    waveform_path: str,
+    source_id: int | None = None,
+    source_root: str | None = None,
+) -> dict | None:
+    """Hash + tags + cover art only — no librosa. Posts immediately so the file
+    is visible in the library and playable while the deep scan runs in the background."""
+    try:
+        h = _hash_file(path)
+        tags = _read_tags(path)
+        fmt = Path(path).suffix.lower().lstrip(".")
+        bit_depth = _detect_bit_depth(path)
+        cover_art = _render_cover_art(path, h, waveform_path)
+
+        st = os.stat(path)
+
+        relative_path = None
+        if source_root and path.startswith(source_root):
+            relative_path = os.path.relpath(path, source_root)
+
+        record = {
+            "blake3_hash": h,
+            "file_path": path,
+            "format": fmt,
+            "bitrate": tags.get("bitrate"),
+            "sample_rate": tags.get("sample_rate"),
+            "bit_depth": bit_depth,
+            "duration_ms": int(tags.get("length", 0) * 1000) if tags.get("length") else None,
+            "dr_score": None,
+            "spectral_ok": None,
+            "waveform_path": None,
+            "fingerprint": None,
+            "accuraterip_crc": None,
+            "accuraterip_status": None,
+            "source_id": source_id,
+            "relative_path": relative_path,
+            "inode": st.st_ino,
+            "file_size": st.st_size,
+            "mtime": int(st.st_mtime),
+            "title": tags.get("title"),
+            "artist": tags.get("artist"),
+            "album": tags.get("album"),
+            "year": tags.get("year"),
+            "disc_number": tags.get("disc_number", 1),
+            "engineer": tags.get("engineer"),
+            "cover_art_path": cover_art,
+        }
+        FILE_DB[h] = record
+        _post_to_app(record)
+        return record
+    except Exception:
+        return None
+
+
 def _post_to_app(data: dict) -> None:
     try:
         httpx.post(
