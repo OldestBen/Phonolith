@@ -26,12 +26,11 @@ export async function GET(
     SELECT
       lf.*,
       s.title AS song_title,
-      s.track_number,
       s.release_date AS song_release_date
     FROM library_files lf
     JOIN songs s ON lf.song_id = s.id
     WHERE s.album_id = ${albumId}
-    ORDER BY s.track_number NULLS LAST, s.title
+    ORDER BY lf.track_number NULLS LAST, s.title
   `
 
   type FileRow = (typeof files)[number]
