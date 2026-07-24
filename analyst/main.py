@@ -397,9 +397,12 @@ async def _run_pending_deep_scans(
             try:
                 if is_network:
                     # SMB/network file — needs the share config to download + analyse.
+                    # Pass the turbo-pass hash so the enhanced results update the
+                    # existing row instead of inserting a full-content-hash duplicate.
                     if smb_config is not None:
                         await asyncio.to_thread(
-                            deep_scan_smb_file, path, smb_config, WAVEFORM_PATH, source_id
+                            deep_scan_smb_file, path, smb_config, WAVEFORM_PATH,
+                            source_id, f.get("blake3_hash"),
                         )
                 elif path and os.path.isfile(path):
                     await asyncio.to_thread(index_file, path, WAVEFORM_PATH)

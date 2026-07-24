@@ -536,6 +536,7 @@ def index_file(
     source_root: str | None = None,
     relative_path_override: str | None = None,
     use_path_stat: bool = True,
+    hash_override: str | None = None,
 ) -> dict | None:
     """Full analysis: hash + tags + librosa DR + waveform. Used for local sources
     and (via a downloaded temp file) for SMB deep-scans.
@@ -547,9 +548,15 @@ def index_file(
     `use_path_stat`: when False, skip os.stat(path) for inode/size/mtime — used
     for SMB temp files where those values would describe the temp file, not the
     real remote file, and would corrupt the fast-path identity check.
+
+    `hash_override`: reuse an already-known blake3 identity instead of recomputing
+    it from the file contents. The SMB turbo pass keys files by a header+size hash
+    (it never downloads the whole file); the enhanced pass passes that same hash
+    here so its results update the existing row rather than inserting a duplicate
+    under a different, full-content hash.
     """
     try:
-        h = _hash_file(path)
+        h = hash_override if hash_override is not None else _hash_file(path)
         tags = _read_tags(path)
         fmt = Path(display_path or path).suffix.lower().lstrip(".")
         bit_depth = _detect_bit_depth(path)
@@ -649,27 +656,32 @@ def _smb_fast_index(
 
     fmt = Path(display).suffix.lower().lstrip(".")
 
+    HEADER_LIMIT = 524288  # 512 KB — enough for any tag block + embedded cover art
+
+    # Turbo pass: read only the header, not the whole file. Streaming every file
+    # in full over SMB just to hash it means downloading the entire library to
+    # index it — the single biggest cost on a large NAS scan. Instead the file's
+    # identity is derived from its header bytes + total size (the size comes from
+    # a seek-to-end, a metadata op, not a full read). The true full-content hash,
+    # DR score and waveform are computed later in the opt-in enhanced pass, which
+    # reuses this same hash so the row is updated in place rather than duplicated.
+    with smbclient.open_file(smb_path, mode="rb") as f:
+        header = f.read(HEADER_LIMIT)
+        try:
+            file_size = f.seek(0, io.SEEK_END)
+        except (OSError, ValueError):
+            file_size = len(header)
+
     try:
         import blake3 as _b3
         h = _b3.blake3()
     except ImportError:
         h = hashlib.sha256()
-
-    HEADER_LIMIT = 524288  # 512 KB — enough for any tag block
-    header_buf = io.BytesIO()
-    header_full = False
-
-    with smbclient.open_file(smb_path, mode="rb") as f:
-        while chunk := f.read(65536):
-            h.update(chunk)
-            if not header_full:
-                header_buf.write(chunk)
-                if header_buf.tell() >= HEADER_LIMIT:
-                    header_full = True
-
+    h.update(header)
+    h.update(f"|{file_size}".encode())
     file_hash = h.hexdigest()
 
-    header_buf.seek(0)
+    header_buf = io.BytesIO(header)
     tags = _read_tags(header_buf)
 
     # Extract cover art from the buffered header (512 KB is enough for embedded art)
@@ -786,6 +798,7 @@ def deep_scan_smb(
     config: dict,
     source_id: int | None = None,
     smb_root: str | None = None,
+    hash_override: str | None = None,
 ) -> dict | None:
     """
     Full deep-scan for an SMB-sourced file: downloads the *entire* file to a
@@ -826,6 +839,7 @@ def deep_scan_smb(
             source_id=source_id,
             relative_path_override=relative_path,
             use_path_stat=False,
+            hash_override=hash_override,
         )
     finally:
         try:
@@ -926,12 +940,16 @@ def deep_scan_smb_file(
     config: dict,
     waveform_path: str,
     source_id: int | None = None,
+    hash_override: str | None = None,
 ) -> dict | None:
     """
     Entry point for deep-scanning a single SMB file given its stored
     `file_path` (display form, e.g. "//host/share/sub/track.flac") and the
     source's connection config. Rebuilds the UNC path the same way
     `scan_smb` does, then delegates to `deep_scan_smb`.
+
+    `hash_override`: the turbo-pass header+size identity for this file, so the
+    enhanced results update the same library row instead of inserting a duplicate.
     """
     host = config.get("host", "")
     share = config.get("share", "")
@@ -950,6 +968,7 @@ def deep_scan_smb_file(
         config,
         source_id=source_id,
         smb_root=smb_root,
+        hash_override=hash_override,
     )
 
 
