@@ -1,0 +1,17 @@
+# Pinned rule set so `ruff check` is deterministic across environments.
+#
+# Without an explicit `select`, ruff's *default* rule set varies by version:
+# a newer ruff in CI enabled import-sorting (I) and simplify (SIM) rules that
+# the local version didn't, so a commit that linted clean locally failed CI.
+# Selecting the rules explicitly makes the result identical everywhere,
+# independent of which ruff version is installed. Keep the pinned ruff version
+# in .github/workflows/ci.yml in sync with what you lint against locally.
+#
+# Scope is intentionally the ruff default (real errors + pyflakes dead-code):
+# stylistic rules like line-length (E501), import order (I), and flake8-simplify
+# (SIM) are deliberately left out of this first pass — opt into them later as a
+# separate, deliberate cleanup rather than a surprise CI break.
+target-version = "py312"
+
+[lint]
+select = ["E4", "E7", "E9", "F"]

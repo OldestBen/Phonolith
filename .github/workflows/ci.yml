@@ -45,8 +45,12 @@ jobs:
       # Deliberately light: the analyst's heavy deps (librosa, numpy, mutagen)
       # are imported lazily inside functions, so linting, byte-compiling, and the
       # pure-logic unit tests need none of them. Keeps CI fast.
+      #
+      # ruff is version-pinned so its rule set matches what we lint against
+      # locally; combined with the explicit `select` in ruff.toml, `ruff check`
+      # is fully deterministic across environments.
       - name: Install lint/test tools
-        run: pip install ruff pytest
+        run: pip install ruff==0.15.8 pytest
 
       - name: Ruff lint
         run: ruff check analyst lucid
