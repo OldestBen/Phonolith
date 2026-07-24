@@ -858,31 +858,9 @@ def scan_smb(
     if subfolder:
         smb_root = rf"{smb_root}\{subfolder}"
 
-    # ── Phase 1: Discovery — emit -1 total so caller shows "discovering" UI ──
-    all_files: list[str] = []
-    try:
-        for dirpath, _, files in smbclient.walk(smb_root):
-            for fname in files:
-                if Path(fname).suffix.lower() in AUDIO_EXTENSIONS:
-                    all_files.append(rf"{dirpath}\{fname}")
-                    if progress_cb:
-                        progress_cb(-1, len(all_files), fname, None)
-    except Exception as e:
-        print(f"[SMB] walk error: {e}")
-        return 0
-
-    if not all_files:
-        if progress_cb:
-            progress_cb(0, 0, None, None)
-        return 0
-
-    # Switch progress to indexing phase
-    if progress_cb:
-        progress_cb(len(all_files), 0, None, None)
-
-    # ── Phase 2: Fast parallel metadata indexing (4 workers) ─────────────────
     indexed = 0
     done_count = 0
+    discovered = 0
     lock = threading.Lock()
 
     def process_one(smb_path: str) -> tuple[bool, str, str | None]:
@@ -900,8 +878,36 @@ def scan_smb(
             print(f"[SMB] index error {smb_path}: {e}")
             return (False, display, str(e))
 
+    # ── Streaming pipeline: dispatch each file for fast indexing the moment it's
+    #    discovered, rather than walking the whole share first. Files begin
+    #    posting to the app (and appearing in the library) *during* discovery, so
+    #    a large share no longer shows a blank UI until the walk completes. ──
+    futures = []
     with ThreadPoolExecutor(max_workers=4) as pool:
-        futures = {pool.submit(process_one, p): p for p in all_files}
+        try:
+            for dirpath, _, files in smbclient.walk(smb_root):
+                for fname in files:
+                    if Path(fname).suffix.lower() in AUDIO_EXTENSIONS:
+                        futures.append(pool.submit(process_one, rf"{dirpath}\{fname}"))
+                        with lock:
+                            discovered += 1
+                        if progress_cb:
+                            # total=-1 keeps the UI in the "discovering" phase while
+                            # the walk runs; indexing of dispatched files is already
+                            # happening in the pool in the background.
+                            progress_cb(-1, discovered, fname, None)
+        except Exception as e:
+            print(f"[SMB] walk error: {e}")
+            # Fall through and drain whatever was already dispatched.
+
+        if not futures:
+            if progress_cb:
+                progress_cb(0, 0, None, None)
+            return 0
+
+        # Walk is done — the total is now known. Switch the UI to the indexing
+        # phase and advance it as each in-flight index completes.
+        total = len(futures)
         for fut in as_completed(futures):
             ok, display, error = fut.result()
             with lock:
@@ -910,7 +916,7 @@ def scan_smb(
                     indexed += 1
                 local_done = done_count
             if progress_cb:
-                progress_cb(len(all_files), local_done, display, error)
+                progress_cb(total, local_done, display, error)
 
     return indexed
 

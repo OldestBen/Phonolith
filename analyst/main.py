@@ -245,8 +245,13 @@ async def _run_source_scan(req: ScanSourceRequest):
         STATUS["files_indexed"] = STATUS.get("files_indexed", 0) + indexed
         STATUS["last_scan"] = datetime.now(timezone.utc).isoformat()
         # Deep pass — fill in DR/spectral/waveform/fingerprint in the background.
+        # SMB files can't be deep-scanned from the stored network path alone, so
+        # pass the source id + share config through for the download-and-analyse path.
         if req.deep_analysis:
-            await _run_pending_deep_scans(manage_status=False)
+            if req.type == "smb":
+                await _run_pending_deep_scans(manage_status=False, source_id=req.source_id, smb_config=req.config)
+            else:
+                await _run_pending_deep_scans(manage_status=False)
     finally:
         STATUS["scanning"] = False
         STATUS["scan_progress"]["phase"] = "idle"
@@ -346,22 +351,32 @@ async def deep_scan_pending():
     return {"ok": True, "message": "Pending deep scan started"}
 
 
-async def _run_pending_deep_scans(manage_status: bool = True):
+async def _run_pending_deep_scans(
+    manage_status: bool = True,
+    source_id: int | None = None,
+    smb_config: dict | None = None,
+):
     """Run the deep analysis pass over every fast-indexed file (dr_score IS NULL).
 
     `manage_status` toggles ownership of the STATUS["scanning"] flag: True when
     invoked standalone (the /deep-scan-pending endpoint), False when chained
     directly after a fast scan pass whose caller already holds the flag — so the
     UI shows one continuous scan rather than flickering idle in between.
+
+    `source_id` + `smb_config`: when set, the pending list is scoped to that
+    source and SMB paths are included (the app otherwise excludes them, since a
+    network path can't be deep-scanned without the share's connection config).
+    Each SMB file is downloaded and analysed via `deep_scan_smb_file`; local
+    files still go through `index_file`.
     """
     import httpx
-    from scanner import index_file
+    from scanner import deep_scan_smb_file, index_file
     try:
+        url = f"{APP_URL}/api/library/pending-analysis"
+        if source_id is not None:
+            url += f"?source_id={source_id}"
         async with httpx.AsyncClient(timeout=10) as client:
-            r = await client.get(
-                f"{APP_URL}/api/library/pending-analysis",
-                headers={"X-Internal-Token": INTERNAL_SERVICE_TOKEN},
-            )
+            r = await client.get(url, headers={"X-Internal-Token": INTERNAL_SERVICE_TOKEN})
             if not r.is_success:
                 return
             files = r.json()
@@ -378,11 +393,16 @@ async def _run_pending_deep_scans(manage_status: bool = True):
         for i, f in enumerate(files):
             path = f.get("file_path", "")
             STATUS["scan_progress"]["current_file"] = path
-            if not path or not os.path.isfile(path):
-                STATUS["scan_progress"]["done"] = i + 1
-                continue
+            is_network = path.startswith("//") or path.startswith("\\\\")
             try:
-                await asyncio.to_thread(index_file, path, WAVEFORM_PATH)
+                if is_network:
+                    # SMB/network file — needs the share config to download + analyse.
+                    if smb_config is not None:
+                        await asyncio.to_thread(
+                            deep_scan_smb_file, path, smb_config, WAVEFORM_PATH, source_id
+                        )
+                elif path and os.path.isfile(path):
+                    await asyncio.to_thread(index_file, path, WAVEFORM_PATH)
             except Exception as e:
                 STATUS["scan_progress"]["errors"].append(str(e))
             STATUS["scan_progress"]["done"] = i + 1

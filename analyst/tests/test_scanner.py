@@ -66,6 +66,49 @@ class TestScanLibraryUsesFastPath:
         assert indexed == 2         # the .jpg was ignored
 
 
+class TestScanSmbPipelining:
+    """scan_smb must dispatch each file for indexing *as it is discovered*, so
+    tracks appear during the walk rather than only after it completes. This is
+    proven deterministically: the fake walk records, right before yielding its
+    second file, whether the first file had already been indexed. Under the old
+    walk-first design that flag would be False (nothing indexed until the walk
+    finished); under the pipeline it's True.
+    """
+
+    def test_indexes_during_walk(self, monkeypatch):
+        import sys
+        import threading
+        import types
+
+        first_indexed = threading.Event()
+        walk_saw_index_during = []
+
+        def fake_walk(root):
+            yield (root, [], ["a.flac"])
+            # Pause before the 2nd file and observe whether the 1st is indexed yet.
+            walk_saw_index_during.append(first_indexed.wait(timeout=5))
+            yield (root, [], ["b.flac"])
+
+        fake_smbclient = types.ModuleType("smbclient")
+        fake_smbclient.register_session = lambda *a, **k: None
+        fake_smbclient.walk = fake_walk
+        fake_smbclient.open_file = lambda *a, **k: None
+        monkeypatch.setitem(sys.modules, "smbclient", fake_smbclient)
+
+        import scanner
+
+        def fake_fast_index(smb_path, display, **kwargs):
+            first_indexed.set()
+            return {"blake3_hash": "h", "file_path": display}
+
+        monkeypatch.setattr(scanner, "_smb_fast_index", fake_fast_index)
+
+        indexed = scanner.scan_smb({"host": "nas", "share": "Music"}, "/waveforms")
+
+        assert indexed == 2                       # both files indexed
+        assert walk_saw_index_during == [True]    # 1st indexed *before* 2nd discovered
+
+
 class TestParseDiscNumber:
     def test_plain_integer(self):
         assert _parse_disc_number("1") == 1
