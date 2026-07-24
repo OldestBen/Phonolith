@@ -7,10 +7,10 @@ from fastapi.responses import FileResponse
 from pydantic import BaseModel
 import uvicorn
 
-log = logging.getLogger("analyst")
-
-from scanner import scan_library, scan_source_config, get_file_record, FILE_DB, APP_URL, INTERNAL_SERVICE_TOKEN
+from scanner import scan_library, scan_source_config, get_file_record, APP_URL, INTERNAL_SERVICE_TOKEN
 from watcher import start_watcher, stop_watcher
+
+log = logging.getLogger("analyst")
 
 LIBRARY_PATH = os.environ.get("LIBRARY_PATH", "/music")
 WAVEFORM_PATH = os.environ.get("WAVEFORM_PATH", "/waveforms")
@@ -140,7 +140,8 @@ class PingRequest(BaseModel):
 
 @app.post("/ping")
 async def ping(req: PingRequest):
-    import socket, time
+    import socket
+    import time
     start = time.monotonic()
     try:
         with socket.create_connection((req.host, req.port), timeout=5):
@@ -180,7 +181,8 @@ def _test_source_sync(src_type: str, config: dict) -> dict:
         return {"ok": True, "files_found": count}
 
     elif src_type == "smb":
-        import socket, smbclient
+        import socket
+        import smbclient
         host = config.get("host", "")
         share = config.get("share", "")
         username = config.get("username", "")

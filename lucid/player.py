@@ -19,7 +19,6 @@ import time
 from pathlib import Path
 from typing import Any
 
-import numpy as np
 import soundfile as sf
 
 from signal_path import SignalPathManager
@@ -289,7 +288,6 @@ class Player:
             self._sp.publish(self._redis)
             return
 
-        info = sound_file.info if hasattr(sound_file, "info") else None  # type: ignore[attr-defined]
         sample_rate = sound_file.samplerate
         channels = sound_file.channels
         frames = sound_file.frames

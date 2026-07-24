@@ -81,8 +81,10 @@ def lookup_single_track(path: str, crc_hex: str, duration_ms: int) -> dict:
                 break
 
             track_count = data[offset]
-            chunk_disc_id1 = struct.unpack_from('<I', data, offset + 1)[0]
-            chunk_disc_id2 = struct.unpack_from('<I', data, offset + 5)[0]
+            # disc IDs at offset+1 and offset+5 (4 bytes each) — parsed here to
+            # document the 13-byte header layout; not used for the CRC match itself.
+            _chunk_disc_id1 = struct.unpack_from('<I', data, offset + 1)[0]
+            _chunk_disc_id2 = struct.unpack_from('<I', data, offset + 5)[0]
             # cddb_id at offset + 9 (4 bytes)
             offset += 13
 
@@ -104,11 +106,8 @@ def lookup_single_track(path: str, crc_hex: str, duration_ms: int) -> dict:
                             'confidence': confidence,
                             'crc': crc_hex,
                         }
-                    else:
-                        # Record the first mismatch CRC we see for reporting
-                        first_ar_crc = format(ar_crc_v1, '08x')
-                        # Continue checking other chunks for a possible match
-                        # (multiple pressings may be listed)
+                    # Not a match — keep checking other chunks (multiple pressings
+                    # may be listed). A mismatch is reported after the re-parse below.
 
             offset += track_data_size
 
