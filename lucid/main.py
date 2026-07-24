@@ -66,6 +66,11 @@ def _alsa_devices() -> list[str]:
 _REDIS_URL = os.environ.get("REDIS_URL", "redis://redis:6379")
 _DEFAULT_ALSA_DEVICE = os.environ.get("ALSA_DEVICE", "default")
 _APP_URL = os.environ.get("APP_URL", "http://app:3000")
+# Shared token for calls into the app's internal API (mirrors the fallback in
+# src/lib/auth.ts's getInternalServiceToken()), since Lucid has no browser session.
+_INTERNAL_SERVICE_TOKEN = (
+    os.environ.get("INTERNAL_SERVICE_TOKEN") or "phonolith-dev-internal-token-not-for-production"
+)
 
 redis_client = redis_lib.from_url(_REDIS_URL, decode_responses=False)
 redis_async_client = redis_async.from_url(_REDIS_URL, decode_responses=True)
@@ -285,7 +290,10 @@ async def _resolve_file_path(track_hash: str) -> str:
     """Resolve a BLAKE3 hash to an on-disk path via the app's library API."""
     try:
         async with httpx.AsyncClient(timeout=5.0) as client:
-            r = await client.get(f"{_APP_URL}/api/library/{track_hash}")
+            r = await client.get(
+                f"{_APP_URL}/api/library/{track_hash}",
+                headers={"X-Internal-Token": _INTERNAL_SERVICE_TOKEN},
+            )
     except httpx.HTTPError as exc:
         raise HTTPException(status_code=502, detail=f"Library lookup failed: {exc}") from exc
 

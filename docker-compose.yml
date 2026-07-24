@@ -75,6 +75,7 @@ services:
     environment:
       - REDIS_URL=redis://redis:6379
       - APP_URL=http://app:3000
+      - INTERNAL_SERVICE_TOKEN=${INTERNAL_SERVICE_TOKEN:-}
     volumes:
       - ${LIBRARY_PATH:-./music}:/music:ro
     depends_on:

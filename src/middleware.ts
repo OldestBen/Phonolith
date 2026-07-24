@@ -7,6 +7,13 @@ import { NextRequest, NextResponse } from "next/server";
 // version).
 const SESSION_COOKIE_NAME = "phonolith_session";
 
+// Shared token for service-to-service calls (analyst, lucid -> app). Mirrors the
+// fallback in src/lib/auth.ts's getInternalServiceToken(). A plain compare is
+// fine here — this is only a coarse "let it reach the handler" gate; the route
+// itself still verifies the token with a timing-safe check.
+const INTERNAL_SERVICE_TOKEN =
+  process.env.INTERNAL_SERVICE_TOKEN || "phonolith-dev-internal-token-not-for-production";
+
 const PUBLIC_PATH_PREFIXES = [
   "/_next",
   "/favicon.ico",
@@ -49,6 +56,16 @@ export async function middleware(req: NextRequest) {
   const { pathname } = req.nextUrl;
 
   if (isPublicPath(pathname)) {
+    return NextResponse.next();
+  }
+
+  // Service-to-service calls (analyst, lucid) authenticate with a shared token
+  // header rather than a browser session. Let any request carrying the correct
+  // token through the session gate — otherwise middleware redirects them to
+  // /login and internal features (ingest, streaming) break. The destination
+  // route re-verifies the token itself.
+  const internalToken = req.headers.get("x-internal-token");
+  if (internalToken && internalToken === INTERNAL_SERVICE_TOKEN) {
     return NextResponse.next();
   }
 
