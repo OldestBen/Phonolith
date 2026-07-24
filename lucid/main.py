@@ -13,6 +13,7 @@ Environment variables:
 from __future__ import annotations
 
 import asyncio
+import io
 import json
 import logging
 import mimetypes
@@ -286,8 +287,8 @@ def polyphony_discovered() -> list[dict[str, Any]]:
 # HTTP Range requests natively, so seeking and MSE pre-fetch both work without
 # any custom byte-range code.
 
-async def _resolve_file_path(track_hash: str) -> str:
-    """Resolve a BLAKE3 hash to an on-disk path via the app's library API."""
+async def _resolve_track(track_hash: str) -> dict:
+    """Resolve a BLAKE3 hash to its library row (path, source_id, …) via the app API."""
     try:
         async with httpx.AsyncClient(timeout=5.0) as client:
             r = await client.get(
@@ -301,12 +302,114 @@ async def _resolve_file_path(track_hash: str) -> str:
         raise HTTPException(status_code=404, detail="Unknown track hash")
     if r.status_code != 200:
         raise HTTPException(status_code=502, detail="Library lookup failed")
+    return r.json()
 
-    data = r.json()
-    path = data.get("file_path")
-    if not path or not os.path.isfile(path):
-        raise HTTPException(status_code=404, detail="Source file not accessible to Lucid")
-    return path
+
+async def _fetch_source_config(source_id: Any) -> dict:
+    """Fetch a source's decrypted connection config (SMB host/share/credentials)."""
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            r = await client.get(
+                f"{_APP_URL}/api/library/sources/{source_id}/config",
+                headers={"X-Internal-Token": _INTERNAL_SERVICE_TOKEN},
+            )
+    except httpx.HTTPError as exc:
+        raise HTTPException(status_code=502, detail=f"Source lookup failed: {exc}") from exc
+    if r.status_code != 200:
+        raise HTTPException(status_code=502, detail="Source config unavailable")
+    return r.json().get("config") or {}
+
+
+def _is_network_path(path: str) -> bool:
+    """True for SMB/UNC paths (`//host/share/...` or `\\\\host\\share\\...`)."""
+    return path.startswith("//") or path.startswith("\\\\")
+
+
+def _register_smb(config: dict) -> None:
+    """Register an smbclient session for the given source config (blocking)."""
+    import smbclient
+
+    host = config.get("host", "")
+    username = config.get("username") or None
+    password = config.get("password") or None
+    domain = config.get("domain") or None
+    effective_user = username
+    if effective_user and domain:
+        effective_user = f"{domain}\\{effective_user}"
+    smbclient.register_session(host, username=effective_user, password=password)
+
+
+def _smb_size(smb_path: str, config: dict) -> int:
+    """Open the SMB file and return its total size in bytes (blocking)."""
+    import smbclient
+
+    _register_smb(config)
+    with smbclient.open_file(smb_path, mode="rb") as f:
+        return f.seek(0, io.SEEK_END)
+
+
+def _smb_read_range(smb_path: str, config: dict, start: int, end: int, chunk_size: int = 262144):
+    """Yield bytes [start, end] (inclusive) from an SMB file — a blocking generator.
+
+    Run by StreamingResponse in a threadpool, so its blocking smbclient reads
+    never stall the event loop.
+    """
+    import smbclient
+
+    _register_smb(config)
+    with smbclient.open_file(smb_path, mode="rb") as f:
+        if start:
+            f.seek(start)
+        remaining = end - start + 1
+        while remaining > 0:
+            chunk = f.read(min(chunk_size, remaining))
+            if not chunk:
+                break
+            remaining -= len(chunk)
+            yield chunk
+
+
+async def _stream_smb(smb_path: str, config: dict, request: Request, media_type: str, filename: str):
+    """Passthrough-stream an SMB file with HTTP Range support (seeking works)."""
+    try:
+        size = await asyncio.to_thread(_smb_size, smb_path, config)
+    except Exception as exc:  # noqa: BLE001 — surface any SMB/auth failure as 404
+        log.warning("SMB open failed for %s: %s", smb_path, exc)
+        raise HTTPException(status_code=404, detail="Source file not accessible to Lucid") from exc
+
+    start, end = 0, size - 1
+    status = 200
+    headers = {
+        "Accept-Ranges": "bytes",
+        "Content-Disposition": f'inline; filename="{filename}"',
+    }
+
+    range_header = request.headers.get("range")
+    if range_header and range_header.startswith("bytes="):
+        spec = range_header[len("bytes="):].split(",")[0].strip()
+        s, _, e = spec.partition("-")
+        try:
+            start = int(s) if s else 0
+            end = int(e) if e else size - 1
+        except ValueError:
+            start, end = 0, size - 1
+        end = min(end, size - 1)
+        if start > end or start >= size:
+            raise HTTPException(
+                status_code=416,
+                detail="Requested range not satisfiable",
+                headers={"Content-Range": f"bytes */{size}"},
+            )
+        status = 206
+        headers["Content-Range"] = f"bytes {start}-{end}/{size}"
+
+    headers["Content-Length"] = str(end - start + 1)
+    return StreamingResponse(
+        _smb_read_range(smb_path, config, start, end),
+        status_code=status,
+        media_type=media_type,
+        headers=headers,
+    )
 
 
 # Network-adaptive streaming: opt-in lossy transcode for constrained links
@@ -348,6 +451,73 @@ async def _transcode_opus(path: str, bitrate: str):
             log.warning("ffmpeg transcode exited %s for %s: %s", proc.returncode, path, stderr.decode(errors="replace"))
 
 
+async def _transcode_opus_smb(smb_path: str, config: dict, bitrate: str):
+    """Yield Ogg/Opus bytes from ffmpeg transcoding an SMB file fed over stdin.
+
+    ffmpeg can't read a UNC path directly, so the SMB bytes are pumped into its
+    stdin (`pipe:0`). The read side runs in threads (blocking smbclient) while
+    the write/drain stays on the event loop.
+    """
+    proc = await asyncio.create_subprocess_exec(
+        "ffmpeg", "-nostdin", "-v", "error", "-threads", "1",
+        "-i", "pipe:0",
+        "-map", "0:a:0",
+        "-c:a", "libopus", "-b:a", f"{bitrate}k", "-vbr", "on",
+        "-f", "ogg", "-",
+        stdin=asyncio.subprocess.PIPE,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+    )
+    assert proc.stdin is not None and proc.stdout is not None
+
+    async def _feed() -> None:
+        import smbclient
+
+        def _open():
+            _register_smb(config)
+            return smbclient.open_file(smb_path, mode="rb")
+
+        try:
+            f = await asyncio.to_thread(_open)
+            try:
+                while True:
+                    chunk = await asyncio.to_thread(f.read, 262144)
+                    if not chunk:
+                        break
+                    proc.stdin.write(chunk)
+                    await proc.stdin.drain()
+            finally:
+                await asyncio.to_thread(f.close)
+        except Exception as exc:  # noqa: BLE001
+            log.warning("SMB opus feed failed for %s: %s", smb_path, exc)
+        finally:
+            try:
+                proc.stdin.close()
+            except Exception:  # noqa: BLE001
+                pass
+
+    feeder = asyncio.create_task(_feed())
+    try:
+        while True:
+            chunk = await proc.stdout.read(64 * 1024)
+            if not chunk:
+                break
+            yield chunk
+    finally:
+        feeder.cancel()
+        if proc.returncode is None:
+            proc.kill()
+        stderr = await proc.stderr.read() if proc.stderr else b""
+        await proc.wait()
+        if proc.returncode not in (0, None, -9):
+            log.warning("ffmpeg transcode exited %s for %s: %s", proc.returncode, smb_path, stderr.decode(errors="replace"))
+
+
+def _opus_bitrate(request: Request) -> str:
+    bitrate = request.query_params.get("bitrate", _DEFAULT_OPUS_BITRATE)
+    return bitrate if bitrate in _OPUS_BITRATES else _DEFAULT_OPUS_BITRATE
+
+
 @app.get("/stream/{track_hash}")
 async def stream(track_hash: str, request: Request):
     """
@@ -357,22 +527,47 @@ async def stream(track_hash: str, request: Request):
     served exactly as stored; the browser endpoint decodes them locally and
     HTTP Range requests work natively for seeking.
 
+    Local-source files are served straight off Lucid's /music mount. SMB-source
+    files (stored with a `//host/share/...` path) can't be opened as local
+    files — Lucid only mounts /music — so they're streamed directly over SMB
+    using the source's stored credentials, with the same Range support.
+
     Pass `?format=opus[&bitrate=32|64|96|128]` to request an on-the-fly
     lossy transcode instead, for network-adaptive (e.g. cellular) playback.
     Transcoded streams are not seekable via Range — the endpoint should
     restart the request at a new position if it needs to seek.
     """
-    path = await _resolve_file_path(track_hash)
-
-    fmt = request.query_params.get("format")
-    if fmt == "opus":
-        bitrate = request.query_params.get("bitrate", _DEFAULT_OPUS_BITRATE)
-        if bitrate not in _OPUS_BITRATES:
-            bitrate = _DEFAULT_OPUS_BITRATE
-        return StreamingResponse(_transcode_opus(path, bitrate), media_type="audio/ogg")
+    data = await _resolve_track(track_hash)
+    path = data.get("file_path")
+    if not path:
+        raise HTTPException(status_code=404, detail="Track has no file path")
 
     media_type = mimetypes.guess_type(path)[0] or "application/octet-stream"
-    return FileResponse(path, media_type=media_type, filename=os.path.basename(path))
+    filename = os.path.basename(path)
+    fmt = request.query_params.get("format")
+
+    # ── SMB / network source ────────────────────────────────────────────────
+    if _is_network_path(path) and not os.path.isfile(path):
+        source_id = data.get("source_id")
+        if source_id is None:
+            raise HTTPException(status_code=404, detail="Network track has no source id")
+        config = await _fetch_source_config(source_id)
+        smb_path = path.replace("/", "\\")  # UNC form for smbclient
+        if fmt == "opus":
+            return StreamingResponse(
+                _transcode_opus_smb(smb_path, config, _opus_bitrate(request)),
+                media_type="audio/ogg",
+            )
+        return await _stream_smb(smb_path, config, request, media_type, filename)
+
+    # ── Local source ────────────────────────────────────────────────────────
+    if not os.path.isfile(path):
+        raise HTTPException(status_code=404, detail="Source file not accessible to Lucid")
+
+    if fmt == "opus":
+        return StreamingResponse(_transcode_opus(path, _opus_bitrate(request)), media_type="audio/ogg")
+
+    return FileResponse(path, media_type=media_type, filename=filename)
 
 
 # ── Realtime transport state (replaces HTTP polling) ─────────────────────────────

@@ -11,19 +11,13 @@ const nextConfig = {
       { protocol: 'https', hostname: '**.genius.com' },
     ],
   },
-  async rewrites() {
-    const analystUrl = process.env.ANALYST_URL || 'http://localhost:8000'
-    return [
-      {
-        source: '/api/waveforms/:hash',
-        destination: `${analystUrl}/waveforms/:hash`,
-      },
-      {
-        source: '/api/library/:hash/cover',
-        destination: `${analystUrl}/waveforms/:hash/cover`,
-      },
-    ]
-  },
+  // NOTE: waveform/cover proxying used to live here as rewrites(), but Next.js
+  // evaluates rewrites() at build time and freezes the destination into the
+  // routes manifest. ANALYST_URL isn't set when the Docker image is built, so
+  // the rewrite baked in the localhost fallback and every fetch ECONNREFUSED at
+  // runtime. Those are now runtime route handlers instead:
+  //   src/app/api/waveforms/[hash]/route.ts
+  //   src/app/api/library/[hash]/cover/route.ts
 }
 
 export default nextConfig

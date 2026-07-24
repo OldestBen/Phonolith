@@ -32,8 +32,9 @@ analyst/.venv/
 .mypy_cache/
 .ruff_cache/
 
-# waveforms (generated)
-waveforms/
+# waveforms (generated) — anchored to the repo root so it only ignores a local
+# ./waveforms output dir, not source dirs like src/app/api/waveforms/.
+/waveforms/
 
 # IDE
 .vscode/
