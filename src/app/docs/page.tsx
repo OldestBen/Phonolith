@@ -378,7 +378,7 @@ docker compose up --build`}</CodeBlock>
               <li><strong className="text-text-primary">Add a library source</strong> — Settings → Library Sources → Add Source. Choose Local, SMB, NFS, or iSCSI.</li>
               <li><strong className="text-text-primary">Scan your library</strong> — press Scan on the source row. The bell icon in the top-right shows live progress.</li>
               <li><strong className="text-text-primary">Visualize an artist</strong> — open any artist page and click Visualize, or go to the Visualize section and search for an artist.</li>
-              <li><strong className="text-text-primary">Play in the browser</strong> — Lucid streams the original file bytes straight to the browser via Caddy, no audio hardware needed; open any file in the Library and click Play in Browser. Pick a lower-bitrate Opus quality from the PlaybackBar's output menu for constrained links (e.g. cellular) — Lucid transcodes on the fly.</li>
+              <li><strong className="text-text-primary">Play in the browser</strong> — Lucid streams the original file bytes straight to the browser via Caddy, no audio hardware needed; open any file in the Library and click Play in Browser. Pick a lower-bitrate Opus quality from the PlaybackBar&apos;s output menu for constrained links (e.g. cellular) — Lucid transcodes on the fly.</li>
               <li><strong className="text-text-primary">Enable bit-perfect ALSA playback (Linux only)</strong> — run <code className="text-accent">docker compose -f docker-compose.yml -f docker-compose.alsa.yml up -d</code>. Ensure your user is in the <code className="text-accent">audio</code> group and your USB DAC&apos;s ALSA device appears in Settings → Playback.</li>
             </ol>
           </SubSection>
