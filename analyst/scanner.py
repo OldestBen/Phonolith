@@ -5,7 +5,6 @@ import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Callable
-import httpx
 
 import os as _os
 try:
@@ -49,6 +48,20 @@ def _hash_fileobj(fileobj) -> str:
 
 def _parse_disc_number(raw: str | None) -> int | None:
     """Parse disc number from tag value like '1' or '1/2', returning the integer part."""
+    if not raw:
+        return None
+    try:
+        return int(str(raw).split("/")[0].strip())
+    except (ValueError, AttributeError):
+        return None
+
+
+def _parse_track_number(raw: str | None) -> int | None:
+    """Parse track number from a tag value like '3' or '3/12', returning the integer part.
+
+    The ingest route stores this in library_files.track_number; a missing or
+    unparseable value becomes NULL rather than raising.
+    """
     if not raw:
         return None
     try:
@@ -353,7 +366,6 @@ def _render_cover_art(path_or_fileobj, file_hash: str, waveform_path: str) -> st
 
         # ID3 tags (MP3, AIFF, etc.) — APIC frames
         if hasattr(audio, "tags") and audio.tags:
-            from mutagen.id3 import APIC
             for key in audio.tags.keys():
                 if key.startswith("APIC"):
                     frame = audio.tags[key]
@@ -432,7 +444,7 @@ def _fast_index_local(
             "artist": tags.get("artist"),
             "album": tags.get("album"),
             "year": tags.get("year"),
-            "track_number": int(str(tags.get("track", "")).split("/")[0]) if tags.get("track") else None,
+            "track_number": _parse_track_number(tags.get("track")),
             "disc_number": tags.get("disc_number", 1),
             "engineer": tags.get("engineer"),
             "cover_art_path": cover_art,
@@ -444,20 +456,36 @@ def _fast_index_local(
         return None
 
 
-def _post_to_app(data: dict) -> None:
+def _post_to_app(data: dict) -> bool:
+    """POST an indexed file record to the app's ingest route.
+
+    Returns True on a 2xx response. A non-2xx status or a transport error is
+    logged (never silently swallowed — an ingest that can't persist leaves the
+    file invisible in the library) and returns False so callers can count it.
+    """
+    import httpx
+
+    file_ref = data.get("file_path") or data.get("blake3_hash", "?")
     try:
-        httpx.post(
+        r = httpx.post(
             f"{APP_URL}/api/library/ingest",
             json=data,
             headers={"X-Internal-Token": INTERNAL_SERVICE_TOKEN},
             timeout=10,
         )
-    except Exception:
-        pass
+        if r.status_code >= 400:
+            print(f"[analyst] ingest failed ({r.status_code}) for {file_ref}: {r.text[:200]}")
+            return False
+        return True
+    except Exception as e:
+        print(f"[analyst] ingest POST error for {file_ref}: {e}")
+        return False
 
 
 def _fetch_known_identities() -> frozenset:
     """Fetch (inode, mtime, file_size) for all fully-indexed local files in one bulk call."""
+    import httpx
+
     try:
         r = httpx.get(
             f"{APP_URL}/api/library/known-files",
@@ -594,7 +622,7 @@ def index_file(
             "artist": tags.get("artist"),
             "album": tags.get("album"),
             "year": tags.get("year"),
-            "track_number": int(str(tags.get("track", "")).split("/")[0]) if tags.get("track") else None,
+            "track_number": _parse_track_number(tags.get("track")),
             "disc_number": tags.get("disc_number", 1),
             "engineer": tags.get("engineer"),
             "cover_art_path": cover_art,
@@ -672,7 +700,7 @@ def _smb_fast_index(
         "artist": tags.get("artist"),
         "album": tags.get("album"),
         "year": tags.get("year"),
-        "track_number": int(str(tags.get("track", "")).split("/")[0]) if tags.get("track") else None,
+        "track_number": _parse_track_number(tags.get("track")),
         "disc_number": tags.get("disc_number", 1),
         "engineer": tags.get("engineer"),
         "cover_art_path": cover_art,
