@@ -17,10 +17,26 @@ const PUBLIC_PATH_PREFIXES = [
   "/api/auth/session-status",
 ];
 
+// Internal service-to-service routes called by the sidecars (analyst → app)
+// with an X-Internal-Token header rather than a browser session cookie. They
+// enforce that token in their own handlers (verifyInternalServiceToken), so
+// they must bypass the session gate here — otherwise middleware redirects them
+// to /login and, since they carry no session, all scanning/ingest silently
+// breaks. Kept as an exact-match list (not a prefix) to keep the exemption
+// tight to exactly these routes.
+const INTERNAL_SERVICE_PATHS = [
+  "/api/library/ingest",
+  "/api/library/known-files",
+  "/api/library/pending-analysis",
+];
+
 const PUBLIC_PAGES = ["/setup", "/login"];
 
 function isPublicPath(pathname: string): boolean {
   if (PUBLIC_PATH_PREFIXES.some((prefix) => pathname.startsWith(prefix))) {
+    return true;
+  }
+  if (INTERNAL_SERVICE_PATHS.includes(pathname)) {
     return true;
   }
   if (PUBLIC_PAGES.includes(pathname)) {
