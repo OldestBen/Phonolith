@@ -717,6 +717,17 @@ def scan_library(
     source_id: int | None = None,
     marker_uuid: str | None = None,
 ) -> int:
+    """Fast metadata pass over a local library: hash + tags + cover art only.
+
+    This posts each file to the app as soon as its tags are read, so the whole
+    library becomes visible (and browsable, correctly nested artist/album/song)
+    within seconds — os.walk is recursive, so the folder hierarchy is preserved.
+    The expensive per-file analysis (librosa DR, spectral check, waveform,
+    fingerprint, AccurateRip) is deferred to the deep pass — either run
+    automatically right after this pass, or on demand via "Analyse Unscanned".
+    Files already carrying a full analysis (waveform_path set) are skipped via
+    the inode/mtime/size identity check so a rescan doesn't redo finished work.
+    """
     if source_id is not None:
         ensure_root_marker(library_path, marker_uuid or "default")
 
@@ -747,7 +758,7 @@ def scan_library(
         except OSError:
             pass
         try:
-            result = index_file(path, waveform_path, source_id=source_id, source_root=source_root)
+            result = _fast_index_local(path, waveform_path, source_id=source_id, source_root=source_root)
             return (result is not None, path, None)
         except Exception as e:
             return False, path, str(e)

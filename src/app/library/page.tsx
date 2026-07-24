@@ -154,6 +154,7 @@ function LibraryPageInner() {
   const [activeScan, setActiveScan] = useState(false)
   const [deepScanning, setDeepScanning] = useState(false)
   const [showProgress, setShowProgress] = useState(false)
+  const [autoDeep, setAutoDeep] = useState(true)
   const progressRef = useRef<HTMLDivElement>(null)
 
   // Filters
@@ -186,6 +187,14 @@ function LibraryPageInner() {
       })
       .catch(() => {})
       .finally(() => setLoading(false))
+  }, [])
+
+  // Load the auto-deep-analysis preference
+  useEffect(() => {
+    fetch('/api/settings/scan')
+      .then(r => r.ok ? r.json() : null)
+      .then(d => { if (d && typeof d.autoDeepAnalysis === 'boolean') setAutoDeep(d.autoDeepAnalysis) })
+      .catch(() => {})
   }, [])
 
   // Files-view search — refetched server-side via trigram similarity (debounced)
@@ -264,6 +273,21 @@ function LibraryPageInner() {
       setScanMsg('Scan failed — check your library configuration.')
     } finally {
       setScanning(false)
+    }
+  }
+
+  const toggleAutoDeep = async () => {
+    const next = !autoDeep
+    setAutoDeep(next) // optimistic
+    try {
+      const r = await fetch('/api/settings/scan', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ autoDeepAnalysis: next }),
+      })
+      if (!r.ok) setAutoDeep(!next) // revert on failure
+    } catch {
+      setAutoDeep(!next)
     }
   }
 
@@ -360,6 +384,19 @@ function LibraryPageInner() {
               </button>
             ) : null
           })()}
+          <button
+            onClick={toggleAutoDeep}
+            role="switch"
+            aria-checked={autoDeep}
+            title={autoDeep
+              ? 'Deep analysis (DR, waveform, fingerprint) runs automatically after each scan. Click for fast-index only.'
+              : 'Scans fast-index only; run deep analysis on demand with “Analyse Unscanned”. Click to run it automatically.'}
+            className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-surface-2 border border-border text-xs
+                       text-text-muted hover:border-accent/40 transition-colors"
+          >
+            <span className={`w-1.5 h-1.5 rounded-full ${autoDeep ? 'bg-accent' : 'bg-text-muted/40'}`} />
+            Auto-analyse {autoDeep ? 'on' : 'off'}
+          </button>
           <button
             onClick={handleScan}
             disabled={scanning}

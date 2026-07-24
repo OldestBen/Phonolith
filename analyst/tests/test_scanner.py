@@ -36,6 +36,36 @@ class TestParseTrackNumber:
         assert _parse_track_number(5) == 5
 
 
+class TestScanLibraryUsesFastPath:
+    """scan_library must use the fast indexer (tags only) for incremental
+    visibility, NOT the heavy per-file analysis. This locks in that wiring so a
+    refactor can't silently send local scans back down the slow index_file path.
+    """
+
+    def test_scan_library_calls_fast_indexer_not_full(self, monkeypatch, tmp_path):
+        import scanner
+
+        # A nested artist/album/song tree with two audio files + one non-audio.
+        album = tmp_path / "Aphex Twin" / "SAW 85-92"
+        album.mkdir(parents=True)
+        (album / "01 Xtal.flac").write_bytes(b"fake")
+        (album / "02 Tha.flac").write_bytes(b"fake")
+        (album / "cover.jpg").write_bytes(b"notaudio")
+
+        calls = {"fast": 0, "full": 0}
+        monkeypatch.setattr(scanner, "_fast_index_local",
+                            lambda *a, **k: calls.__setitem__("fast", calls["fast"] + 1) or {"blake3_hash": "h"})
+        monkeypatch.setattr(scanner, "index_file",
+                            lambda *a, **k: calls.__setitem__("full", calls["full"] + 1) or {"blake3_hash": "h"})
+        monkeypatch.setattr(scanner, "_fetch_known_identities", lambda: frozenset())
+
+        indexed = scanner.scan_library(str(tmp_path), str(tmp_path))
+
+        assert calls["fast"] == 2   # both audio files went through the fast path
+        assert calls["full"] == 0   # none went through the heavy analysis
+        assert indexed == 2         # the .jpg was ignored
+
+
 class TestParseDiscNumber:
     def test_plain_integer(self):
         assert _parse_disc_number("1") == 1

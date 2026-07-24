@@ -31,8 +31,12 @@ export async function getStatus(): Promise<AnalystStatus | null> {
   }
 }
 
-export async function triggerScan(libraryPath?: string): Promise<void> {
-  await axios.post(`${ANALYST_URL}/scan`, { path: libraryPath || '/music' }, { timeout: 10000 })
+export async function triggerScan(libraryPath?: string, deepAnalysis = true): Promise<void> {
+  await axios.post(
+    `${ANALYST_URL}/scan`,
+    { path: libraryPath || '/music', deep_analysis: deepAnalysis },
+    { timeout: 10000 },
+  )
 }
 
 export async function getFile(hash: string): Promise<AnalystFile | null> {

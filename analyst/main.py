@@ -95,16 +95,20 @@ def schedule_scan():
         asyncio.run_coroutine_threadsafe(run_scan(LIBRARY_PATH, ""), _main_loop)
 
 
-async def run_scan(path: str, source_name: str):
+async def run_scan(path: str, source_name: str, deep_analysis: bool = True):
     from datetime import datetime, timezone
     STATUS["scanning"] = True
     STATUS["scan_progress"]["errors"] = []
     STATUS["scan_progress"]["phase"] = "indexing"
     cb = make_progress_cb(source_name)
     try:
+        # Fast pass — everything visible in seconds.
         indexed = await asyncio.to_thread(scan_library, path, WAVEFORM_PATH, cb)
         STATUS["files_indexed"] = indexed
         STATUS["last_scan"] = datetime.now(timezone.utc).isoformat()
+        # Deep pass — fill in DR/spectral/waveform/fingerprint in the background.
+        if deep_analysis:
+            await _run_pending_deep_scans(manage_status=False)
     finally:
         STATUS["scanning"] = False
         STATUS["scan_progress"]["phase"] = "idle"
@@ -125,11 +129,12 @@ def status():
 
 class ScanRequest(BaseModel):
     path: str = "/music"
+    deep_analysis: bool = True
 
 
 @app.post("/scan")
 async def scan(req: ScanRequest):
-    _track(run_scan(req.path, ""))
+    _track(run_scan(req.path, "", req.deep_analysis))
     return {"message": "Scan started"}
 
 
@@ -217,6 +222,7 @@ class ScanSourceRequest(BaseModel):
     type: str
     config: dict
     name: str = ""
+    deep_analysis: bool = True
 
 
 @app.post("/scan-source")
@@ -234,9 +240,13 @@ async def _run_source_scan(req: ScanSourceRequest):
     STATUS["scan_progress"]["phase"] = "discovering" if req.type == "smb" else "indexing"
     cb = make_progress_cb(req.name)
     try:
+        # Fast pass — everything visible in seconds.
         indexed = await asyncio.to_thread(scan_source_config, req.type, req.config, WAVEFORM_PATH, cb, req.source_id)
         STATUS["files_indexed"] = STATUS.get("files_indexed", 0) + indexed
         STATUS["last_scan"] = datetime.now(timezone.utc).isoformat()
+        # Deep pass — fill in DR/spectral/waveform/fingerprint in the background.
+        if req.deep_analysis:
+            await _run_pending_deep_scans(manage_status=False)
     finally:
         STATUS["scanning"] = False
         STATUS["scan_progress"]["phase"] = "idle"
@@ -336,7 +346,14 @@ async def deep_scan_pending():
     return {"ok": True, "message": "Pending deep scan started"}
 
 
-async def _run_pending_deep_scans():
+async def _run_pending_deep_scans(manage_status: bool = True):
+    """Run the deep analysis pass over every fast-indexed file (dr_score IS NULL).
+
+    `manage_status` toggles ownership of the STATUS["scanning"] flag: True when
+    invoked standalone (the /deep-scan-pending endpoint), False when chained
+    directly after a fast scan pass whose caller already holds the flag — so the
+    UI shows one continuous scan rather than flickering idle in between.
+    """
     import httpx
     from scanner import index_file
     try:
@@ -350,7 +367,8 @@ async def _run_pending_deep_scans():
             files = r.json()
 
         log.info("Deep scan pending: %d files queued", len(files))
-        STATUS["scanning"] = True
+        if manage_status:
+            STATUS["scanning"] = True
         STATUS["scan_progress"]["phase"] = "indexing"
         STATUS["scan_progress"]["total"] = len(files)
         STATUS["scan_progress"]["done"] = 0
@@ -369,8 +387,9 @@ async def _run_pending_deep_scans():
                 STATUS["scan_progress"]["errors"].append(str(e))
             STATUS["scan_progress"]["done"] = i + 1
     finally:
-        STATUS["scanning"] = False
-        STATUS["scan_progress"]["phase"] = "idle"
+        if manage_status:
+            STATUS["scanning"] = False
+            STATUS["scan_progress"]["phase"] = "idle"
         STATUS["scan_progress"]["current_file"] = None
 
 
