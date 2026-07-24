@@ -536,7 +536,7 @@ def index_file(
     source_root: str | None = None,
     relative_path_override: str | None = None,
     use_path_stat: bool = True,
-    hash_override: str | None = None,
+    previous_hash: str | None = None,
 ) -> dict | None:
     """Full analysis: hash + tags + librosa DR + waveform. Used for local sources
     and (via a downloaded temp file) for SMB deep-scans.
@@ -549,14 +549,14 @@ def index_file(
     for SMB temp files where those values would describe the temp file, not the
     real remote file, and would corrupt the fast-path identity check.
 
-    `hash_override`: reuse an already-known blake3 identity instead of recomputing
-    it from the file contents. The SMB turbo pass keys files by a header+size hash
-    (it never downloads the whole file); the enhanced pass passes that same hash
-    here so its results update the existing row rather than inserting a duplicate
-    under a different, full-content hash.
+    `previous_hash`: the turbo pass's provisional (header+size) identity for this
+    file. This pass always computes the true full-content BLAKE3 hash; when it
+    differs from `previous_hash`, the provisional value is reported so the app can
+    re-key the existing library row to the real content hash (rather than leaving
+    it on the provisional key or inserting a duplicate).
     """
     try:
-        h = hash_override if hash_override is not None else _hash_file(path)
+        h = _hash_file(path)
         tags = _read_tags(path)
         fmt = Path(display_path or path).suffix.lower().lstrip(".")
         bit_depth = _detect_bit_depth(path)
@@ -608,6 +608,9 @@ def index_file(
 
         record = {
             "blake3_hash": h,
+            # Report the provisional turbo-pass identity when this real content
+            # hash differs from it, so the app re-keys the existing row in place.
+            "previous_hash": previous_hash if previous_hash and previous_hash != h else None,
             "file_path": display_path or path,
             "format": fmt,
             "bitrate": tags.get("bitrate"),
@@ -798,7 +801,7 @@ def deep_scan_smb(
     config: dict,
     source_id: int | None = None,
     smb_root: str | None = None,
-    hash_override: str | None = None,
+    previous_hash: str | None = None,
 ) -> dict | None:
     """
     Full deep-scan for an SMB-sourced file: downloads the *entire* file to a
@@ -839,7 +842,7 @@ def deep_scan_smb(
             source_id=source_id,
             relative_path_override=relative_path,
             use_path_stat=False,
-            hash_override=hash_override,
+            previous_hash=previous_hash,
         )
     finally:
         try:
@@ -940,7 +943,7 @@ def deep_scan_smb_file(
     config: dict,
     waveform_path: str,
     source_id: int | None = None,
-    hash_override: str | None = None,
+    previous_hash: str | None = None,
 ) -> dict | None:
     """
     Entry point for deep-scanning a single SMB file given its stored
@@ -948,8 +951,9 @@ def deep_scan_smb_file(
     source's connection config. Rebuilds the UNC path the same way
     `scan_smb` does, then delegates to `deep_scan_smb`.
 
-    `hash_override`: the turbo-pass header+size identity for this file, so the
-    enhanced results update the same library row instead of inserting a duplicate.
+    `previous_hash`: the turbo-pass header+size identity for this file, so the
+    enhanced results (keyed by the real content hash) re-key the same library row
+    instead of inserting a duplicate.
     """
     host = config.get("host", "")
     share = config.get("share", "")
@@ -968,7 +972,7 @@ def deep_scan_smb_file(
         config,
         source_id=source_id,
         smb_root=smb_root,
-        hash_override=hash_override,
+        previous_hash=previous_hash,
     )
 
 

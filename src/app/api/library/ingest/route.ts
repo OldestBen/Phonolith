@@ -7,6 +7,7 @@ import { verifyInternalServiceToken } from '@/lib/auth'
 
 type IngestPayload = {
   blake3_hash: string
+  previous_hash?: string    // provisional turbo-pass hash to re-key from, if any
   file_path?: string        // deprecated but still accepted for old callers
   source_id?: number
   relative_path?: string
@@ -49,6 +50,23 @@ export async function POST(req: NextRequest) {
 
   if (!data.blake3_hash) {
     return NextResponse.json({ error: 'Missing required fields' }, { status: 400 })
+  }
+
+  // ── Re-key from the provisional turbo-pass hash ──────────────────────────────
+  // The SMB turbo pass inserts each file under a provisional header+size hash so
+  // it's discoverable/playable immediately. The enhanced pass then computes the
+  // true full-content BLAKE3 hash and reports the provisional one here. Repoint
+  // the existing row to the real hash so the analysis updates it in place. If a
+  // row with the real hash already exists (identical content from elsewhere),
+  // the provisional row is a true duplicate — drop it and let the upsert below
+  // fold the enhanced data into the surviving row.
+  if (data.previous_hash && data.previous_hash !== data.blake3_hash) {
+    const [dup] = await sql`SELECT 1 FROM library_files WHERE blake3_hash = ${data.blake3_hash} LIMIT 1`
+    if (dup) {
+      await sql`DELETE FROM library_files WHERE blake3_hash = ${data.previous_hash}`
+    } else {
+      await sql`UPDATE library_files SET blake3_hash = ${data.blake3_hash} WHERE blake3_hash = ${data.previous_hash}`
+    }
   }
 
   // ── Track find-or-create ────────────────────────────────────────────────────
