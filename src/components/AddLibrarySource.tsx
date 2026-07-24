@@ -23,6 +23,7 @@ function Field({ label, hint, children }: { label: string; hint?: string; childr
 }
 
 type PingStatus = 'idle' | 'pinging' | 'reachable' | 'unreachable'
+type TestStatus = 'idle' | 'testing' | 'ok' | 'fail'
 
 export default function AddLibrarySource({ onClose, onSaved }: Props) {
   const [type, setType] = useState<SourceType>('local')
@@ -32,6 +33,8 @@ export default function AddLibrarySource({ onClose, onSaved }: Props) {
   const [error, setError] = useState<string | null>(null)
   const [pingStatus, setPingStatus] = useState<PingStatus>('idle')
   const [pingMsg, setPingMsg] = useState('')
+  const [testStatus, setTestStatus] = useState<TestStatus>('idle')
+  const [testMsg, setTestMsg] = useState('')
 
   const set = (key: string, val: string) => setConfig(c => ({ ...c, [key]: val }))
 
@@ -68,6 +71,37 @@ export default function AddLibrarySource({ onClose, onSaved }: Props) {
       setPingMsg('Request failed')
     }
     setTimeout(() => { setPingStatus('idle'); setPingMsg('') }, 8000)
+  }
+
+  // Validates the actual config against the analyst: for SMB this authenticates
+  // and lists the share; for local/nfs/iscsi it checks the path resolves inside
+  // the analyst container and counts audio files. This is the "does it really
+  // work" check, distinct from ping's "is the host reachable".
+  const handleTest = async () => {
+    setTestStatus('testing')
+    setTestMsg('')
+    try {
+      const r = await fetch('/api/library/test-source', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ type, config }),
+      })
+      const d = await r.json()
+      if (d.ok) {
+        setTestStatus('ok')
+        setTestMsg(
+          typeof d.files_found === 'number'
+            ? `Connected · ${d.files_found} item${d.files_found === 1 ? '' : 's'} visible`
+            : 'Connected',
+        )
+      } else {
+        setTestStatus('fail')
+        setTestMsg(d.error ?? 'Test failed')
+      }
+    } catch {
+      setTestStatus('fail')
+      setTestMsg('Request failed')
+    }
   }
 
   const handleSave = async () => {
@@ -121,7 +155,11 @@ export default function AddLibrarySource({ onClose, onSaved }: Props) {
               {(['local', 'smb', 'nfs', 'iscsi'] as SourceType[]).map(t => (
                 <button
                   key={t}
-                  onClick={() => { setType(t); setConfig({}) }}
+                  onClick={() => {
+                    setType(t); setConfig({})
+                    setPingStatus('idle'); setPingMsg('')
+                    setTestStatus('idle'); setTestMsg('')
+                  }}
                   className={`px-3 py-1.5 rounded-lg text-sm border font-medium transition-colors ${
                     type === t
                       ? 'bg-accent/20 border-accent/60 text-accent'
@@ -170,23 +208,37 @@ export default function AddLibrarySource({ onClose, onSaved }: Props) {
                   <input type="text" value={config.share ?? ''} onChange={e => set('share', e.target.value)} placeholder="Music" className={INPUT} />
                 </Field>
               </div>
-              {/* Network test */}
+              {/* Connection tests: reachability (TCP 445) vs credentials (SMB auth) */}
               {config.host && (
-                <div className="flex items-center gap-2">
-                  <button
-                    type="button"
-                    onClick={handlePing}
-                    disabled={pingStatus === 'pinging'}
-                    className="px-3 py-1.5 rounded-lg bg-surface-2 border border-border text-text-muted text-xs hover:text-text-primary hover:border-accent/30 transition-colors disabled:opacity-50"
-                  >
-                    {pingStatus === 'pinging' ? 'Testing…' : `Ping ${config.host}`}
-                  </button>
-                  {pingStatus === 'reachable' && (
-                    <span className="text-success text-xs">✓ {pingMsg}</span>
-                  )}
-                  {pingStatus === 'unreachable' && (
-                    <span className="text-danger text-xs">✗ {pingMsg}</span>
-                  )}
+                <div className="space-y-1.5">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <button
+                      type="button"
+                      onClick={handlePing}
+                      disabled={pingStatus === 'pinging'}
+                      title="Checks the host is reachable on the SMB port (445). Does not log in."
+                      className="px-3 py-1.5 rounded-lg bg-surface-2 border border-border text-text-muted text-xs hover:text-text-primary hover:border-accent/30 transition-colors disabled:opacity-50"
+                    >
+                      {pingStatus === 'pinging' ? 'Pinging…' : 'Test reachability'}
+                    </button>
+                    {pingStatus === 'reachable' && <span className="text-success text-xs">✓ {pingMsg}</span>}
+                    {pingStatus === 'unreachable' && <span className="text-danger text-xs">✗ {pingMsg}</span>}
+                  </div>
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <button
+                      type="button"
+                      onClick={handleTest}
+                      disabled={testStatus === 'testing' || !config.share}
+                      title={config.share
+                        ? 'Logs in with these credentials and lists the share.'
+                        : 'Enter a share name first.'}
+                      className="px-3 py-1.5 rounded-lg bg-surface-2 border border-border text-text-muted text-xs hover:text-text-primary hover:border-accent/30 transition-colors disabled:opacity-50"
+                    >
+                      {testStatus === 'testing' ? 'Authenticating…' : 'Test credentials'}
+                    </button>
+                    {testStatus === 'ok' && <span className="text-success text-xs">✓ {testMsg}</span>}
+                    {testStatus === 'fail' && <span className="text-danger text-xs">✗ {testMsg}</span>}
+                  </div>
                 </div>
               )}
               <div className="grid grid-cols-2 gap-3">
@@ -216,6 +268,23 @@ export default function AddLibrarySource({ onClose, onSaved }: Props) {
             >
               <input type="text" value={config.path ?? ''} onChange={e => set('path', e.target.value)} placeholder="/Volumes/Music" className={INPUT} />
             </Field>
+          )}
+
+          {/* Path validation for local/nfs/iscsi — mirrors SMB's credentials test */}
+          {(type === 'local' || type === 'nfs' || type === 'iscsi') && config.path && (
+            <div className="flex items-center gap-2 flex-wrap">
+              <button
+                type="button"
+                onClick={handleTest}
+                disabled={testStatus === 'testing'}
+                title="Checks the path resolves inside the analyst container and counts audio files."
+                className="px-3 py-1.5 rounded-lg bg-surface-2 border border-border text-text-muted text-xs hover:text-text-primary hover:border-accent/30 transition-colors disabled:opacity-50"
+              >
+                {testStatus === 'testing' ? 'Testing…' : 'Test path'}
+              </button>
+              {testStatus === 'ok' && <span className="text-success text-xs">✓ {testMsg}</span>}
+              {testStatus === 'fail' && <span className="text-danger text-xs">✗ {testMsg}</span>}
+            </div>
           )}
 
           {error && <p className="text-danger text-xs bg-danger/10 rounded-lg px-3 py-2">{error}</p>}
