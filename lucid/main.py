@@ -326,17 +326,41 @@ def _is_network_path(path: str) -> bool:
 
 
 def _register_smb(config: dict) -> None:
-    """Register an smbclient session for the given source config (blocking)."""
+    """Register an smbclient session for a source config (blocking).
+
+    Mirrors the analyst's register_smb_session: kernel CIFS clients and
+    libsmbclient use raw NTLM, but smbprotocol defaults to SPNEGO 'negotiate',
+    which some NAS/Samba servers reject with STATUS_LOGON_FAILURE despite valid
+    credentials. Try 'negotiate', then fall back to raw 'ntlm', then 'kerberos'.
+    """
     import smbclient
 
     host = config.get("host", "")
     username = config.get("username") or None
     password = config.get("password") or None
     domain = config.get("domain") or None
-    effective_user = username
-    if effective_user and domain:
-        effective_user = f"{domain}\\{effective_user}"
-    smbclient.register_session(host, username=effective_user, password=password)
+    user = username
+    if user and domain:
+        user = f"{domain}\\{user}"
+
+    errors: list[str] = []
+    for proto in ("negotiate", "ntlm", "kerberos"):
+        try:
+            try:
+                smbclient.register_session(host, username=user, password=password, auth_protocol=proto)
+            except TypeError:
+                if proto != "negotiate":
+                    raise
+                smbclient.register_session(host, username=user, password=password)
+            return
+        except Exception as exc:  # noqa: BLE001
+            errors.append(f"{proto}: {exc}")
+            try:
+                smbclient.delete_session(host)
+            except Exception:  # noqa: BLE001
+                pass
+
+    raise RuntimeError(f"SMB authentication to {host} failed (negotiate/ntlm/kerberos): {'; '.join(errors)}")
 
 
 def _smb_size(smb_path: str, config: dict) -> int:

@@ -188,11 +188,9 @@ def _test_source_sync(src_type: str, config: dict) -> dict:
     elif src_type == "smb":
         import socket
         import smbclient
+        from scanner import register_smb_session
         host = config.get("host", "")
         share = config.get("share", "")
-        username = config.get("username", "")
-        password = config.get("password", "")
-        domain = config.get("domain", "")
         if not host or not share:
             return {"ok": False, "error": "Host and share name are required"}
         # Step 1: TCP reachability
@@ -201,12 +199,9 @@ def _test_source_sync(src_type: str, config: dict) -> dict:
                 pass
         except OSError:
             return {"ok": False, "error": f"Cannot reach {host}:445 — is the host online and SMB enabled?"}
-        # Step 2: SMB auth + listing
+        # Step 2: SMB auth (tries negotiate → ntlm → kerberos) + listing
         try:
-            effective_user = username or None
-            if effective_user and domain:
-                effective_user = f"{domain}\\{effective_user}"
-            smbclient.register_session(host, username=effective_user, password=password or None)
+            register_smb_session(config)
             smb_path = rf"\\{host}\{share}"
             entries = list(smbclient.scandir(smb_path))
             return {"ok": True, "files_found": len(entries)}

@@ -1,5 +1,6 @@
 import hashlib
 import io
+import logging
 import os
 import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -12,6 +13,8 @@ try:
 except (AttributeError, PermissionError):
     pass
 
+log = logging.getLogger("analyst.scanner")
+
 APP_URL = os.environ.get("APP_URL", "http://app:3000")
 # Must match the fallback in src/lib/auth.ts's getInternalServiceToken().
 INTERNAL_SERVICE_TOKEN = os.environ.get("INTERNAL_SERVICE_TOKEN") or "phonolith-dev-internal-token-not-for-production"
@@ -21,6 +24,56 @@ AUDIO_EXTENSIONS = {'.flac', '.mp3', '.aac', '.m4a', '.ogg', '.wav', '.aiff', '.
 FILE_DB: dict[str, dict] = {}
 
 ProgressCb = Callable[[int, int, str | None, str | None], None] | None
+
+
+def register_smb_session(config: dict) -> str:
+    """Register an smbclient session, working around NAS/Samba auth quirks.
+
+    Kernel CIFS clients (Linux/macOS mount, Proxmox) and libsmbclient (Plex,
+    Roon) authenticate with raw NTLM. smbprotocol instead defaults to SPNEGO
+    ``auth_protocol='negotiate'``, which a number of NAS/Samba servers mishandle
+    — or on which they enforce Extended Protection for Authentication — and
+    reject with ``STATUS_LOGON_FAILURE`` even when the credentials are valid
+    everywhere else. So we try 'negotiate' first (correct for AD/Kerberos
+    deployments), then fall back to raw 'ntlm', then 'kerberos', logging each
+    attempt. Returns the auth protocol that succeeded; raises if all fail.
+    """
+    import smbclient
+
+    host = config.get("host", "")
+    username = config.get("username") or None
+    password = config.get("password") or None
+    domain = config.get("domain") or None
+    user = username
+    if user and domain:
+        user = f"{domain}\\{user}"
+
+    errors: list[str] = []
+    for proto in ("negotiate", "ntlm", "kerberos"):
+        try:
+            try:
+                smbclient.register_session(host, username=user, password=password, auth_protocol=proto)
+            except TypeError:
+                # Ancient smbprotocol without the auth_protocol kwarg — only the
+                # default negotiate path exists; nothing else to try.
+                if proto != "negotiate":
+                    raise
+                smbclient.register_session(host, username=user, password=password)
+            if proto != "negotiate":
+                log.info("SMB auth for %s succeeded via auth_protocol=%s (negotiate was rejected)", host, proto)
+            return proto
+        except Exception as exc:  # noqa: BLE001 — collect and try the next protocol
+            errors.append(f"{proto}: {exc}")
+            # Drop any half-open connection so the next protocol starts clean.
+            try:
+                smbclient.delete_session(host)
+            except Exception:  # noqa: BLE001
+                pass
+
+    raise RuntimeError(
+        f"SMB authentication to {host} failed for every method "
+        f"(negotiate, ntlm, kerberos): {'; '.join(errors)}"
+    )
 
 
 def _hash_file(path: str) -> str:
@@ -813,15 +866,7 @@ def deep_scan_smb(
     import smbclient
     import tempfile
 
-    host = config.get("host", "")
-    username = config.get("username") or None
-    password = config.get("password") or None
-    domain = config.get("domain") or None
-
-    effective_user = username
-    if effective_user and domain:
-        effective_user = f"{domain}\\{effective_user}"
-    smbclient.register_session(host, username=effective_user, password=password)
+    register_smb_session(config)
 
     relative_path = None
     if smb_root and smb_path.startswith(smb_root):
@@ -861,15 +906,9 @@ def scan_smb(
 
     host = config.get("host", "")
     share = config.get("share", "")
-    username = config.get("username") or None
-    password = config.get("password") or None
-    domain = config.get("domain") or None
     subfolder = config.get("subfolder", "").strip("/\\")
 
-    effective_user = username
-    if effective_user and domain:
-        effective_user = f"{domain}\\{effective_user}"
-    smbclient.register_session(host, username=effective_user, password=password)
+    register_smb_session(config)
 
     smb_root = rf"\\{host}\{share}"
     if subfolder:
