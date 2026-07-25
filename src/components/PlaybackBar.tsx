@@ -3,6 +3,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import type { LucidStatus, SignalPathState } from '@/lib/types'
 import SignalPath from './SignalPath'
+import SeekBar from './SeekBar'
 import EndpointPickerModal from './EndpointPickerModal'
 import { useBrowserPlayer } from '@/contexts/BrowserPlayerContext'
 import { useSelectedEndpoint, endpointLabel } from '@/lib/endpoint'
@@ -205,14 +206,15 @@ export default function PlaybackBar() {
   const endpointPicker = showEndpointPicker && <EndpointPickerModal onClose={() => setShowEndpointPicker(false)} />
 
   if (isBrowserActive) {
-    const progress = browserPlayer.duration > 0 ? (browserPlayer.currentTime / browserPlayer.duration) * 100 : 0
     return (
       <>
         {endpointPicker}
         <div className="fixed bottom-0 left-16 right-0 z-30 border-t border-border bg-surface/95 backdrop-blur-sm">
-          <div className="h-0.5 bg-accent/20">
-            <div className="h-full bg-accent transition-all duration-1000" style={{ width: `${progress}%` }} />
-          </div>
+          <SeekBar
+            positionMs={browserPlayer.currentTime}
+            durationMs={browserPlayer.duration}
+            onSeek={browserPlayer.seek}
+          />
 
           <div className="flex items-center gap-4 px-4 py-2.5">
             <div className="flex items-center gap-3 min-w-0 flex-1">
@@ -274,7 +276,6 @@ export default function PlaybackBar() {
   const playing = sp.status === 'playing'
   const paused = sp.status === 'paused'
   const hasTrack = sp.source_file !== null
-  const progress = sp.duration_ms > 0 ? (sp.position_ms / sp.duration_ms) * 100 : 0
   const trackName = basename(sp.source_file)
 
   return (
@@ -348,19 +349,12 @@ export default function PlaybackBar() {
 
       {/* Bottom bar */}
       <div className="fixed bottom-0 left-16 right-0 z-30 border-t border-border bg-surface/95 backdrop-blur-sm">
-        {/* Progress bar */}
-        <div
-          className="h-0.5 bg-accent/20 cursor-pointer group"
-          onClick={e => {
-            const pct = e.nativeEvent.offsetX / (e.currentTarget as HTMLElement).offsetWidth
-            if (sp.duration_ms > 0) cmd('seek', { ms: Math.floor(pct * sp.duration_ms) })
-          }}
-        >
-          <div
-            className="h-full bg-accent transition-all duration-1000 group-hover:bg-accent/80"
-            style={{ width: `${progress}%` }}
-          />
-        </div>
+        {/* Progress / seek bar */}
+        <SeekBar
+          positionMs={sp.position_ms}
+          durationMs={sp.duration_ms}
+          onSeek={ms => cmd('seek', { ms })}
+        />
 
         {/* Signal path — always visible, not hidden behind a toggle */}
         {hasTrack && (

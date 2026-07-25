@@ -1,6 +1,6 @@
 'use client'
 
-import { useCallback, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 
 /**
  * Browser playback endpoint — the RAAT model applied to the Web Audio API.
@@ -48,6 +48,7 @@ export interface GaplessPlayer {
   pause: () => void
   resume: () => void
   stop: () => void
+  seek: (ms: number) => void
   setVolume: (v: number) => void
   setQuality: (q: StreamQuality) => void
 }
@@ -73,6 +74,7 @@ export function useGaplessPlayer(): GaplessPlayer {
   const queueRef = useRef<string[]>([])
   const queueIndexRef = useRef(0)
   const nextTrackRef = useRef<ScheduledTrack | null>(null)
+  const currentTrackRef = useRef<ScheduledTrack | null>(null)
   const qualityRef = useRef<StreamQuality>('lossless')
 
   const [isPlaying, setIsPlaying] = useState(false)
@@ -117,6 +119,7 @@ export function useGaplessPlayer(): GaplessPlayer {
     node.connect(gainRef.current!)
     node.start(when, offset)
     sourceRef.current = node
+    currentTrackRef.current = track
     startedAtCtxTimeRef.current = when - offset
     setCurrentHash(track.hash)
     setDuration(track.buffer.duration * 1000)
@@ -165,7 +168,12 @@ export function useGaplessPlayer(): GaplessPlayer {
     queueRef.current = hashes
     queueIndexRef.current = 0
     nextTrackRef.current = null
-    sourceRef.current?.stop()
+    // Clear onended before stopping: otherwise the outgoing node's track-advance
+    // handler can fire mid-switch and schedule the wrong track from the new queue.
+    if (sourceRef.current) {
+      sourceRef.current.onended = null
+      sourceRef.current.stop()
+    }
 
     try {
       const buffer = await fetchAndDecode(ctx, hashes[0], qualityRef.current)
@@ -209,14 +217,43 @@ export function useGaplessPlayer(): GaplessPlayer {
   }, [])
 
   const stop = useCallback(() => {
-    sourceRef.current?.stop()
+    const node = sourceRef.current
+    if (node) {
+      node.onended = null  // don't let stop() trip the track-advance handler
+      node.stop()
+    }
     sourceRef.current = null
+    currentTrackRef.current = null
     queueRef.current = []
     nextTrackRef.current = null
     setIsPlaying(false)
     setCurrentHash(null)
     setSignalPath(null)
   }, [])
+
+  // Seek within the current track. The whole track is already decoded into an
+  // AudioBuffer, so this is instant and needs no network round-trip: an
+  // AudioBufferSourceNode can't have its position moved, so we stop the current
+  // node and start a fresh one from the requested offset (the same trick
+  // setQuality uses). Playback keeps its play/pause state across the seek.
+  const seek = useCallback((ms: number) => {
+    const ctx = ctxRef.current
+    const track = currentTrackRef.current
+    const node = sourceRef.current
+    if (!ctx || !track || !node) return
+
+    const offset = Math.max(0, Math.min(ms / 1000, track.buffer.duration))
+    const wasPlaying = isPlaying
+
+    node.onended = null  // this stop() is a seek, not a track advance
+    try { node.stop() } catch { /* already stopped */ }
+
+    scheduleNext(ctx, track, ctx.currentTime, offset)
+    setCurrentTime(offset * 1000)
+    // scheduleNext starts the node immediately; if we were paused, re-suspend so
+    // the seek doesn't secretly resume playback.
+    if (!wasPlaying) ctx.suspend()
+  }, [scheduleNext, isPlaying])
 
   const setVolume = useCallback((v: number) => {
     if (gainRef.current) gainRef.current.gain.value = Math.max(0, Math.min(1, v))
@@ -230,6 +267,17 @@ export function useGaplessPlayer(): GaplessPlayer {
     return (ctx.currentTime - startedAtCtxTimeRef.current) * 1000
   }, [isPlaying, currentTime])
 
+  // Drive a ~4 Hz re-render while playing so the position readout and seek bar
+  // advance smoothly, instead of only jumping when some other state changes.
+  useEffect(() => {
+    if (!isPlaying) return
+    const id = setInterval(() => {
+      const ctx = ctxRef.current
+      if (ctx) setCurrentTime((ctx.currentTime - startedAtCtxTimeRef.current) * 1000)
+    }, 250)
+    return () => clearInterval(id)
+  }, [isPlaying])
+
   return {
     isPlaying,
     currentHash,
@@ -242,6 +290,7 @@ export function useGaplessPlayer(): GaplessPlayer {
     pause,
     resume,
     stop,
+    seek,
     setVolume,
     setQuality,
   }
