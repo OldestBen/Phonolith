@@ -209,7 +209,7 @@ export default function PlaybackBar() {
     return (
       <>
         {endpointPicker}
-        <div className="fixed bottom-0 left-16 right-0 z-30 border-t border-border bg-surface/95 backdrop-blur-sm">
+        <div className="fixed bottom-0 md:left-56 right-0 z-30 border-t border-border bg-surface/95 backdrop-blur-sm">
           <SeekBar
             positionMs={browserPlayer.currentTime}
             durationMs={browserPlayer.duration}
@@ -348,7 +348,7 @@ export default function PlaybackBar() {
       )}
 
       {/* Bottom bar */}
-      <div className="fixed bottom-0 left-16 right-0 z-30 border-t border-border bg-surface/95 backdrop-blur-sm">
+      <div className="fixed bottom-0 md:left-56 right-0 z-30 border-t border-border bg-surface/95 backdrop-blur-sm">
         {/* Progress / seek bar */}
         <SeekBar
           positionMs={sp.position_ms}

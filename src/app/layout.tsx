@@ -1,20 +1,19 @@
 import type { Metadata } from 'next'
-import { Inter, Playfair_Display } from 'next/font/google'
+import { JetBrains_Mono } from 'next/font/google'
 import './globals.css'
 import Sidebar from '@/components/Sidebar'
-import Notifications from '@/components/Notifications'
+import AppHeader from '@/components/AppHeader'
 import PlaybackBar from '@/components/PlaybackBar'
 import { BrowserPlayerProvider } from '@/contexts/BrowserPlayerContext'
+import { PageHeaderProvider } from '@/contexts/PageHeaderContext'
 
-const inter = Inter({
-  variable: '--font-geist-sans',
+// Phonolith runs entirely in monospace at "pro-audio instrument panel"
+// density — see docs/DESIGN_SYSTEM.md. This replaced Inter (sans) and
+// Playfair Display (serif, formerly used only for the lyrics reader).
+const jetbrainsMono = JetBrains_Mono({
+  variable: '--font-mono',
   subsets: ['latin'],
-})
-
-const playfair = Playfair_Display({
-  variable: '--font-playfair',
-  subsets: ['latin'],
-  style: ['normal', 'italic'],
+  weight: ['300', '400', '500', '600', '700'],
 })
 
 export const metadata: Metadata = {
@@ -32,14 +31,26 @@ export default function RootLayout({
 }) {
   return (
     <html lang="en">
-      <body className={`${inter.variable} ${playfair.variable} font-sans`}>
+      <body className={`${jetbrainsMono.variable} font-mono text-sm`}>
         <BrowserPlayerProvider>
-          <Sidebar />
-          <Notifications />
-          <main className="ml-16 pb-16">
-            {children}
-          </main>
-          <PlaybackBar />
+          <PageHeaderProvider>
+            <Sidebar />
+            {/* ml-56 clears the fixed desktop sidebar (w-56). AppHeader is
+                position:sticky (not a nested overflow-y-auto scroll
+                container) deliberately: several existing pages (e.g. /docs'
+                IntersectionObserver-based TOC highlighting) assume the
+                document itself is the scrolling element, and a nested scroll
+                box would misalign that root. Sticky achieves the same
+                "header stays visible" result without changing the scroll
+                model any existing page relies on. */}
+            <div className="md:ml-56">
+              <AppHeader />
+              <main className="pb-16">
+                {children}
+              </main>
+            </div>
+            <PlaybackBar />
+          </PageHeaderProvider>
         </BrowserPlayerProvider>
       </body>
     </html>

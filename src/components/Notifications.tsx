@@ -55,13 +55,13 @@ export default function Notifications() {
     : 0
 
   return (
-    <div className="fixed top-3 right-4 z-50" ref={panelRef}>
+    <div className="relative shrink-0" ref={panelRef}>
       <button
         onClick={() => setOpen(o => !o)}
         aria-label="Notifications"
-        className="relative w-9 h-9 rounded-lg flex items-center justify-center bg-surface border border-border hover:border-accent/40 transition-colors"
+        className="relative w-8 h-8 rounded-lg flex items-center justify-center bg-surface border border-border hover:border-accent/40 transition-colors"
       >
-        <svg className="w-[18px] h-[18px] text-text-muted" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round">
+        <svg className="w-4 h-4 text-text-muted" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round">
           <path d="M18 8A6 6 0 006 8c0 7-3 9-3 9h18s-3-2-3-9"/>
           <path d="M13.73 21a2 2 0 01-3.46 0"/>
         </svg>
@@ -71,7 +71,7 @@ export default function Notifications() {
       </button>
 
       {open && (
-        <div className="absolute top-11 right-0 w-80 bg-surface border border-border rounded-xl shadow-2xl overflow-hidden">
+        <div className="absolute top-10 right-0 w-80 bg-surface border border-border rounded-xl shadow-2xl overflow-hidden">
           <div className="px-4 py-3 border-b border-border flex items-center justify-between">
             <span className="text-text-primary text-sm font-semibold">Notifications</span>
             {scanning && (

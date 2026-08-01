@@ -9,21 +9,30 @@ const config: Config = {
   theme: {
     extend: {
       colors: {
-        background: '#08080a',
-        surface: '#111113',
-        'surface-2': '#1a1a1e',
+        // Retro-futurist "instrument panel" palette — see docs/DESIGN_SYSTEM.md.
+        // Ported 1:1 from the Claude Design mockup's `const C = {...}` palette
+        // so every screen shares one source of truth for tone.
+        background: '#0c0c0e',
+        surface: '#18181b',
+        'surface-2': '#1c1c20',
         border: '#27272a',
-        accent: '#a78bfa',
-        'accent-dim': '#7c3aed',
-        'text-primary': '#fafafa',
-        'text-muted': '#71717a',
-        success: '#34d399',
-        warning: '#f59e0b',
+        accent: '#a78bfa',        // mockup: vio / VL
+        'accent-dim': '#7c3aed',  // mockup: V
+        'accent-bright': '#c4b5fd',
+        'text-primary': '#f4f4f5',   // mockup: bright — headings / high emphasis
+        'text-secondary': '#d4d4d8', // mockup: txt — default body/data text
+        'text-muted': '#a1a1aa',     // mockup: dim — secondary labels
+        'text-faint': '#71717a',     // mockup: mut — de-emphasized labels
+        'text-ghost': '#52525b',     // mockup: faint — placeholders, inactive
+        success: '#4ade80',
+        warning: '#facc15',
         danger: '#f87171',
+        orange: '#fb923c',
+        amber: '#ffb340', // VFD/VU-meter accent — distinct from `warning`
       },
       fontFamily: {
-        sans: ['var(--font-geist-sans)', 'system-ui', 'sans-serif'],
-        serif: ['var(--font-playfair)', 'Georgia', 'serif'],
+        sans: ['var(--font-mono)', 'ui-monospace', 'SFMono-Regular', 'Menlo', 'monospace'],
+        mono: ['var(--font-mono)', 'ui-monospace', 'SFMono-Regular', 'Menlo', 'monospace'],
       },
       fontSize: {
         xs: ['11px', { lineHeight: '1.5' }],
@@ -33,6 +42,9 @@ const config: Config = {
         xl: ['22px', { lineHeight: '1.4' }],
         '3xl': ['30px', { lineHeight: '1.2' }],
         '5xl': ['48px', { lineHeight: '1.1' }],
+      },
+      letterSpacing: {
+        widest2: '.2em',
       },
     },
   },
