@@ -1,5 +1,5 @@
 import type { Metadata } from 'next'
-import { JetBrains_Mono } from 'next/font/google'
+import localFont from 'next/font/local'
 import './globals.css'
 import Sidebar from '@/components/Sidebar'
 import AppHeader from '@/components/AppHeader'
@@ -10,10 +10,18 @@ import { PageHeaderProvider } from '@/contexts/PageHeaderContext'
 // Phonolith runs entirely in monospace at "pro-audio instrument panel"
 // density — see docs/DESIGN_SYSTEM.md. This replaced Inter (sans) and
 // Playfair Display (serif, formerly used only for the lyrics reader).
-const jetbrainsMono = JetBrains_Mono({
+//
+// Self-hosted (not next/font/google): that font's build-time fetch to
+// fonts.googleapis.com/fonts.gstatic.com has no network path from the CI
+// runner and fails the build. This is the same single variable-font file
+// Google serves for every static weight in the latin subset (300-700), so
+// one file + a weight range covers all of them, same as their own CSS does.
+const jetbrainsMono = localFont({
+  src: './fonts/JetBrainsMono-latin.woff2',
   variable: '--font-mono',
-  subsets: ['latin'],
-  weight: ['300', '400', '500', '600', '700'],
+  weight: '300 700',
+  style: 'normal',
+  display: 'swap',
 })
 
 export const metadata: Metadata = {

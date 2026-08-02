@@ -1,224 +1,39 @@
 'use client'
 
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useMemo } from 'react'
 import Link from 'next/link'
 import { useParams } from 'next/navigation'
-import type { Artist, Song, VizConnections } from '@/lib/types'
+import type { Artist, VizConnections } from '@/lib/types'
+import { usePageHeader } from '@/contexts/PageHeaderContext'
+import ArtistViz, { decadeOf, type SongData, type VizFilters } from '@/components/ArtistViz'
+import VizControls, { type FocusInfo } from '@/components/VizControls'
 
-// ── Filter state ──────────────────────────────────────────────────────────────
-export interface ActiveFilters {
-  showCollaborator: boolean
-  showProducer: boolean
-  showEra: boolean
-  minPageviews: number
+function yearOf(date?: string): number | null {
+  if (!date) return null
+  const y = new Date(date).getFullYear()
+  return Number.isNaN(y) ? null : y
 }
 
-// ── VizControls panel ─────────────────────────────────────────────────────────
-function VizControls({
-  filters,
-  onChange,
-  songCount,
-}: {
-  filters: ActiveFilters
-  onChange: (f: ActiveFilters) => void
-  songCount: number
-}) {
-  return (
-    <div className="w-56 h-full bg-surface border-r border-border flex flex-col gap-4 p-4 overflow-y-auto">
-      <div>
-        <p className="text-text-muted text-xs uppercase tracking-widest mb-3 font-medium">Connections</p>
-        {(
-          [
-            { key: 'showCollaborator' as const, label: 'Collaborator' },
-            { key: 'showProducer' as const, label: 'Producer' },
-            { key: 'showEra' as const, label: 'Era' },
-          ]
-        ).map(({ key, label }) => (
-          <label key={key} className="flex items-center gap-2 cursor-pointer mb-2">
-            <input
-              type="checkbox"
-              checked={filters[key] as boolean}
-              onChange={e => onChange({ ...filters, [key]: e.target.checked })}
-              className="accent-accent w-3.5 h-3.5"
-            />
-            <span className="text-text-primary text-sm">{label}</span>
-          </label>
-        ))}
-      </div>
-
-      <div>
-        <p className="text-text-muted text-xs uppercase tracking-widest mb-2 font-medium">
-          Min. Pageviews
-        </p>
-        <input
-          type="range"
-          min={0}
-          max={10000}
-          step={500}
-          value={filters.minPageviews}
-          onChange={e => onChange({ ...filters, minPageviews: Number(e.target.value) })}
-          className="w-full accent-accent"
-        />
-        <span className="text-text-muted text-xs mt-1 block">
-          {filters.minPageviews === 0 ? 'All songs' : `≥ ${filters.minPageviews.toLocaleString()}`}
-        </span>
-      </div>
-
-      <div className="mt-auto pt-4 border-t border-border">
-        <p className="text-text-muted text-xs">{songCount} node{songCount !== 1 ? 's' : ''}</p>
-      </div>
-    </div>
-  )
-}
-
-// ── Node type ─────────────────────────────────────────────────────────────────
-interface NodeData {
-  id: number
-  label: string
-  x: number
-  y: number
-  vx: number
-  vy: number
-  radius: number
-  color: string
-}
-
-// ── ArtistViz canvas ──────────────────────────────────────────────────────────
-function ArtistViz({
-  songs,
-  connections,
-  filters,
-}: {
-  songs: Song[]
-  connections: VizConnections | null
-  filters: ActiveFilters
-}) {
-  const canvasRef = useRef<HTMLCanvasElement>(null)
-  const animRef = useRef<number>(0)
-  const nodesRef = useRef<NodeData[]>([])
-
-  // Build nodes whenever songs/filters change
-  useEffect(() => {
-    const canvas = canvasRef.current
-    if (!canvas) return
-
-    const w = canvas.offsetWidth || 800
-    const h = canvas.offsetHeight || 600
-    const visibleSongs = songs.filter(s => (s.pageviews ?? 0) >= filters.minPageviews)
-
-    nodesRef.current = visibleSongs.map(s => ({
-      id: s.genius_id,
-      label: s.title,
-      x: Math.random() * w,
-      y: Math.random() * h,
-      vx: (Math.random() - 0.5) * 0.5,
-      vy: (Math.random() - 0.5) * 0.5,
-      radius: Math.max(4, Math.min(18, 4 + ((s.pageviews ?? 0) / 5000))),
-      color: s.album_name ? '#a78bfa' : '#60a5fa',
-    }))
-  }, [songs, filters.minPageviews])
-
-  useEffect(() => {
-    const canvas = canvasRef.current
-    if (!canvas) return
-    const ctx = canvas.getContext('2d')
-    if (!ctx) return
-
-    const resize = () => {
-      canvas.width = canvas.offsetWidth
-      canvas.height = canvas.offsetHeight
-    }
-    resize()
-    window.addEventListener('resize', resize)
-
-    const draw = () => {
-      ctx.clearRect(0, 0, canvas.width, canvas.height)
-      ctx.fillStyle = '#08080a'
-      ctx.fillRect(0, 0, canvas.width, canvas.height)
-
-      const nodes = nodesRef.current
-      const idxMap = new Map(nodes.map((n, i) => [n.id, i]))
-
-      // Draw connections
-      if (connections) {
-        const drawEdges = (pairs: [number, number][], color: string) => {
-          ctx.strokeStyle = color
-          ctx.lineWidth = 0.6
-          ctx.globalAlpha = 0.35
-          for (const [a, b] of pairs) {
-            const na = nodes[idxMap.get(a) ?? -1]
-            const nb = nodes[idxMap.get(b) ?? -1]
-            if (!na || !nb) continue
-            ctx.beginPath()
-            ctx.moveTo(na.x, na.y)
-            ctx.lineTo(nb.x, nb.y)
-            ctx.stroke()
-          }
-          ctx.globalAlpha = 1
-        }
-        if (filters.showCollaborator) drawEdges(connections.collaborator, '#a78bfa')
-        if (filters.showProducer) drawEdges(connections.producer, '#34d399')
-        if (filters.showEra) drawEdges(connections.era, '#f59e0b')
-      }
-
-      // Draw nodes
-      for (const node of nodes) {
-        // Simple physics: drift + bounce
-        node.x += node.vx
-        node.y += node.vy
-        if (node.x < node.radius || node.x > canvas.width - node.radius) node.vx *= -1
-        if (node.y < node.radius || node.y > canvas.height - node.radius) node.vy *= -1
-
-        // Glow
-        const grd = ctx.createRadialGradient(node.x, node.y, 0, node.x, node.y, node.radius * 2.5)
-        grd.addColorStop(0, node.color + '44')
-        grd.addColorStop(1, 'transparent')
-        ctx.beginPath()
-        ctx.arc(node.x, node.y, node.radius * 2.5, 0, Math.PI * 2)
-        ctx.fillStyle = grd
-        ctx.fill()
-
-        // Circle
-        ctx.beginPath()
-        ctx.arc(node.x, node.y, node.radius, 0, Math.PI * 2)
-        ctx.fillStyle = node.color
-        ctx.fill()
-      }
-
-      animRef.current = requestAnimationFrame(draw)
-    }
-
-    animRef.current = requestAnimationFrame(draw)
-    return () => {
-      cancelAnimationFrame(animRef.current)
-      window.removeEventListener('resize', resize)
-    }
-  }, [connections, filters])
-
-  return (
-    <canvas
-      ref={canvasRef}
-      className="w-full h-full block"
-      style={{ background: '#08080a' }}
-    />
-  )
-}
-
-// ── Main page ─────────────────────────────────────────────────────────────────
 export default function VisualizePage() {
   const { id } = useParams<{ id: string }>()
   const [artist, setArtist] = useState<Artist | null>(null)
-  const [songs, setSongs] = useState<Song[]>([])
+  const [songs, setSongs] = useState<SongData[]>([])
   const [connections, setConnections] = useState<VizConnections | null>(null)
   const [loading, setLoading] = useState(true)
-  const [filters, setFilters] = useState<ActiveFilters>({
+
+  const [filters, setFilters] = useState<VizFilters>({
     showCollaborator: true,
     showProducer: true,
     showEra: false,
-    minPageviews: 0,
+    decadeFilter: 'all',
+    viewMode: 'galaxy',
   })
+  const [selectedSong, setSelectedSong] = useState<SongData | null>(null)
+  const [selectedAlbumName, setSelectedAlbumName] = useState<string | null>(null)
+  const [zoom, setZoom] = useState(1)
 
   useEffect(() => {
+    let cancelled = false
     async function load() {
       setLoading(true)
       try {
@@ -227,61 +42,131 @@ export default function VisualizePage() {
           fetch(`/api/visualize/${id}`),
           fetch(`/api/visualize/${id}/connections`),
         ])
-        if (artistRes.ok) {
-          const d = await artistRes.json()
-          setArtist(d.artist ?? d)
-        }
-        if (songsRes.ok) {
-          const d = await songsRes.json()
-          setSongs(d.songs ?? d)
-        }
-        if (connRes.ok) {
-          const d = await connRes.json()
-          setConnections(d.connections ?? d)
-        }
+        if (cancelled) return
+        // Each of these routes returns its payload bare (no wrapper object) —
+        // see /api/artist/[id], /api/visualize/[id], and its /connections route.
+        if (artistRes.ok) setArtist(await artistRes.json())
+        if (songsRes.ok) setSongs(await songsRes.json())
+        if (connRes.ok) setConnections(await connRes.json())
       } finally {
-        setLoading(false)
+        if (!cancelled) setLoading(false)
       }
     }
     load()
+    return () => { cancelled = true }
   }, [id])
 
-  const visibleCount = songs.filter(s => (s.pageviews ?? 0) >= filters.minPageviews).length
+  // Reset selection when the artist changes so stale focus data can't leak across pages
+  useEffect(() => {
+    setSelectedSong(null)
+    setSelectedAlbumName(null)
+  }, [id])
+
+  const decades = useMemo(() => {
+    const set = new Set<string>()
+    for (const s of songs) {
+      const d = decadeOf(s.release_date)
+      if (d) set.add(d)
+    }
+    return Array.from(set).sort()
+  }, [songs])
+
+  const edgeCounts = useMemo(() => ({
+    collaborator: connections?.collaborator.length ?? 0,
+    producer: connections?.producer.length ?? 0,
+    era: connections?.era.length ?? 0,
+  }), [connections])
+
+  const focus: FocusInfo | null = useMemo(() => {
+    const artistName = artist?.name ?? 'Unknown artist'
+
+    if (selectedSong) {
+      return {
+        title: selectedSong.title,
+        subtitle: `${artistName} · ${yearOf(selectedSong.release_date) ?? '—'}`,
+        rows: [
+          { k: 'Album', v: selectedSong.album_name ?? 'Singles' },
+          { k: 'Pageviews', v: (selectedSong.pageviews ?? 0).toLocaleString() },
+          { k: 'Released', v: selectedSong.release_date ? new Date(selectedSong.release_date).toLocaleDateString() : '—' },
+        ],
+      }
+    }
+
+    if (selectedAlbumName) {
+      const albumSongs = songs.filter(s => (s.album_name ?? 'Singles') === selectedAlbumName)
+      const years = albumSongs.map(s => yearOf(s.release_date)).filter((y): y is number => y !== null)
+      const yearLabel = years.length
+        ? (Math.min(...years) === Math.max(...years) ? String(Math.min(...years)) : `${Math.min(...years)}–${Math.max(...years)}`)
+        : '—'
+      const totalViews = albumSongs.reduce((sum, s) => sum + (s.pageviews ?? 0), 0)
+      return {
+        title: selectedAlbumName,
+        subtitle: `${artistName} · ${yearLabel} · ${albumSongs.length} song${albumSongs.length === 1 ? '' : 's'}`,
+        rows: [
+          { k: 'Songs', v: String(albumSongs.length) },
+          { k: 'Span', v: yearLabel },
+          { k: 'Total pageviews', v: totalViews.toLocaleString() },
+        ],
+      }
+    }
+
+    return null
+  }, [selectedSong, selectedAlbumName, songs, artist])
+
+  usePageHeader(
+    artist?.name ?? 'Galaxy',
+    songs.length ? `${songs.length} song${songs.length === 1 ? '' : 's'} · ${edgeCounts.collaborator + edgeCounts.producer + edgeCounts.era} edges` : ''
+  )
 
   return (
-    <div className="relative w-screen h-screen overflow-hidden bg-background -ml-16">
-      {/* Controls panel */}
-      <div className="absolute top-0 left-0 h-full z-10">
-        <VizControls
-          filters={filters}
-          onChange={setFilters}
-          songCount={visibleCount}
-        />
-      </div>
-
-      {/* Canvas area */}
-      <div className="absolute inset-0 ml-56">
-        {loading ? (
-          <div className="flex items-center justify-center h-full">
-            <div className="text-text-muted text-sm animate-pulse">Loading visualization…</div>
-          </div>
-        ) : (
-          <ArtistViz songs={songs} connections={connections} filters={filters} />
-        )}
-      </div>
-
-      {/* Back link + artist name */}
-      <div className="absolute top-4 right-4 z-20 flex items-center gap-3">
-        {artist && (
-          <span className="text-text-muted text-sm font-medium">{artist.name}</span>
-        )}
+    <div className="px-4 py-4 md:px-6 md:py-6">
+      <div className="mb-3">
         <Link
           href={`/artist/${id}`}
-          className="px-3 py-1.5 rounded-lg bg-surface border border-border text-text-primary text-xs
-                     font-medium hover:bg-surface-2 transition-colors"
+          className="inline-flex items-center gap-1.5 text-xs text-text-muted hover:text-text-primary transition-colors"
         >
-          ← Back
+          ← Back to artist
         </Link>
+      </div>
+
+      <div className="grid gap-4 items-start" style={{ gridTemplateColumns: '212px minmax(0,1fr)' }}>
+        <VizControls
+          filters={filters}
+          onFiltersChange={setFilters}
+          edgeCounts={edgeCounts}
+          decades={decades}
+          zoom={zoom}
+          focus={focus}
+        />
+
+        <div
+          className="relative overflow-hidden rounded-[10px] border border-border"
+          style={{
+            background: 'radial-gradient(circle at 50% 45%, #141021 0%, #0b0b0f 62%)',
+            height: 'calc(100vh - 190px)',
+            minHeight: 420,
+          }}
+        >
+          {loading ? (
+            <div className="flex items-center justify-center h-full">
+              <div className="text-text-muted text-sm animate-pulse">Loading visualization…</div>
+            </div>
+          ) : connections ? (
+            <ArtistViz
+              songs={songs}
+              connections={connections}
+              filters={filters}
+              onSongSelect={setSelectedSong}
+              onAlbumSelect={setSelectedAlbumName}
+              onZoomChange={setZoom}
+              onViewModeChange={mode => setFilters(f => ({ ...f, viewMode: mode }))}
+            />
+          ) : (
+            <div className="flex items-center justify-center h-full">
+              <div className="text-text-muted text-sm">Couldn&apos;t load this artist&apos;s connections.</div>
+            </div>
+          )}
+        </div>
       </div>
     </div>
   )

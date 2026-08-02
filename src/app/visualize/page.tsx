@@ -40,7 +40,8 @@ export default function VisualizeLandingPage() {
     setSearching(true)
     try {
       const r = await fetch(`/api/search?q=${encodeURIComponent(q)}`)
-      if (r.ok) setResults((await r.json()).artists ?? [])
+      // GET /api/search returns a bare array of artist hits, not { artists: [...] }
+      if (r.ok) setResults(await r.json())
     } catch {}
     setSearching(false)
   }, [])
