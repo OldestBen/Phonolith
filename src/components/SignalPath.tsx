@@ -1,6 +1,5 @@
 'use client'
 
-import { useEffect, useRef } from 'react'
 import type { SignalPathState } from '@/lib/types'
 
 // ── Individual node card ──────────────────────────────────────────────────────
@@ -13,62 +12,55 @@ interface NodeProps {
   bitPerfect?: boolean
   active: boolean
   dim?: boolean
+  rows?: [string, string][]
 }
 
-function PathNode({ stage, detail, sub, icon, bitPerfect, active, dim }: NodeProps) {
-  const borderColor = !active
-    ? 'border-border'
-    : bitPerfect === false
-    ? 'border-warning/60'
-    : 'border-accent/60'
-  const glowColor = !active
-    ? ''
-    : bitPerfect === false
-    ? 'shadow-[0_0_12px_rgba(245,158,11,0.15)]'
-    : 'shadow-[0_0_12px_rgba(167,139,250,0.2)]'
-
+function PathNode({ stage, detail, sub, icon, bitPerfect, active, dim, rows }: NodeProps) {
   return (
     <div
-      className={`
-        relative flex flex-col gap-1.5 px-4 py-3 rounded-xl border bg-surface
-        min-w-[130px] transition-all duration-500
-        ${borderColor} ${glowColor}
-        ${dim ? 'opacity-30' : 'opacity-100'}
-      `}
+      className="flex items-center gap-3.5 rounded-[7px] px-3.5 py-2.5 border shadow-[inset_0_1px_0_rgba(255,255,255,.08),inset_0_-18px_30px_rgba(0,0,0,.55)] transition-colors"
+      style={{
+        borderColor: active ? 'rgba(124,58,237,.5)' : '#27272a',
+        background: active
+          ? 'linear-gradient(180deg, rgba(76,29,149,.3), rgba(12,12,15,.95))'
+          : 'linear-gradient(180deg, rgba(26,26,30,.95), rgba(12,12,15,.96))',
+        boxShadow: active ? '0 0 26px rgba(109,40,217,.22)' : undefined,
+        opacity: dim ? 0.4 : 1,
+      }}
     >
-      <div className={`flex items-center gap-2 ${active ? 'text-accent' : 'text-text-muted'}`}>
-        <span className="w-4 h-4 shrink-0">{icon}</span>
-        <span className="text-[10px] font-semibold uppercase tracking-widest">{stage}</span>
+      <span
+        className="h-2 w-2 shrink-0 rounded-full"
+        style={{
+          background: active ? '#4ade80' : '#3f3f46',
+          boxShadow: active ? '0 0 9px #4ade80' : undefined,
+        }}
+      />
+      <div className="w-[124px] shrink-0">
+        <p className="m-0 flex items-center gap-1 text-[8.5px] uppercase tracking-[.24em]" style={{ color: active ? '#a78bfa' : '#52525b' }}>
+          <span className="h-3 w-3 opacity-70">{icon}</span>
+          {stage}
+        </p>
+        <p className="m-0 mt-0.5 text-[12.5px] font-semibold tracking-[.02em] text-text-primary truncate">{detail}</p>
+        {sub && <p className="m-0 mt-0.5 text-[9.5px] text-text-faint truncate">{sub}</p>}
       </div>
-      <span className={`text-xs font-mono font-medium leading-tight ${active ? 'text-text-primary' : 'text-text-muted'}`}>
-        {detail}
-      </span>
-      {sub && (
-        <span className="text-[10px] text-text-muted leading-tight truncate max-w-[160px]">{sub}</span>
+      {rows && rows.length > 0 && (
+        <div className="flex flex-1 min-w-0 gap-3.5 px-1">
+          {rows.map(([k, v]) => (
+            <div key={k} className="min-w-0">
+              <p className="m-0 text-[8.5px] uppercase tracking-[.14em] text-text-ghost whitespace-nowrap">{k}</p>
+              <p className="m-0 mt-0.5 text-[11px] text-text-secondary whitespace-nowrap">{v}</p>
+            </div>
+          ))}
+        </div>
       )}
-      {active && bitPerfect !== undefined && (
-        <span className={`text-[9px] uppercase tracking-wider font-bold ${bitPerfect ? 'text-success' : 'text-warning'}`}>
-          {bitPerfect ? '● Bit-perfect' : '● Converted'}
+      {bitPerfect !== undefined && (
+        <span
+          className="ml-auto shrink-0 text-[8.5px] tracking-[.1em] uppercase"
+          style={{ color: active ? '#c4b5fd' : '#71717a' }}
+        >
+          {bitPerfect ? '✓ bit-perfect' : '⚠ converted'}
         </span>
       )}
-    </div>
-  )
-}
-
-// ── Animated connector line ───────────────────────────────────────────────────
-
-function Connector({ active }: { active: boolean }) {
-  return (
-    <div className="flex items-center px-1 shrink-0">
-      <div className="relative w-10 h-px">
-        <div className={`absolute inset-0 ${active ? 'bg-accent/30' : 'bg-border'}`} />
-        {active && (
-          <div
-            className="absolute top-1/2 -translate-y-1/2 w-2 h-2 rounded-full bg-accent"
-            style={{ animation: 'signal-flow 1.6s linear infinite' }}
-          />
-        )}
-      </div>
     </div>
   )
 }
@@ -144,7 +136,7 @@ export default function SignalPath({ signalPath: sp, className = '' }: SignalPat
   const playing = sp.status === 'playing' || sp.status === 'paused'
   const active = sp.status === 'playing'
 
-  const nodes = [
+  const nodes: NodeProps[] = [
     {
       stage: 'Source',
       detail: playing ? sourceDetail(sp) : '—',
@@ -152,6 +144,7 @@ export default function SignalPath({ signalPath: sp, className = '' }: SignalPat
       icon: <FileIcon />,
       bitPerfect: true,
       active: playing,
+      rows: playing ? [['Format', sp.source_format ?? '—'], ['Channels', sp.source_channels === 2 ? 'Stereo' : sp.source_channels === 1 ? 'Mono' : `${sp.source_channels}ch`]] : undefined,
     },
     {
       stage: 'Decoder',
@@ -186,29 +179,14 @@ export default function SignalPath({ signalPath: sp, className = '' }: SignalPat
     },
   ]
 
+  // Stacked vertically, each card full-width — this is what actually gives
+  // the per-stage key/value rows room to breathe. A horizontal row of 4-5
+  // cards was tried first and didn't leave enough width per card once the
+  // fixed-width name column and bit-perfect badge were accounted for.
   return (
-    <div className={`flex items-center gap-0 overflow-x-auto pb-1 ${className}`}>
-      <style>{`
-        @keyframes signal-flow {
-          0%   { left: -8px; opacity: 0; }
-          10%  { opacity: 1; }
-          90%  { opacity: 1; }
-          100% { left: calc(100% + 8px); opacity: 0; }
-        }
-      `}</style>
-
-      {nodes.map((node, i) => (
-        <div key={node.stage} className="flex items-center">
-          <PathNode
-            stage={node.stage}
-            detail={node.detail}
-            sub={node.sub}
-            icon={node.icon}
-            bitPerfect={node.bitPerfect}
-            active={node.active}
-          />
-          {i < nodes.length - 1 && <Connector active={active} />}
-        </div>
+    <div className={`flex flex-col gap-2 ${className}`}>
+      {nodes.map(node => (
+        <PathNode key={node.stage} {...node} />
       ))}
     </div>
   )

@@ -3,7 +3,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import type { LucidStatus, SignalPathState } from '@/lib/types'
 import SignalPath from './SignalPath'
-import SeekBar from './SeekBar'
+import WaveformScrubber from './WaveformScrubber'
 import EndpointPickerModal from './EndpointPickerModal'
 import { useBrowserPlayer } from '@/contexts/BrowserPlayerContext'
 import { useSelectedEndpoint, endpointLabel } from '@/lib/endpoint'
@@ -41,50 +41,109 @@ function postNowPlaying(title: string | null, artist: string | null) {
   }).catch(() => {})
 }
 
-// ── Playback controls SVGs ────────────────────────────────────────────────────
+// ── Playback control icons — small and flat, matching the instrument-panel
+//    aesthetic. The mockup itself never modelled interactive transport (it's
+//    a static "now playing" strip reflecting whatever Lucid/AirPlay is doing
+//    externally), but real playback control is genuine functionality the
+//    real app needs, so it's kept — restyled to fit rather than dropped. ──
 
 const PrevIcon = () => (
-  <svg className="w-4 h-4" viewBox="0 0 24 24" fill="currentColor">
+  <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="currentColor">
     <path d="M6 6h2v12H6zm3.5 6l8.5 6V6z" />
   </svg>
 )
 
 const NextIcon = () => (
-  <svg className="w-4 h-4" viewBox="0 0 24 24" fill="currentColor">
+  <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="currentColor">
     <path d="M6 18l8.5-6L6 6v12zm2.5-6l5.5 4V8l-5.5 4zM16 6h2v12h-2z" />
   </svg>
 )
 
 const PlayIcon = () => (
-  <svg className="w-5 h-5" viewBox="0 0 24 24" fill="currentColor">
+  <svg className="w-4 h-4" viewBox="0 0 24 24" fill="currentColor">
     <path d="M8 5v14l11-7z" />
   </svg>
 )
 
 const PauseIcon = () => (
-  <svg className="w-5 h-5" viewBox="0 0 24 24" fill="currentColor">
+  <svg className="w-4 h-4" viewBox="0 0 24 24" fill="currentColor">
     <path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z" />
   </svg>
 )
 
 const StopIcon = () => (
-  <svg className="w-4 h-4" viewBox="0 0 24 24" fill="currentColor">
+  <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="currentColor">
     <path d="M6 6h12v12H6z" />
   </svg>
 )
 
-const GlassBoxIcon = () => (
-  <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75">
-    <polyline points="22 12 18 12 15 21 9 3 6 12 2 12" />
-  </svg>
-)
-
 const SpeakerIcon = () => (
-  <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75">
+  <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75">
     <path d="M11 5L6 9H2v6h4l5 4V5z" />
     <path d="M19.07 4.93a10 10 0 0 1 0 14.14M15.54 8.46a5 5 0 0 1 0 7.07" />
   </svg>
 )
+
+// ── Small shared bits ─────────────────────────────────────────────────────
+
+/** The mockup's flat outlined text button (used for "Signal path", endpoint, quality). */
+function DockButton({
+  children,
+  onClick,
+  active,
+}: {
+  children: React.ReactNode
+  onClick?: () => void
+  active?: boolean
+}) {
+  return (
+    <button
+      onClick={onClick}
+      className={`shrink-0 whitespace-nowrap rounded-md border px-2.5 py-1 text-[10px] transition-colors ${
+        active ? 'border-accent-dim/60 text-accent-bright' : 'border-[#3f3f46] text-text-secondary hover:border-accent-dim hover:bg-accent-dim/[.14]'
+      }`}
+      style={{ background: '#131316' }}
+    >
+      {children}
+    </button>
+  )
+}
+
+function TimeBadge({ value, dim }: { value: string; dim?: boolean }) {
+  return (
+    <span
+      className="shrink-0 rounded-[3px] border border-border px-1.5 py-0.5 text-[11px] font-bold tracking-[.12em]"
+      style={{
+        background: '#0a0a0c',
+        color: dim ? '#8a6a35' : '#ffb340',
+        textShadow: dim ? undefined : '0 0 8px rgba(255,179,64,.55)',
+        boxShadow: 'inset 0 0 10px rgba(0,0,0,.8)',
+      }}
+    >
+      {value}
+    </span>
+  )
+}
+
+function BitPerfectPill({ bitPerfect }: { bitPerfect: boolean }) {
+  return bitPerfect ? (
+    <span
+      className="hidden md:flex shrink-0 items-center gap-1.5 rounded-full border px-2.5 py-0.5 text-[9.5px] font-semibold tracking-[.06em]"
+      style={{
+        borderColor: 'rgba(124,58,237,.45)',
+        background: 'rgba(109,40,217,.3)',
+        color: '#c4b5fd',
+        boxShadow: '0 0 14px rgba(109,40,217,.35)',
+      }}
+    >
+      ✓ BIT-PERFECT
+    </span>
+  ) : (
+    <span className="hidden md:flex shrink-0 items-center gap-1.5 rounded-full border border-warning/40 bg-warning/10 px-2.5 py-0.5 text-[9.5px] font-semibold tracking-[.06em] text-warning">
+      ⚠ CONVERTED
+    </span>
+  )
+}
 
 // ── Main bar ──────────────────────────────────────────────────────────────────
 
@@ -209,63 +268,56 @@ export default function PlaybackBar() {
     return (
       <>
         {endpointPicker}
-        <div className="fixed bottom-0 md:left-56 right-0 z-30 border-t border-border bg-surface/95 backdrop-blur-sm">
-          <SeekBar
+        <div
+          className="fixed bottom-0 md:left-56 right-0 z-30 flex items-center gap-3.5 h-14 px-5 border-t border-border shadow-[inset_0_1px_0_rgba(255,255,255,.07)]"
+          style={{ background: 'linear-gradient(180deg,#1c1c21,#131316)' }}
+        >
+          <span className="w-4 shrink-0 text-center text-[13px] text-accent animate-panel-pulse">◉</span>
+
+          <div className="flex-[0_1_240px] min-w-[120px] overflow-hidden">
+            <p className="m-0 text-[11.5px] font-medium text-text-primary truncate">{browserTrackName ?? browserPlayer.currentHash}</p>
+            <p className="m-0 mt-px text-[10px] text-text-faint truncate">
+              This browser{browserPlayer.signalPath?.transcoded ? ' · transcoded' : ''}
+            </p>
+          </div>
+
+          <div className="flex items-center gap-1 shrink-0">
+            <button
+              onClick={() => browserPlayer.isPlaying ? browserPlayer.pause() : browserPlayer.resume()}
+              className="w-8 h-8 rounded-full flex items-center justify-center text-white shadow-[0_0_13px_rgba(109,40,217,.45)] hover:brightness-110 transition-[filter]"
+              style={{ background: '#6d28d9' }}
+            >
+              {browserPlayer.isPlaying ? <PauseIcon /> : <PlayIcon />}
+            </button>
+            <button onClick={() => browserPlayer.stop()} className="p-1.5 rounded-lg text-text-faint hover:text-accent transition-colors">
+              <StopIcon />
+            </button>
+          </div>
+
+          <TimeBadge value={formatTime(browserPlayer.currentTime)} />
+          <WaveformScrubber
+            hash={browserPlayer.currentHash}
             positionMs={browserPlayer.currentTime}
             durationMs={browserPlayer.duration}
             onSeek={browserPlayer.seek}
           />
+          <TimeBadge value={formatTime(browserPlayer.duration)} dim />
 
-          <div className="flex items-center gap-4 px-4 py-2.5">
-            <div className="flex items-center gap-3 min-w-0 flex-1">
-              <div className="w-8 h-8 rounded-lg bg-accent/20 border border-accent/30 flex items-center justify-center shrink-0">
-                <svg className="w-4 h-4 text-accent" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75">
-                  <rect x="2" y="3" width="20" height="14" rx="2" /><line x1="8" y1="21" x2="16" y2="21" /><line x1="12" y1="17" x2="12" y2="21" />
-                </svg>
-              </div>
-              <div className="min-w-0">
-                <p className="text-text-primary text-sm font-medium truncate">{browserTrackName ?? browserPlayer.currentHash}</p>
-                <p className="text-text-muted text-xs font-mono">
-                  {formatTime(browserPlayer.currentTime)} / {formatTime(browserPlayer.duration)} — This Browser
-                  {browserPlayer.signalPath?.transcoded ? ' (transcoded)' : ''}
-                </p>
-              </div>
-            </div>
-
-            <div className="flex items-center gap-1 shrink-0">
-              <button
-                onClick={() => browserPlayer.isPlaying ? browserPlayer.pause() : browserPlayer.resume()}
-                className="w-9 h-9 rounded-full bg-accent flex items-center justify-center text-white hover:bg-accent/80 transition-colors"
-              >
-                {browserPlayer.isPlaying ? <PauseIcon /> : <PlayIcon />}
-              </button>
-              <button
-                onClick={() => browserPlayer.stop()}
-                className="p-2 rounded-lg text-text-muted hover:text-accent transition-colors"
-              >
-                <StopIcon />
-              </button>
-            </div>
-
-            <div className="flex items-center gap-2 shrink-0">
-              <select
-                value={browserPlayer.quality}
-                onChange={e => browserPlayer.setQuality(e.target.value as StreamQuality)}
-                title="Network-adaptive streaming quality"
-                className="hidden sm:block bg-surface-2 border border-border text-text-muted text-xs rounded-lg px-2 py-1.5 focus:outline-none focus:border-accent transition-colors"
-              >
-                {QUALITY_OPTIONS.map(o => (
-                  <option key={o.value} value={o.value}>{o.label}</option>
-                ))}
-              </select>
-              <button
-                onClick={() => setShowEndpointPicker(true)}
-                className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border bg-surface-2 border-border text-text-muted hover:text-accent hover:border-accent/40 text-xs font-medium transition-colors"
-              >
-                <SpeakerIcon />
-                <span className="hidden sm:inline">{endpointLabel(endpoint)}</span>
-              </button>
-            </div>
+          <div className="hidden lg:flex items-center gap-2 shrink-0">
+            <select
+              value={browserPlayer.quality}
+              onChange={e => browserPlayer.setQuality(e.target.value as StreamQuality)}
+              title="Network-adaptive streaming quality"
+              className="rounded-md border border-[#3f3f46] px-2 py-1 text-[10px] text-text-secondary focus:outline-none focus:border-accent-dim"
+              style={{ background: '#131316' }}
+            >
+              {QUALITY_OPTIONS.map(o => (
+                <option key={o.value} value={o.value}>{o.label}</option>
+              ))}
+            </select>
+            <DockButton onClick={() => setShowEndpointPicker(true)}>
+              <span className="flex items-center gap-1.5"><SpeakerIcon />{endpointLabel(endpoint)}</span>
+            </DockButton>
           </div>
         </div>
       </>
@@ -274,178 +326,120 @@ export default function PlaybackBar() {
 
   const sp = status!.signal_path
   const playing = sp.status === 'playing'
-  const paused = sp.status === 'paused'
   const hasTrack = sp.source_file !== null
   const trackName = basename(sp.source_file)
+  const queueLen = status!.queue.tracks.length
+  const queuePos = status!.queue.position
 
   return (
     <>
       {endpointPicker}
-      {/* Glass-Box overlay */}
-      {showSignalPath && (
+
+      {/* Signal Path — full-screen Glass-Box overlay */}
+      {showSignalPath && hasTrack && (
         <div
-          className="fixed inset-0 z-40 bg-background/90 backdrop-blur-sm flex items-center justify-center p-8"
-          onClick={() => setShowSignalPath(false)}
+          className="fixed inset-0 z-[55] flex flex-col overflow-hidden px-7 py-6 backdrop-blur-[2px]"
+          style={{ background: 'radial-gradient(circle at 50% 40%, rgba(24,16,48,.97), rgba(6,6,8,.985))' }}
         >
-          <div
-            className="bg-surface border border-border rounded-2xl p-8 max-w-5xl w-full shadow-2xl"
-            onClick={e => e.stopPropagation()}
-          >
-            <div className="flex items-center justify-between mb-8">
-              <div>
-                <h2 className="text-text-primary text-lg font-bold">Signal Path</h2>
-                <p className="text-text-muted text-xs mt-0.5">Glass-Box view — end-to-end signal chain</p>
-              </div>
-              <div className="flex items-center gap-3">
-                {sp.bit_perfect ? (
-                  <span className="px-2.5 py-1 rounded-full bg-success/10 border border-success/20 text-success text-xs font-semibold">
-                    Bit-perfect
-                  </span>
-                ) : (
-                  <span className="px-2.5 py-1 rounded-full bg-warning/10 border border-warning/20 text-warning text-xs font-semibold">
-                    Format conversion active
-                  </span>
-                )}
-                <button
-                  onClick={() => setShowSignalPath(false)}
-                  className="w-8 h-8 rounded-lg border border-border flex items-center justify-center text-text-muted hover:text-accent transition-colors"
-                >
-                  ✕
-                </button>
-              </div>
+          <div className="flex items-start gap-4">
+            <div className="min-w-0">
+              <p className="m-0 text-[10px] uppercase tracking-[.28em] text-accent">Signal path</p>
+              <p className="m-0 mt-1 text-lg font-semibold text-text-primary truncate">{trackName}</p>
+              <p className="m-0 mt-0.5 text-[10.5px] text-text-faint truncate">{sp.source_file}</p>
             </div>
+            <div className="flex-1" />
+            <div className="flex items-center gap-2.5 shrink-0">
+              <BitPerfectPill bitPerfect={sp.bit_perfect} />
+              <DockButton onClick={() => setShowSignalPath(false)}>Close ✕</DockButton>
+            </div>
+          </div>
 
-            <SignalPath signalPath={sp} className="justify-center" />
+          <div className="flex flex-1 items-start justify-center min-h-0 overflow-y-auto py-4">
+            <div className="flex w-full max-w-[1080px] flex-col gap-3.5">
+              <SignalPath signalPath={sp} />
 
-            {/* Technical detail table */}
-            <div className="mt-8 grid grid-cols-2 md:grid-cols-4 gap-4">
-              {[
-                { label: 'Sample Rate', value: sp.source_sample_rate ? `${(sp.source_sample_rate / 1000).toFixed(1)} kHz` : '—' },
-                { label: 'Bit Depth', value: sp.source_bit_depth ? `${sp.source_bit_depth}-bit` : '—' },
-                { label: 'Channels', value: sp.source_channels === 2 ? 'Stereo' : sp.source_channels === 1 ? 'Mono' : `${sp.source_channels}ch` },
-                { label: 'Format', value: sp.source_format?.toUpperCase() ?? '—' },
-                { label: 'Decoder', value: sp.decoder ?? '—' },
-                { label: 'Transport', value: sp.transport },
-                { label: 'Device', value: sp.alsa_device },
-                { label: 'Endpoint', value: sp.endpoint_name ?? 'Default' },
-              ].map(({ label, value }) => (
-                <div key={label} className="bg-background rounded-xl border border-border/50 px-4 py-3">
-                  <p className="text-text-muted text-[10px] uppercase tracking-widest mb-1">{label}</p>
-                  <p className="text-text-primary text-sm font-mono font-medium">{value}</p>
+              <div className="rounded-[10px] border border-border px-4 py-3" style={{ background: 'rgba(16,16,18,.85)' }}>
+                <div className="flex justify-between mb-2">
+                  <p className="m-0 text-[9px] uppercase tracking-[.2em] text-text-ghost">Position</p>
+                  <p className="m-0 text-[10px] text-text-faint">
+                    {formatTime(sp.position_ms)} / {formatTime(sp.duration_ms)}
+                  </p>
                 </div>
-              ))}
-            </div>
-
-            {/* DSP chain */}
-            {sp.dsp_chain.length > 0 && (
-              <div className="mt-4 p-4 bg-warning/5 border border-warning/20 rounded-xl">
-                <p className="text-warning text-xs font-semibold mb-1">DSP Processing Active</p>
-                <p className="text-text-muted text-xs">{sp.dsp_chain.join(' → ')}</p>
+                <WaveformScrubber hash={null} positionMs={sp.position_ms} durationMs={sp.duration_ms} onSeek={ms => cmd('seek', { ms })} />
               </div>
-            )}
+
+              <div className="grid gap-2.5 sm:grid-cols-2">
+                <div className="rounded-[10px] border border-border px-3 py-2.5" style={{ background: 'rgba(16,16,18,.85)' }}>
+                  <p className="m-0 mb-1 text-[9px] uppercase tracking-[.16em] text-text-ghost">Queue</p>
+                  <p className="m-0 text-sm font-bold tracking-[.05em] text-amber [text-shadow:0_0_10px_rgba(255,179,64,.45)]">
+                    {queueLen} track{queueLen === 1 ? '' : 's'}
+                  </p>
+                  <p className="m-0 mt-0.5 text-[9.5px] text-text-ghost">position {queuePos + 1} of {Math.max(queueLen, 1)}</p>
+                </div>
+                <div className="rounded-[10px] border border-border px-3 py-2.5" style={{ background: 'rgba(16,16,18,.85)' }}>
+                  <p className="m-0 mb-1 text-[9px] uppercase tracking-[.16em] text-text-ghost">DSP</p>
+                  <p className="m-0 text-sm font-bold tracking-[.05em] text-amber [text-shadow:0_0_10px_rgba(255,179,64,.45)]">
+                    {sp.dsp_chain.length > 0 ? sp.dsp_chain.join(' → ') : 'Bypassed'}
+                  </p>
+                  <p className="m-0 mt-0.5 text-[9.5px] text-text-ghost">
+                    {sp.bit_perfect ? 'no resampling · no volume scaling' : 'format conversion active'}
+                  </p>
+                </div>
+              </div>
+            </div>
           </div>
         </div>
       )}
 
       {/* Bottom bar */}
-      <div className="fixed bottom-0 md:left-56 right-0 z-30 border-t border-border bg-surface/95 backdrop-blur-sm">
-        {/* Progress / seek bar */}
-        <SeekBar
-          positionMs={sp.position_ms}
-          durationMs={sp.duration_ms}
-          onSeek={ms => cmd('seek', { ms })}
-        />
+      <div
+        className="fixed bottom-0 md:left-56 right-0 z-30 flex items-center gap-3.5 h-14 px-5 border-t border-border shadow-[inset_0_1px_0_rgba(255,255,255,.07)]"
+        style={{ background: 'linear-gradient(180deg,#1c1c21,#131316)' }}
+      >
+        <span className={`w-4 shrink-0 text-center text-[13px] text-accent ${playing ? 'animate-panel-pulse' : 'opacity-40'}`}>◉</span>
 
-        {/* Signal path — always visible, not hidden behind a toggle */}
-        {hasTrack && (
-          <div className="hidden lg:block px-4 pt-2 border-b border-border/40">
-            <SignalPath signalPath={sp} className="scale-[0.85] origin-left" />
-          </div>
-        )}
+        <div className="flex-[0_1_240px] min-w-[120px] overflow-hidden">
+          <p className="m-0 text-[11.5px] font-medium text-text-primary truncate">{hasTrack ? trackName : 'Nothing playing'}</p>
+          <p className="m-0 mt-px text-[10px] text-text-faint truncate">
+            {hasTrack ? `Lucid → ${sp.alsa_device} · ${sp.endpoint_name ?? 'Default'}` : 'Lucid online — idle'}
+          </p>
+        </div>
 
-        <div className="flex items-center gap-4 px-4 py-2.5">
-          {/* Track info */}
-          <div className="flex items-center gap-3 min-w-0 flex-1">
-            <div className="w-8 h-8 rounded-lg bg-accent/20 border border-accent/30 flex items-center justify-center shrink-0">
-              <svg className="w-4 h-4 text-accent" viewBox="0 0 24 24" fill="currentColor">
-                <path d="M12 3v10.55c-.59-.34-1.27-.55-2-.55-2.21 0-4 1.79-4 4s1.79 4 4 4 4-1.79 4-4V7h4V3h-6z" />
-              </svg>
-            </div>
-            <div className="min-w-0">
-              <p className="text-text-primary text-sm font-medium truncate">
-                {hasTrack ? trackName : 'Nothing playing'}
-              </p>
-              <p className="text-text-muted text-xs font-mono">
-                {hasTrack
-                  ? `${formatTime(sp.position_ms)} / ${formatTime(sp.duration_ms)}`
-                  : 'Lucid online — idle'}
-              </p>
-            </div>
-          </div>
+        <div className="flex items-center gap-0.5 shrink-0">
+          <button onClick={() => cmd('queue/prev')} disabled={!hasTrack} className="p-1.5 rounded-lg text-text-faint hover:text-accent transition-colors disabled:opacity-30">
+            <PrevIcon />
+          </button>
+          <button
+            onClick={() => cmd(playing ? 'pause' : 'resume')}
+            disabled={!hasTrack}
+            className="w-8 h-8 rounded-full flex items-center justify-center text-white shadow-[0_0_13px_rgba(109,40,217,.45)] hover:brightness-110 transition-[filter] disabled:opacity-30"
+            style={{ background: '#6d28d9' }}
+          >
+            {playing ? <PauseIcon /> : <PlayIcon />}
+          </button>
+          <button onClick={() => cmd('queue/next')} disabled={!hasTrack} className="p-1.5 rounded-lg text-text-faint hover:text-accent transition-colors disabled:opacity-30">
+            <NextIcon />
+          </button>
+          <button onClick={() => cmd('stop')} disabled={!hasTrack} className="p-1.5 rounded-lg text-text-faint hover:text-accent transition-colors disabled:opacity-30">
+            <StopIcon />
+          </button>
+        </div>
 
-          {/* Controls */}
-          <div className="flex items-center gap-1 shrink-0">
-            <button
-              onClick={() => cmd('queue/prev')}
-              disabled={!hasTrack}
-              className="p-2 rounded-lg text-text-muted hover:text-accent transition-colors disabled:opacity-30"
-            >
-              <PrevIcon />
-            </button>
-            <button
-              onClick={() => cmd(playing ? 'pause' : 'resume')}
-              disabled={!hasTrack}
-              className="w-9 h-9 rounded-full bg-accent flex items-center justify-center text-white hover:bg-accent/80 transition-colors disabled:opacity-30"
-            >
-              {playing ? <PauseIcon /> : <PlayIcon />}
-            </button>
-            <button
-              onClick={() => cmd('queue/next')}
-              disabled={!hasTrack}
-              className="p-2 rounded-lg text-text-muted hover:text-accent transition-colors disabled:opacity-30"
-            >
-              <NextIcon />
-            </button>
-            <button
-              onClick={() => cmd('stop')}
-              disabled={!hasTrack}
-              className="p-2 rounded-lg text-text-muted hover:text-accent transition-colors disabled:opacity-30"
-            >
-              <StopIcon />
-            </button>
-          </div>
+        <TimeBadge value={hasTrack ? formatTime(sp.position_ms) : '—:—'} />
+        <WaveformScrubber hash={null} positionMs={sp.position_ms} durationMs={sp.duration_ms} onSeek={ms => cmd('seek', { ms })} />
+        <TimeBadge value={hasTrack ? formatTime(sp.duration_ms) : '—:—'} dim />
 
-          {/* Format badge + Glass-Box toggle */}
-          <div className="flex items-center gap-2 shrink-0">
-            {hasTrack && sp.source_bit_depth && sp.source_sample_rate && (
-              <span className={`hidden md:flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-mono font-semibold border ${
-                sp.bit_perfect
-                  ? 'bg-success/10 border-success/20 text-success'
-                  : 'bg-warning/10 border-warning/20 text-warning'
-              }`}>
-                {sp.source_bit_depth}bit / {(sp.source_sample_rate / 1000).toFixed(1)}kHz
-                {sp.bit_perfect ? ' ●' : ' ⚠'}
-              </span>
-            )}
-            <button
-              onClick={() => setShowSignalPath(s => !s)}
-              className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border text-xs font-medium transition-colors ${
-                showSignalPath
-                  ? 'bg-accent/20 border-accent/40 text-accent'
-                  : 'bg-surface-2 border-border text-text-muted hover:text-accent hover:border-accent/40'
-              }`}
-            >
-              <GlassBoxIcon />
-              <span className="hidden sm:inline">Signal Path</span>
-            </button>
-            <button
-              onClick={() => setShowEndpointPicker(true)}
-              className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border bg-surface-2 border-border text-text-muted hover:text-accent hover:border-accent/40 text-xs font-medium transition-colors"
-            >
-              <SpeakerIcon />
-              <span className="hidden sm:inline">{endpointLabel(endpoint)}</span>
-            </button>
-          </div>
+        <div className="flex items-center gap-2 shrink-0 min-w-0">
+          {hasTrack && <BitPerfectPill bitPerfect={sp.bit_perfect} />}
+          {hasTrack && sp.source_format && sp.source_bit_depth && sp.source_sample_rate && (
+            <span className="hidden xl:inline text-[10px] text-text-faint whitespace-nowrap">
+              {sp.source_format.toUpperCase()} · {sp.source_bit_depth}-bit · {(sp.source_sample_rate / 1000).toFixed(1)}kHz
+            </span>
+          )}
+          <DockButton onClick={() => setShowSignalPath(true)} active={showSignalPath}>Signal path ↑</DockButton>
+          <DockButton onClick={() => setShowEndpointPicker(true)}>
+            <span className="flex items-center gap-1.5"><SpeakerIcon />{endpointLabel(endpoint)}</span>
+          </DockButton>
         </div>
       </div>
     </>

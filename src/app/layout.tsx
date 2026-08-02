@@ -60,6 +60,18 @@ export default function RootLayout({
             <PlaybackBar />
           </PageHeaderProvider>
         </BrowserPlayerProvider>
+
+        {/* Always-on CRT scanline texture + vignette — a mockup-wide effect
+            (not a per-panel one) that sits above everything, pointer-events
+            disabled so it never intercepts clicks. */}
+        <div
+          className="pointer-events-none fixed inset-0 z-[90] mix-blend-screen"
+          style={{ background: 'repeating-linear-gradient(180deg, rgba(255,255,255,.028) 0 1px, rgba(0,0,0,0) 1px 3px)' }}
+        />
+        <div
+          className="pointer-events-none fixed inset-0 z-[91]"
+          style={{ background: 'radial-gradient(120% 110% at 50% 50%, rgba(0,0,0,0) 52%, rgba(0,0,0,.42) 100%)' }}
+        />
       </body>
     </html>
   )
