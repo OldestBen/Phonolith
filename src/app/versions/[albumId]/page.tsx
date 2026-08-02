@@ -1,12 +1,30 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+/**
+ * Version Manager — album detail (matches the Claude Design mockup's
+ * `P.versions` table + "crest-factor gauge wall" canvas). Compares every
+ * distinct format/bit-depth/sample-rate pressing of one album.
+ *
+ * Real data only: dr_avg, format, engineer and accuraterip_status all come
+ * straight off library_files (via groupFileVersions). The mockup's Peak/RMS/
+ * Label columns were dropped — no such columns exist anywhere in the schema
+ * (see migrations, none define peak/rms/label). "Year" is derived from the
+ * matched songs' release_date (falls back to the album's release_date), and
+ * the ⚠ loudness-war flag is computed for real: a version is flagged only
+ * if an EARLIER-year version of the same album has a meaningfully higher
+ * average DR (>= LOUDNESS_WAR_DR_DROP points) — nothing here is hardcoded.
+ */
+
+import { useEffect, useState, useCallback, useRef } from 'react'
 import Link from 'next/link'
 import { useParams } from 'next/navigation'
+import { usePageHeader } from '@/contexts/PageHeaderContext'
+import { ScreenDesc, CanvasPanel, DataTable, NoteBox, col, cell, drColor, C } from '@/components/panel'
 
 interface Track {
   blake3_hash: string
   song_title: string
+  song_release_date?: string | null
   track_number?: number
   format?: string
   bit_depth?: number
@@ -16,6 +34,8 @@ interface Track {
   dr_score?: number
   spectral_ok?: boolean
   accuraterip_status?: string
+  engineer?: string | null
+  is_preferred?: boolean
   file_path: string
 }
 
@@ -29,6 +49,7 @@ interface Version {
   dr_scores: number[]
   spectral_ok: boolean
   accuraterip_status?: string
+  is_preferred: boolean
   track_count: number
   tracks: Track[]
 }
@@ -41,32 +62,78 @@ interface AlbumData {
   release_date?: string
 }
 
+// A version's dr_avg counts as a loudness-war casualty if it drops at least
+// this many DR points below an earlier pressing of the same album — small
+// engineering variance between remasters shouldn't trip the flag.
+const LOUDNESS_WAR_DR_DROP = 2
+
 function formatHz(hz?: number): string {
   if (!hz) return '—'
   return hz >= 1000 ? `${(hz / 1000).toFixed(1)} kHz` : `${hz} Hz`
 }
 
-function DrBadge({ score }: { score?: number | null }) {
-  if (score == null) return <span className="text-text-muted font-mono">—</span>
-  const cls = score > 12 ? 'text-success' : score >= 8 ? 'text-warning' : 'text-danger'
-  return <span className={`font-mono font-bold ${cls}`}>{score}</span>
+function formatLabel(v: Version): string {
+  return (
+    [v.format?.toUpperCase(), v.bit_depth && `${v.bit_depth}bit`, formatHz(v.sample_rate)]
+      .filter(Boolean)
+      .join(' / ') || v.signature
+  )
 }
 
-function QualityTier({ v }: { v: Version }) {
-  const bd = v.bit_depth ?? 0
-  const sr = v.sample_rate ?? 0
-  const fmt = v.format?.toLowerCase() ?? ''
-  const dr = v.dr_avg ?? 0
+/** Most common non-null `engineer` credit among a version's tracks. */
+function primaryEngineer(tracks: Track[]): string | null {
+  const counts = new Map<string, number>()
+  for (const t of tracks) {
+    if (t.engineer) counts.set(t.engineer, (counts.get(t.engineer) ?? 0) + 1)
+  }
+  let best: string | null = null
+  let bestCount = 0
+  counts.forEach((c, name) => {
+    if (c > bestCount) { best = name; bestCount = c }
+  })
+  return best
+}
 
-  if (fmt === 'flac' && bd >= 24 && sr >= 88200 && dr > 12)
-    return <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-success/10 border border-success/20 text-success">Hi-Res Lossless</span>
-  if (fmt === 'flac' && dr > 12)
-    return <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-success/10 border border-success/20 text-success">CD Lossless</span>
-  if (fmt === 'flac' && dr >= 8)
-    return <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-warning/10 border border-warning/20 text-warning">Lossless (compressed master)</span>
-  if (['mp3', 'aac', 'm4a', 'ogg', 'opus'].includes(fmt))
-    return <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-danger/10 border border-danger/20 text-danger">Lossy</span>
+/** Representative release year for a version: the most common year among
+ * its tracks' matched-song release dates, falling back to the album's own
+ * release date if the songs carry none. */
+function versionYear(v: Version, albumReleaseDate?: string): number | null {
+  const counts = new Map<number, number>()
+  for (const t of v.tracks) {
+    if (!t.song_release_date) continue
+    const y = new Date(t.song_release_date).getFullYear()
+    if (!Number.isNaN(y)) counts.set(y, (counts.get(y) ?? 0) + 1)
+  }
+  if (counts.size > 0) {
+    let bestYear: number | null = null
+    let bestCount = 0
+    counts.forEach((c, y) => {
+      if (c > bestCount || (c === bestCount && (bestYear == null || y < bestYear))) {
+        bestYear = y
+        bestCount = c
+      }
+    })
+    return bestYear
+  }
+  if (albumReleaseDate) {
+    const y = new Date(albumReleaseDate).getFullYear()
+    if (!Number.isNaN(y)) return y
+  }
   return null
+}
+
+function accurateRipCell(status?: string): { text: string; color: string } {
+  if (status === 'verified') return { text: '✓ verified', color: C.green }
+  if (status === 'mismatch') return { text: '⚠ mismatch', color: C.red }
+  if (status === 'not_found') return { text: 'not found', color: C.mut }
+  return { text: '—', color: C.mut }
+}
+
+interface GaugeDatum {
+  label: string
+  dr: number
+  lw: boolean
+  preferred: boolean
 }
 
 export default function VersionComparePage() {
@@ -74,11 +141,11 @@ export default function VersionComparePage() {
   const [album, setAlbum] = useState<AlbumData | null>(null)
   const [versions, setVersions] = useState<Version[]>([])
   const [loading, setLoading] = useState(true)
-  const [expanded, setExpanded] = useState<Set<string>>(new Set())
+  const [savingSignature, setSavingSignature] = useState<string | null>(null)
 
   useEffect(() => {
     fetch(`/api/versions/${albumId}`)
-      .then(r => r.ok ? r.json() : null)
+      .then(r => (r.ok ? r.json() : null))
       .then(data => {
         if (data) { setAlbum(data.album); setVersions(data.versions) }
       })
@@ -86,184 +153,268 @@ export default function VersionComparePage() {
       .finally(() => setLoading(false))
   }, [albumId])
 
-  const toggleExpanded = (sig: string) => {
-    setExpanded(prev => {
-      const next = new Set(prev)
-      next.has(sig) ? next.delete(sig) : next.add(sig)
-      return next
+  usePageHeader(
+    album?.name ?? 'Version Manager',
+    album ? `${album.artist_name} · ${versions.length} version${versions.length === 1 ? '' : 's'}` : 'loading…'
+  )
+
+  const hasExplicitPreferred = versions.some(v => v.is_preferred)
+
+  // Which signature is *effectively* preferred right now: the user's
+  // explicit pick if one exists, otherwise the DR-sorted default (index 0,
+  // since the API already sorts best-quality-first).
+  const effectivePreferredSignature = hasExplicitPreferred
+    ? versions.find(v => v.is_preferred)?.signature
+    : versions[0]?.signature
+
+  // Loudness-war casualties, computed once per versions/album load.
+  const years = new Map(versions.map(v => [v.signature, versionYear(v, album?.release_date)]))
+  const lwFlagged = new Set<string>()
+  for (const v of versions) {
+    const y = years.get(v.signature)
+    if (y == null || v.dr_avg == null) continue
+    for (const other of versions) {
+      if (other.signature === v.signature) continue
+      const oy = years.get(other.signature)
+      if (oy == null || other.dr_avg == null) continue
+      if (oy < y && other.dr_avg - v.dr_avg >= LOUDNESS_WAR_DR_DROP) {
+        lwFlagged.add(v.signature)
+        break
+      }
+    }
+  }
+
+  // ── Gauge wall canvas — fed via a ref so the animation loop (mounted
+  // once by CanvasPanel) always reads current data instead of a stale
+  // closure from first render. ──────────────────────────────────────────
+  const gaugeRef = useRef<GaugeDatum[]>([])
+  useEffect(() => {
+    gaugeRef.current = versions.map(v => ({
+      label: [years.get(v.signature), v.format?.toUpperCase()].filter(Boolean).join(' · ') || v.signature,
+      dr: v.dr_avg ?? 0,
+      lw: lwFlagged.has(v.signature),
+      preferred: v.signature === effectivePreferredSignature,
+    }))
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [versions, album])
+
+  const drawGaugeWall = useCallback((ctx: CanvasRenderingContext2D, w: number, h: number) => {
+    ctx.clearRect(0, 0, w, h)
+    const list = gaugeRef.current
+    if (list.length === 0) return
+
+    const n = list.length
+    const colW = w / n
+    const cy = h * 0.56
+    const outerR = Math.max(20, Math.min(colW * 0.38, h * 0.32))
+    const innerR = outerR * 0.66
+    const midR = (outerR + innerR) / 2
+    const start = Math.PI * 0.75
+    const end = Math.PI * 2.25
+    const sweep = end - start
+
+    list.forEach((g, i) => {
+      const cx = colW * (i + 0.5)
+      const pct = Math.max(0, Math.min(1, g.dr / 20))
+      const valueAngle = start + pct * sweep
+
+      // Track ring.
+      ctx.beginPath()
+      ctx.arc(cx, cy, midR, start, end)
+      ctx.lineWidth = outerR - innerR
+      ctx.strokeStyle = 'rgba(255,255,255,.05)'
+      ctx.stroke()
+
+      // Faint red backing on the whole ring for a flagged (loudness-war) version.
+      if (g.lw) {
+        ctx.beginPath()
+        ctx.arc(cx, cy, midR, start, end)
+        ctx.lineWidth = outerR - innerR
+        ctx.strokeStyle = 'rgba(248,113,113,.2)'
+        ctx.stroke()
+      }
+
+      // Live value arc, colored the same as the DR table cell.
+      const color = drColor(g.dr)
+      ctx.beginPath()
+      ctx.arc(cx, cy, midR, start, Math.max(valueAngle, start + 0.001))
+      ctx.lineWidth = outerR - innerR
+      ctx.strokeStyle = color
+      ctx.shadowColor = color
+      ctx.shadowBlur = g.preferred ? 14 : 6
+      ctx.stroke()
+      ctx.shadowBlur = 0
+
+      // Needle — points at the same angle the value arc ends at.
+      const nx = cx + Math.cos(valueAngle) * (outerR - 3)
+      const ny = cy + Math.sin(valueAngle) * (outerR - 3)
+      ctx.beginPath()
+      ctx.moveTo(cx, cy)
+      ctx.lineTo(nx, ny)
+      ctx.lineWidth = 1.4
+      ctx.strokeStyle = '#f4f4f5'
+      ctx.stroke()
+      ctx.beginPath()
+      ctx.arc(cx, cy, 2.2, 0, Math.PI * 2)
+      ctx.fillStyle = '#f4f4f5'
+      ctx.fill()
+
+      // Labels.
+      ctx.textAlign = 'center'
+      ctx.font = '700 12px ui-monospace, "JetBrains Mono", monospace'
+      ctx.fillStyle = color
+      ctx.fillText(`DR${g.dr.toFixed(0)}`, cx, cy + outerR * 0.55)
+      ctx.font = '500 8px ui-monospace, "JetBrains Mono", monospace'
+      ctx.fillStyle = '#71717a'
+      ctx.fillText(g.label, cx, cy + outerR * 0.55 + 12)
+
+      if (g.lw) {
+        ctx.fillStyle = '#f87171'
+        ctx.font = '700 10px ui-monospace, "JetBrains Mono", monospace'
+        ctx.fillText('⚠', cx, cy - outerR - (g.preferred ? 18 : 6))
+      }
+      if (g.preferred) {
+        ctx.fillStyle = '#ffb340'
+        ctx.font = '700 10px ui-monospace, "JetBrains Mono", monospace'
+        ctx.fillText('★', cx, cy - outerR - 6)
+      }
     })
+  }, [])
+
+  async function setPreferred(signature: string) {
+    if (!albumId) return
+    setSavingSignature(signature)
+    try {
+      const res = await fetch(`/api/versions/${albumId}/preferred`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ signature }),
+      })
+      if (res.ok) {
+        setVersions(prev => prev.map(v => ({ ...v, is_preferred: v.signature === signature })))
+      }
+    } catch {
+      // best-effort — the button will just re-enable
+    } finally {
+      setSavingSignature(null)
+    }
   }
 
   if (loading) {
     return (
-      <div className="max-w-4xl mx-auto px-4 py-8 animate-pulse space-y-4">
-        <div className="h-6 bg-surface-2 rounded w-48" />
-        <div className="h-32 bg-surface-2 rounded-xl" />
-        <div className="h-32 bg-surface-2 rounded-xl" />
+      <div className="mx-auto max-w-[900px] animate-pulse space-y-4 px-6 py-6">
+        <div className="h-6 w-48 rounded bg-surface-2" />
+        <div className="h-64 rounded-xl bg-surface-2" />
+        <div className="h-40 rounded-xl bg-surface-2" />
       </div>
     )
   }
 
   if (!album) {
     return (
-      <div className="flex items-center justify-center h-64">
+      <div className="flex h-64 items-center justify-center">
         <p className="text-text-muted">Album not found.</p>
       </div>
     )
   }
 
+  const rows = versions.map(v => {
+    const year = years.get(v.signature)
+    const isEffectivePreferred = v.signature === effectivePreferredSignature
+    const lw = lwFlagged.has(v.signature)
+    const engineer = primaryEngineer(v.tracks)
+    const ar = accurateRipCell(v.accuraterip_status)
+
+    let flagGlyph = '—'
+    let flagColor = C.mut
+    if (lw) {
+      flagGlyph = '⚠'
+      flagColor = C.red
+    } else if (v.spectral_ok === false) {
+      flagGlyph = '⚠'
+      flagColor = C.orange
+    } else if (v.spectral_ok) {
+      flagGlyph = '✓'
+      flagColor = C.green
+    }
+
+    return [
+      cell(isEffectivePreferred ? '★' : '', C.vio, 'center'),
+      cell(year ?? '—', C.txt),
+      cell(formatLabel(v), C.dim),
+      cell(v.dr_avg != null ? `DR${v.dr_avg}` : '—', v.dr_avg != null ? drColor(v.dr_avg) : C.mut),
+      cell(engineer ?? '—', C.mut),
+      cell(ar.text, ar.color),
+      cell(flagGlyph, flagColor, 'center'),
+      cell(
+        isEffectivePreferred ? (
+          <span className="text-[10px] font-medium" style={{ color: C.green }}>Preferred ✓</span>
+        ) : (
+          <button
+            onClick={() => setPreferred(v.signature)}
+            disabled={savingSignature === v.signature}
+            className="rounded-md border border-[#3f3f46] bg-surface px-2.5 py-1 text-[10px] text-text-secondary transition-colors hover:border-accent/40 disabled:opacity-50"
+          >
+            {savingSignature === v.signature ? 'Saving…' : 'Set preferred'}
+          </button>
+        )
+      ),
+    ]
+  })
+
   return (
-    <div className="max-w-4xl mx-auto px-4 py-8 pb-20 md:pb-8">
+    <div className="mx-auto flex max-w-[900px] flex-col gap-3.5 px-6 py-6 pb-20 md:pb-8">
       <Link
         href="/versions"
-        className="inline-flex items-center gap-1 text-text-muted text-sm hover:text-accent transition-colors mb-6 group"
+        className="group inline-flex items-center gap-1 text-sm text-text-muted transition-colors hover:text-accent"
       >
-        <span className="group-hover:-translate-x-0.5 transition-transform">←</span>
-        Version Comparison
+        <span className="transition-transform group-hover:-translate-x-0.5">←</span>
+        Version Manager
       </Link>
 
-      {/* Album header */}
-      <div className="flex items-start gap-4 mb-8">
-        {album.cover_art_url ? (
-          // eslint-disable-next-line @next/next/no-img-element
-          <img src={album.cover_art_url} alt="" className="w-16 h-16 rounded-xl object-cover shrink-0" />
-        ) : (
-          <div className="w-16 h-16 rounded-xl bg-accent/20 shrink-0 flex items-center justify-center">
-            <span className="text-accent text-xl font-bold">{album.name.charAt(0)}</span>
-          </div>
-        )}
-        <div>
-          <h1 className="text-text-primary text-xl font-bold">{album.name}</h1>
-          <p className="text-text-muted text-sm mt-0.5">
-            {album.artist_name}
-            {album.release_date && ` · ${album.release_date.slice(0, 4)}`}
-          </p>
-          <p className="text-text-muted text-xs mt-1">
-            {versions.length} version{versions.length !== 1 ? 's' : ''} in library · sorted by quality
-          </p>
-        </div>
-      </div>
+      <ScreenDesc>
+        Compare DR, format and quality across every pressing of this album in your library, and set
+        your preferred version. ⚠ marks a loudness-war casualty — a pressing whose average DR dropped
+        by {LOUDNESS_WAR_DR_DROP}+ points from an earlier pressing of the same album.
+      </ScreenDesc>
 
-      {/* Comparison header */}
-      {versions.length > 1 && (
-        <div className="mb-4 p-3 bg-surface border border-border rounded-xl text-xs text-text-muted">
-          <span className="text-text-primary font-semibold">Recommendation: </span>
-          {(() => {
-            const best = versions[0]
-            const parts = []
-            if (best.format) parts.push(best.format.toUpperCase())
-            if (best.bit_depth) parts.push(`${best.bit_depth}bit`)
-            if (best.sample_rate) parts.push(formatHz(best.sample_rate))
-            if (best.dr_avg) parts.push(`DR${best.dr_avg}`)
-            return `${parts.join(' / ')} (${best.signature}) scores highest on dynamic range and format quality.`
-          })()}
-        </div>
+      <CanvasPanel
+        title="Crest-factor gauge wall"
+        subtitle={`${album.name} · ${versions.length} pressing${versions.length === 1 ? '' : 's'} · needle = live DR${
+          lwFlagged.size > 0 ? ', red ring = loudness war' : ''
+        }`}
+        height={220}
+        background="linear-gradient(180deg,#141419,#0a0a0c)"
+        draw={drawGaugeWall}
+      />
+
+      {versions.length > 0 && (
+        <NoteBox
+          notes={[
+            hasExplicitPreferred
+              ? 'A version has been explicitly marked preferred — it overrides the default recommendation below.'
+              : `No version has been explicitly set as preferred yet, so the highest-DR pressing (${formatLabel(
+                  versions[0]
+                )}) is shown as the default recommendation.`,
+          ]}
+        />
       )}
 
-      {/* Version cards */}
-      <div className="space-y-4">
-        {versions.map((v, idx) => (
-          <div
-            key={v.signature}
-            className={`rounded-xl border bg-surface transition-colors ${
-              idx === 0 ? 'border-accent/40' : 'border-border'
-            }`}
-          >
-            {/* Version summary row */}
-            <button
-              onClick={() => toggleExpanded(v.signature)}
-              className="w-full flex items-center gap-4 px-5 py-4 text-left"
-            >
-              {idx === 0 && (
-                <span className="shrink-0 text-[10px] font-bold text-accent uppercase tracking-widest">
-                  Best
-                </span>
-              )}
-              {idx > 0 && (
-                <span className="shrink-0 text-[10px] font-bold text-text-muted uppercase tracking-widest">
-                  #{idx + 1}
-                </span>
-              )}
-
-              <div className="flex-1 min-w-0">
-                <div className="flex flex-wrap items-center gap-2 mb-1">
-                  <span className="text-text-primary text-sm font-mono font-medium">
-                    {[v.format?.toUpperCase(), v.bit_depth && `${v.bit_depth}bit`, formatHz(v.sample_rate)]
-                      .filter(Boolean).join(' / ') || v.signature}
-                  </span>
-                  <QualityTier v={v} />
-                </div>
-                <div className="flex flex-wrap gap-x-4 gap-y-0.5 text-xs text-text-muted font-mono">
-                  {v.bitrate && <span>{v.bitrate} kbps</span>}
-                  <span>{v.track_count} track{v.track_count !== 1 ? 's' : ''}</span>
-                  {v.spectral_ok ? (
-                    <span className="text-success">✓ Spectral clean</span>
-                  ) : (
-                    <span className="text-warning">⚠ Spectral issues</span>
-                  )}
-                  {v.accuraterip_status === 'verified' && (
-                    <span className="text-success">✓ AccurateRip verified</span>
-                  )}
-                </div>
-              </div>
-
-              <div className="flex items-center gap-6 shrink-0">
-                <div className="text-right">
-                  <p className="text-text-muted text-[10px] uppercase tracking-widest mb-0.5">Avg DR</p>
-                  <DrBadge score={v.dr_avg} />
-                </div>
-                <svg
-                  className={`w-4 h-4 text-text-muted transition-transform ${expanded.has(v.signature) ? 'rotate-180' : ''}`}
-                  viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"
-                >
-                  <polyline points="6 9 12 15 18 9" />
-                </svg>
-              </div>
-            </button>
-
-            {/* Track list */}
-            {expanded.has(v.signature) && (
-              <div className="border-t border-border px-5 py-3">
-                <table className="w-full text-xs">
-                  <thead>
-                    <tr className="border-b border-border/50">
-                      <th className="text-left text-text-muted font-medium py-2 pr-3 w-8">#</th>
-                      <th className="text-left text-text-muted font-medium py-2 pr-3">Title</th>
-                      <th className="text-right text-text-muted font-medium py-2 pr-3">DR</th>
-                      <th className="text-right text-text-muted font-medium py-2">Spectral</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {v.tracks.map(t => (
-                      <tr key={t.blake3_hash} className="border-b border-border/30 hover:bg-surface-2">
-                        <td className="py-2 pr-3 text-text-muted">{t.track_number ?? '—'}</td>
-                        <td className="py-2 pr-3">
-                          <Link
-                            href={`/library/${t.blake3_hash}`}
-                            className="text-text-primary hover:text-accent transition-colors"
-                          >
-                            {t.song_title}
-                          </Link>
-                        </td>
-                        <td className="py-2 pr-3 text-right"><DrBadge score={t.dr_score} /></td>
-                        <td className="py-2 text-right">
-                          {t.spectral_ok == null ? (
-                            <span className="text-text-muted">—</span>
-                          ) : t.spectral_ok ? (
-                            <span className="text-success">✓</span>
-                          ) : (
-                            <span className="text-warning">⚠</span>
-                          )}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            )}
-          </div>
-        ))}
-      </div>
+      <DataTable
+        title={`${album.name} — ${album.artist_name} · ${versions.length} version${versions.length === 1 ? '' : 's'}`}
+        titleColor={C.vio}
+        cols={[
+          col('', 'center'),
+          col('Year'),
+          col('Format'),
+          col('DR'),
+          col('Engineer'),
+          col('AccurateRip'),
+          col('Flags', 'center'),
+          col('Action'),
+        ]}
+        rows={rows}
+      />
     </div>
   )
 }

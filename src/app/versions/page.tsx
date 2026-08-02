@@ -1,7 +1,16 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+/**
+ * Version Manager — landing list (matches the Claude Design mockup's
+ * `P.versions` screen). Lists every album with multiple distinct pressings
+ * in the library (GET /api/versions) as a card grid; each card links to the
+ * per-album comparison view.
+ */
+
+import { useEffect, useState } from 'react'
 import Link from 'next/link'
+import { usePageHeader } from '@/contexts/PageHeaderContext'
+import { ScreenDesc, CardGrid, drColor, type CardSpec } from '@/components/panel'
 
 interface AlbumVersionSummary {
   album_id: number
@@ -15,109 +24,61 @@ interface AlbumVersionSummary {
   formats: string[]
 }
 
-function DrRange({ min, max }: { min: number | null; max: number | null }) {
-  if (min == null && max == null) return <span className="text-text-muted">—</span>
-  if (min === max) {
-    const color = (max ?? 0) > 12 ? 'text-success' : (max ?? 0) >= 8 ? 'text-warning' : 'text-danger'
-    return <span className={`font-mono text-sm ${color}`}>{max}</span>
-  }
-  return (
-    <span className="font-mono text-sm">
-      <span className={(min ?? 0) >= 8 ? 'text-success' : 'text-danger'}>{min}</span>
-      <span className="text-text-muted mx-1">–</span>
-      <span className={(max ?? 0) > 12 ? 'text-success' : 'text-warning'}>{max}</span>
-    </span>
-  )
-}
-
 export default function VersionsPage() {
-  const [albums, setAlbums] = useState<AlbumVersionSummary[]>([])
-  const [loading, setLoading] = useState(true)
+  const [albums, setAlbums] = useState<AlbumVersionSummary[] | null>(null)
 
   useEffect(() => {
     fetch('/api/versions')
-      .then(r => r.ok ? r.json() : [])
+      .then(r => (r.ok ? r.json() : []))
       .then(setAlbums)
-      .catch(() => {})
-      .finally(() => setLoading(false))
+      .catch(() => setAlbums([]))
   }, [])
 
+  usePageHeader(
+    'Version Manager',
+    albums ? `${albums.length} album${albums.length === 1 ? '' : 's'} with multiple pressings` : 'loading…'
+  )
+
+  const cards: (CardSpec & { album_id: number })[] = (albums ?? []).map(a => ({
+    album_id: a.album_id,
+    title: a.album_name,
+    sub: a.artist_name,
+    badge: `${a.file_count} version${a.file_count === 1 ? '' : 's'}`,
+    badgeColor: '#a78bfa',
+    pills: a.formats.map(f => f.toUpperCase()),
+    bar: a.dr_max != null ? Math.max(0, Math.min(100, (a.dr_max / 20) * 100)) : undefined,
+    barColor: a.dr_max != null ? drColor(a.dr_max) : undefined,
+    barLabel: a.dr_max != null ? `DR${a.dr_max}` : undefined,
+  }))
+
   return (
-    <div className="min-h-screen px-4 py-8 pb-20 md:pb-8">
-      <div className="max-w-4xl mx-auto">
-        <div className="mb-8">
-          <h1 className="text-text-primary text-xl font-bold">Version Comparison</h1>
-          <p className="text-text-muted text-sm mt-1">
-            Albums with multiple versions in your library — compare masters, pressings, and formats side by side.
+    <div className="mx-auto flex max-w-[900px] flex-col gap-[13px] px-6 py-6">
+      <ScreenDesc>
+        Albums with multiple pressings in your library — compare DR, format and quality, and set your
+        preferred version. Only albums with more than one distinct file per song are shown.
+      </ScreenDesc>
+
+      {albums == null ? (
+        <div className="rounded-[10px] border border-border bg-surface px-4 py-6 text-center">
+          <p className="m-0 text-sm text-text-muted">Loading version comparisons…</p>
+        </div>
+      ) : cards.length > 0 ? (
+        <div className="grid gap-2.5" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))' }}>
+          {cards.map(c => (
+            <Link key={c.album_id} href={`/versions/${c.album_id}`} className="block">
+              <CardGrid cards={[c]} columns={false} />
+            </Link>
+          ))}
+        </div>
+      ) : (
+        <div className="rounded-[10px] border border-border bg-surface px-4 py-6 text-center">
+          <p className="m-0 text-sm text-text-muted">No version comparisons available yet.</p>
+          <p className="mt-1 text-xs text-text-ghost">
+            This page shows albums where your library contains multiple files for the same song,
+            indicating different masters, pressings, or formats. Scan more sources to populate it.
           </p>
         </div>
-
-        {loading ? (
-          <div className="space-y-3 animate-pulse">
-            {Array.from({ length: 6 }).map((_, i) => (
-              <div key={i} className="h-16 bg-surface-2 rounded-xl" />
-            ))}
-          </div>
-        ) : albums.length === 0 ? (
-          <div className="flex flex-col items-center justify-center py-24 text-center">
-            <p className="text-text-muted text-base mb-2">No version comparisons available yet.</p>
-            <p className="text-text-muted text-sm">
-              This page shows albums where your library contains multiple files for the same song,
-              indicating different masters, pressings, or formats. Scan more sources to populate it.
-            </p>
-          </div>
-        ) : (
-          <div className="space-y-2">
-            {albums.map(album => (
-              <Link
-                key={album.album_id}
-                href={`/versions/${album.album_id}`}
-                className="group flex items-center gap-4 bg-surface border border-border rounded-xl px-4 py-3
-                           hover:border-accent/40 hover:bg-surface-2 transition-all"
-              >
-                {album.cover_art_url ? (
-                  // eslint-disable-next-line @next/next/no-img-element
-                  <img src={album.cover_art_url} alt="" className="w-10 h-10 rounded-lg object-cover shrink-0" />
-                ) : (
-                  <div className="w-10 h-10 rounded-lg bg-accent/20 shrink-0 flex items-center justify-center">
-                    <span className="text-accent text-xs font-bold">{album.album_name.charAt(0)}</span>
-                  </div>
-                )}
-
-                <div className="min-w-0 flex-1">
-                  <p className="text-text-primary text-sm font-medium truncate group-hover:text-accent transition-colors">
-                    {album.album_name}
-                  </p>
-                  <p className="text-text-muted text-xs truncate">
-                    {album.artist_name}
-                    {album.release_date && ` · ${album.release_date.slice(0, 4)}`}
-                  </p>
-                </div>
-
-                <div className="flex items-center gap-6 shrink-0">
-                  <div className="text-right hidden sm:block">
-                    <p className="text-text-muted text-[10px] uppercase tracking-widest mb-0.5">DR range</p>
-                    <DrRange min={album.dr_min} max={album.dr_max} />
-                  </div>
-                  <div className="text-right hidden md:block">
-                    <p className="text-text-muted text-[10px] uppercase tracking-widest mb-0.5">Formats</p>
-                    <p className="text-text-primary text-xs font-mono">
-                      {album.formats.map(f => f.toUpperCase()).join(', ')}
-                    </p>
-                  </div>
-                  <div className="text-right">
-                    <p className="text-text-muted text-[10px] uppercase tracking-widest mb-0.5">Versions</p>
-                    <p className="text-accent text-sm font-mono font-bold">{album.file_count}</p>
-                  </div>
-                  <svg className="w-4 h-4 text-text-muted group-hover:text-accent transition-colors" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                    <path d="M5 12h14M12 5l7 7-7 7" />
-                  </svg>
-                </div>
-              </Link>
-            ))}
-          </div>
-        )}
-      </div>
+      )}
     </div>
   )
 }
