@@ -23,6 +23,16 @@ export interface SoulseekFile {
   sampleRate?: number
   bitDepth?: number
   extension?: string
+  /**
+   * These three are reported by slskd at the *response* (peer) level, not
+   * per-file — every file in the same peer's response shares the same
+   * hasFreeUploadSlot/queueLength/uploadSpeed. We copy them onto each file
+   * here so the results table can render one row per file without the UI
+   * needing to know about slskd's response/file nesting.
+   */
+  hasFreeUploadSlot?: boolean
+  queueLength?: number
+  uploadSpeed?: number
 }
 
 interface SlskdSearchResponse {
@@ -30,6 +40,9 @@ interface SlskdSearchResponse {
   state: string
   responses?: {
     username: string
+    hasFreeUploadSlot?: boolean
+    uploadSpeed?: number
+    queueLength?: number
     files?: {
       filename: string
       size: number
@@ -122,6 +135,9 @@ function aggregateResults(data: SlskdSearchResponse | undefined): SoulseekFile[]
         sampleRate: file.sampleRate,
         bitDepth: file.bitDepth,
         extension: file.filename.split('.').pop()?.toLowerCase(),
+        hasFreeUploadSlot: response.hasFreeUploadSlot,
+        queueLength: response.queueLength,
+        uploadSpeed: response.uploadSpeed,
       })
     }
   }
