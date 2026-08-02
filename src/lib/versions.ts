@@ -14,6 +14,7 @@ export interface VersionSignatureFields {
   dr_score?: number | null
   spectral_ok?: boolean | null
   accuraterip_status?: string | null
+  is_preferred?: boolean | null
 }
 
 export interface LibraryVersion<T extends VersionSignatureFields> {
@@ -26,8 +27,16 @@ export interface LibraryVersion<T extends VersionSignatureFields> {
   dr_scores: number[]
   spectral_ok: boolean
   accuraterip_status?: string | null
+  is_preferred: boolean
   track_count: number
   tracks: T[]
+}
+
+/** Builds the same format/bit-depth/sample-rate signature groupFileVersions
+ * uses internally — exported so the "set preferred" route can find which
+ * files belong to a given version signature without duplicating the logic. */
+export function versionSignature(f: VersionSignatureFields): string {
+  return [f.format, f.bit_depth, f.sample_rate].filter(Boolean).join('/') || 'unknown'
 }
 
 export function groupFileVersions<T extends VersionSignatureFields>(
@@ -35,8 +44,7 @@ export function groupFileVersions<T extends VersionSignatureFields>(
 ): LibraryVersion<T>[] {
   const signatureMap = new Map<string, T[]>()
   for (const f of files) {
-    const sig = [f.format, f.bit_depth, f.sample_rate].filter(Boolean).join('/')
-    const key = sig || 'unknown'
+    const key = versionSignature(f)
     if (!signatureMap.has(key)) signatureMap.set(key, [])
     signatureMap.get(key)!.push(f)
   }
@@ -60,6 +68,10 @@ export function groupFileVersions<T extends VersionSignatureFields>(
         dr_scores: drScores,
         spectral_ok: tracks.every(t => t.spectral_ok),
         accuraterip_status: sample.accuraterip_status,
+        // Set (all-or-nothing) by the preferred-version PATCH route for every
+        // file sharing this signature — `some` tolerates any pre-existing
+        // partial state rather than silently hiding the flag.
+        is_preferred: tracks.some(t => t.is_preferred === true),
         track_count: tracks.length,
         tracks,
       }
