@@ -81,6 +81,10 @@ export default function VisualizePage() {
     const artistName = artist?.name ?? 'Unknown artist'
 
     if (selectedSong) {
+      // Real per-song counts, derived from the same collaborator/era edge
+      // lists the overlays draw from — not fabricated.
+      const collabCount = connections?.collaborator.filter(([a, b]) => a === selectedSong.id || b === selectedSong.id).length ?? 0
+      const eraCount = connections?.era.filter(([a, b]) => a === selectedSong.id || b === selectedSong.id).length ?? 0
       return {
         title: selectedSong.title,
         subtitle: `${artistName} · ${yearOf(selectedSong.release_date) ?? '—'}`,
@@ -88,6 +92,8 @@ export default function VisualizePage() {
           { k: 'Album', v: selectedSong.album_name ?? 'Singles' },
           { k: 'Pageviews', v: (selectedSong.pageviews ?? 0).toLocaleString() },
           { k: 'Released', v: selectedSong.release_date ? new Date(selectedSong.release_date).toLocaleDateString() : '—' },
+          { k: 'Collaborators', v: String(collabCount) },
+          { k: 'Era peers', v: String(eraCount) },
         ],
       }
     }
@@ -111,7 +117,7 @@ export default function VisualizePage() {
     }
 
     return null
-  }, [selectedSong, selectedAlbumName, songs, artist])
+  }, [selectedSong, selectedAlbumName, songs, artist, connections])
 
   usePageHeader(
     artist?.name ?? 'Galaxy',

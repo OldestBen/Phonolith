@@ -18,14 +18,27 @@ const PALETTE = [
   '#f472b6', '#818cf8', '#22d3ee', '#fb923c', '#a3e635', '#e879f9',
 ]
 
+// Matches the mockup's `drawGalaxy` edge-color map exactly (collab = VL
+// violet, producer = sky, era = pink) — see Phonolith.dc.html line ~1803.
 const CONNECTION_COLOURS = {
   album:        'rgba(167, 139, 250, 0.25)',
-  collaborator: 'rgba(96,  165, 250, 0.35)',
-  producer:     'rgba(245, 158, 11,  0.35)',
-  era:          'rgba(52,  211, 153, 0.25)',
+  collaborator: 'rgba(167, 139, 250, 0.35)',
+  producer:     'rgba(56,  189, 248, 0.35)',
+  era:          'rgba(244, 114, 182, 0.3)',
 }
 
-export type ViewMode = 'galaxy' | 'timeline'
+export type ViewMode = 'galaxy' | 'timeline' | 'lanes'
+
+// Matches the mockup's `galaxyViews` list exactly — all three modes are real,
+// each backed by the same real per-song/per-album data (release_date, album
+// grouping, song counts); "Swim-lanes" reinterprets the mockup's "one lane
+// per artist" as "one lane per album" since this screen is scoped to a
+// single artist, not the library-wide multi-artist view the mockup shows.
+const VIEW_MODES: { key: ViewMode; label: string }[] = [
+  { key: 'galaxy', label: 'Galaxy' },
+  { key: 'timeline', label: 'Timeline' },
+  { key: 'lanes', label: 'Swim-lanes' },
+]
 
 export interface SongData {
   id: number
@@ -72,8 +85,10 @@ interface Node {
   pageviews?: number
   releaseDate?: string
   geniusId?: number
-  /** Timeline mode only: the x position implied by release year. */
+  /** Timeline/lanes mode only: the x position implied by release year. */
   targetX?: number
+  /** Album nodes only: real count of songs in the album — drives node/block size. */
+  songCount?: number
 }
 
 interface ArtistVizProps {
@@ -94,9 +109,13 @@ function buildNodes(songs: SongData[], width: number, height: number, viewMode: 
   const cx = width / 2
   const cy = height / 2
 
+  // Timeline and swim-lanes both lay nodes out along a real release-year
+  // x-axis, one row per album — they only differ in how a node is *drawn*.
+  const laneLayout = viewMode === 'timeline' || viewMode === 'lanes'
+
   let minYear = Infinity
   let maxYear = -Infinity
-  if (viewMode === 'timeline') {
+  if (laneLayout) {
     for (const s of songs) {
       const y = s.release_date ? new Date(s.release_date).getFullYear() : NaN
       if (!Number.isNaN(y)) {
@@ -109,33 +128,46 @@ function buildNodes(songs: SongData[], width: number, height: number, viewMode: 
   const margin = 60
   const yearX = (y: number) => margin + ((y - minYear) / Math.max(1, maxYear - minYear)) * (width - margin * 2)
 
+  // Real per-album song counts — drives node/block sizing, matching the
+  // mockup's `rr = base + al.songs * k` sizing in drawGalaxy/drawTimeline/drawLanes.
+  const songCounts = new Map<number, number>()
+  for (const song of songs) {
+    const albumKey = song.album_db_id ?? song.album_name ?? '__singles__'
+    const idx = albumMap.get(albumKey) ?? albumMap.size
+    if (!albumMap.has(albumKey)) albumMap.set(albumKey, idx)
+    songCounts.set(idx, (songCounts.get(idx) ?? 0) + 1)
+  }
+  albumMap.clear()
+
   for (const song of songs) {
     const albumKey = song.album_db_id ?? song.album_name ?? '__singles__'
     if (!albumMap.has(albumKey)) {
       const idx = albumMap.size
       albumMap.set(albumKey, idx)
       const angle = (idx / Math.max(1, 8)) * Math.PI * 2
+      const count = songCounts.get(idx) ?? 1
       albumNodes.push({
         id: song.album_db_id ?? -(idx + 1),
         type: 'album',
         label: song.album_name ?? 'Singles',
         color: PALETTE[idx % PALETTE.length],
-        x: viewMode === 'timeline'
+        x: laneLayout
           ? cx + (Math.random() - 0.5) * 40
           : cx + Math.cos(angle) * 200 + (Math.random() - 0.5) * 40,
-        y: viewMode === 'timeline'
+        y: laneLayout
           ? 60 + (idx % 12) * ((height - 120) / 12) + (Math.random() - 0.5) * 10
           : cy + Math.sin(angle) * 200 + (Math.random() - 0.5) * 40,
         vx: 0, vy: 0,
-        radius: 16,
+        radius: Math.max(10, Math.min(30, 10 + count * 0.6)),
         albumIdx: idx,
+        songCount: count,
       })
     }
 
     const albumIdx = albumMap.get(albumKey)!
     const angle = Math.random() * Math.PI * 2
     const year = song.release_date ? new Date(song.release_date).getFullYear() : NaN
-    const hasYear = viewMode === 'timeline' && !Number.isNaN(year)
+    const hasYear = laneLayout && !Number.isNaN(year)
 
     songNodes.push({
       id: song.id,
@@ -145,7 +177,7 @@ function buildNodes(songs: SongData[], width: number, height: number, viewMode: 
       x: hasYear
         ? yearX(year) + (Math.random() - 0.5) * 20
         : cx + Math.cos(angle) * (180 + albumIdx * 20) + (Math.random() - 0.5) * 60,
-      y: viewMode === 'timeline'
+      y: laneLayout
         ? (albumNodes[albumIdx]?.y ?? cy) + (Math.random() - 0.5) * 50
         : cy + Math.sin(angle) * (180 + albumIdx * 20) + (Math.random() - 0.5) * 60,
       vx: 0, vy: 0,
@@ -184,8 +216,9 @@ function tick(nodes: Node[], albumNodes: Node[], width: number, height: number, 
     }
 
     const n = nodes[i]
+    const laneLayout = viewMode === 'timeline' || viewMode === 'lanes'
 
-    if (viewMode === 'timeline') {
+    if (laneLayout) {
       if (n.type === 'song') {
         if (n.targetX !== undefined) {
           n.vx += (n.targetX - n.x) * 0.02 * alpha
@@ -207,7 +240,7 @@ function tick(nodes: Node[], albumNodes: Node[], width: number, height: number, 
           n.vy += dy * force
         }
       }
-      // Center gravity (galaxy mode only — timeline uses the year/album springs above)
+      // Center gravity (galaxy mode only — timeline/lanes use the year/album springs above)
       if (n.type === 'album') {
         n.vx += (cx - n.x) * 0.002 * alpha
         n.vy += (cy - n.y) * 0.002 * alpha
@@ -287,12 +320,21 @@ export default function ArtistViz({
     const cx = (mouseX - tx) / scale
     const cy = (mouseY - ty) / scale
     for (const n of [...nodesRef.current].reverse()) {
+      if (filters.viewMode === 'lanes') {
+        if (n.type === 'song') continue // not drawn/clickable in lanes mode
+        if (n.type === 'album') {
+          const bw = Math.max(24, (n.songCount ?? 1) * 4.4)
+          const bh = 16
+          if (cx >= n.x - 6 && cx <= n.x + bw + 6 && cy >= n.y - bh / 2 - 6 && cy <= n.y + bh / 2 + 6) return n
+          continue
+        }
+      }
       const dx = n.x - cx
       const dy = n.y - cy
       if (Math.sqrt(dx * dx + dy * dy) <= n.radius + 8) return n
     }
     return null
-  }, [])
+  }, [filters.viewMode])
 
   // Draw loop
   const draw = useCallback(() => {
@@ -350,40 +392,74 @@ export default function ArtistViz({
       ctx.setLineDash([])
     }
 
-    // Structural song → album lines are always shown (not a data "edge type"
-    // with its own count, just the grouping the layout is built on)
-    for (const n of nodes.filter(n => n.type === 'song')) {
-      const album = albumNodesRef.current.find(a => a.id === n.albumId)
-      if (!album) continue
-      const opacity = focusAlbumId !== null && n.albumId !== focusAlbumId ? 0.03 : 0.12
-      ctx.strokeStyle = `rgba(167,139,250,${opacity})`
-      ctx.lineWidth = 0.5
-      ctx.setLineDash([2, 4])
-      ctx.beginPath()
-      ctx.moveTo(n.x, n.y)
-      ctx.lineTo(album.x, album.y)
-      ctx.stroke()
-      ctx.setLineDash([])
-    }
+    // Spider-web overlays (structural song→album lines + collaborator/producer/
+    // era edges) are a Galaxy-mode concept only — the mockup's drawTimeline/
+    // drawLanes never render them either, since a year-axis or block chart
+    // has no meaningful "edge" to draw.
+    if (filters.viewMode === 'galaxy') {
+      for (const n of nodes.filter(n => n.type === 'song')) {
+        const album = albumNodesRef.current.find(a => a.id === n.albumId)
+        if (!album) continue
+        const opacity = focusAlbumId !== null && n.albumId !== focusAlbumId ? 0.03 : 0.12
+        ctx.strokeStyle = `rgba(167,139,250,${opacity})`
+        ctx.lineWidth = 0.5
+        ctx.setLineDash([2, 4])
+        ctx.beginPath()
+        ctx.moveTo(n.x, n.y)
+        ctx.lineTo(album.x, album.y)
+        ctx.stroke()
+        ctx.setLineDash([])
+      }
 
-    if (filters.showCollaborator) drawConnections(connections.collaborator as [number, number][], CONNECTION_COLOURS.collaborator, true)
-    if (filters.showProducer) drawConnections(connections.producer as [number, number][], CONNECTION_COLOURS.producer, true)
-    if (filters.showEra) drawConnections(connections.era as [number, number][], CONNECTION_COLOURS.era, false)
+      if (filters.showCollaborator) drawConnections(connections.collaborator as [number, number][], CONNECTION_COLOURS.collaborator, true)
+      if (filters.showProducer) drawConnections(connections.producer as [number, number][], CONNECTION_COLOURS.producer, true)
+      if (filters.showEra) drawConnections(connections.era as [number, number][], CONNECTION_COLOURS.era, false)
+    }
 
     // Nodes
     for (const n of nodes) {
+      if (filters.viewMode === 'lanes' && n.type === 'song') continue // lanes mode shows album blocks only, matching the mockup's drawLanes
+
       const isFocused = focusAlbumId === null || n.albumId === focusAlbumId || (n.type === 'album' && n.id === focusAlbumId)
       const opacity = focusAlbumId !== null && !isFocused ? 0.05 : 1
       ctx.globalAlpha = opacity
 
       if (n.type === 'album') {
-        drawGlow(ctx, n.x, n.y, n.radius, n.color)
+        if (filters.viewMode === 'lanes') {
+          // Block width = real per-album song count (matches mockup's
+          // `bw = Math.max(24, al.songs * 4.4)` in drawLanes exactly).
+          const bw = Math.max(24, (n.songCount ?? 1) * 4.4)
+          const bh = 16
+          const focus = focusAlbumId === n.id
+          const grad = ctx.createLinearGradient(n.x, n.y - bh / 2, n.x + bw, n.y + bh / 2)
+          grad.addColorStop(0, focus ? 'rgba(255,179,64,.9)' : 'rgba(109,40,217,.9)')
+          grad.addColorStop(1, focus ? 'rgba(255,179,64,.4)' : 'rgba(167,139,250,.6)')
+          ctx.fillStyle = grad
+          if (focus) { ctx.shadowColor = '#ffb340'; ctx.shadowBlur = 16 }
+          ctx.beginPath()
+          ctx.roundRect(n.x, n.y - bh / 2, bw, bh, 3)
+          ctx.fill()
+          ctx.shadowBlur = 0
+          // Decorative sweep mark — purely cosmetic scan animation, not a data value.
+          const sweepX = n.x + ((performance.now() / 1000 * 0.22 + (n.albumIdx ?? 0) * 0.13) % 1) * bw
+          ctx.fillStyle = 'rgba(233,213,255,.55)'
+          ctx.fillRect(sweepX, n.y - bh / 2, 1.5, bh)
 
-        if (hoveredId === n.id || selected?.id === n.id || focusAlbumId === n.id) {
-          ctx.fillStyle = 'rgba(255,255,255,0.9)'
-          ctx.font = '11px var(--font-mono), monospace'
-          ctx.textAlign = 'center'
-          ctx.fillText(n.label.slice(0, 24), n.x, n.y - n.radius - 6)
+          if (hoveredId === n.id || selected?.id === n.id || focus) {
+            ctx.fillStyle = 'rgba(255,255,255,0.9)'
+            ctx.font = '10px var(--font-mono), monospace'
+            ctx.textAlign = 'left'
+            ctx.fillText(`${n.label.slice(0, 24)} · ${n.songCount ?? 0} songs`, n.x, n.y - bh / 2 - 6)
+          }
+        } else {
+          drawGlow(ctx, n.x, n.y, n.radius, n.color)
+
+          if (hoveredId === n.id || selected?.id === n.id || focusAlbumId === n.id) {
+            ctx.fillStyle = 'rgba(255,255,255,0.9)'
+            ctx.font = '11px var(--font-mono), monospace'
+            ctx.textAlign = 'center'
+            ctx.fillText(n.label.slice(0, 24), n.x, n.y - n.radius - 6)
+          }
         }
       } else {
         const r = n.pageviews ? Math.max(3, Math.min(8, Math.log10(n.pageviews + 1))) : 4
@@ -518,7 +594,7 @@ export default function ArtistViz({
     <div className="relative w-full h-full">
       <canvas
         ref={canvasRef}
-        className="w-full h-full"
+        className="block w-full h-full"
         onWheel={handleWheel}
         onMouseDown={handleMouseDown}
         onMouseMove={handleMouseMove}
@@ -531,25 +607,30 @@ export default function ArtistViz({
       <div className="pointer-events-none absolute left-3.5 top-3 flex flex-col gap-0.5">
         <p className="m-0 text-[10px] uppercase tracking-[.18em] text-text-faint">Force-directed galaxy</p>
         <p className="m-0 text-[9.5px] text-text-ghost">
-          {albumCount.toLocaleString()} album node{albumCount === 1 ? '' : 's'} · {filteredSongs.length.toLocaleString()} song node{filteredSongs.length === 1 ? '' : 's'} · {totalEdges.toLocaleString()} edges · sim ~60fps
+          {albumCount.toLocaleString()} album node{albumCount === 1 ? '' : 's'} · {filteredSongs.length.toLocaleString()} song node{filteredSongs.length === 1 ? '' : 's'} · {totalEdges.toLocaleString()} edges · sim 60 Hz
         </p>
       </div>
 
-      {/* View-mode cluster */}
+      {/* View-mode cluster — matches the mockup's galaxyViews style exactly
+          (translucent purple pill, not a solid fill) */}
       <div className="absolute right-3.5 bottom-3 flex gap-1.5">
-        {(['galaxy', 'timeline'] as ViewMode[]).map(mode => (
-          <button
-            key={mode}
-            onClick={() => onViewModeChange?.(mode)}
-            className={`rounded-md border px-2.5 py-1 text-[10px] font-medium capitalize transition-colors ${
-              filters.viewMode === mode
-                ? 'border-transparent bg-accent-dim text-white'
-                : 'border-border bg-surface/80 text-text-muted backdrop-blur-sm hover:text-text-primary'
-            }`}
-          >
-            {mode}
-          </button>
-        ))}
+        {VIEW_MODES.map(({ key, label }) => {
+          const on = filters.viewMode === key
+          return (
+            <button
+              key={key}
+              onClick={() => onViewModeChange?.(key)}
+              className="rounded-md px-2.5 py-[3px] text-[10px] font-medium transition-colors"
+              style={{
+                border: `1px solid ${on ? '#7c3aed' : '#27272a'}`,
+                background: on ? 'rgba(109,40,217,.3)' : 'rgba(16,16,18,.8)',
+                color: on ? '#c4b5fd' : '#a1a1aa',
+              }}
+            >
+              {label}
+            </button>
+          )
+        })}
       </div>
 
       {focusAlbumId !== null && (

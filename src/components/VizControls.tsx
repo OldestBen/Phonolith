@@ -24,16 +24,24 @@ interface VizControlsProps {
   focus: FocusInfo | null
 }
 
+// Colors match the mockup's overlay dots exactly (VL / sky / pink) — see
+// Phonolith.dc.html's `overlays` array and `drawGalaxy`'s edge-color map.
 const OVERLAYS: {
   key: 'showCollaborator' | 'showProducer' | 'showEra'
   label: string
   color: string
   countKey: 'collaborator' | 'producer' | 'era'
 }[] = [
-  { key: 'showCollaborator', label: 'Collaborator', color: '#60a5fa', countKey: 'collaborator' },
-  { key: 'showProducer', label: 'Producer', color: '#f59e0b', countKey: 'producer' },
-  { key: 'showEra', label: 'Era (±2yr)', color: '#34d399', countKey: 'era' },
+  { key: 'showCollaborator', label: 'Collaborator', color: '#a78bfa', countKey: 'collaborator' },
+  { key: 'showProducer', label: 'Producer', color: '#38bdf8', countKey: 'producer' },
+  { key: 'showEra', label: 'Era ±2 yr', color: '#f472b6', countKey: 'era' },
 ]
+
+const VIEW_HINTS: Record<string, string> = {
+  galaxy: 'Drag any node — live force sim (springs, repulsion, collisions) · double-click an album to focus',
+  timeline: 'Year axis · one lane per album · node size = pageviews',
+  lanes: 'Swim-lanes · block width = track count · double-click a block to focus',
+}
 
 function Panel({ title, children }: { title: string; children: React.ReactNode }) {
   return (
@@ -63,13 +71,13 @@ export default function VizControls({ filters, onFiltersChange, edgeCounts, deca
                 className="flex items-center gap-2 py-1 cursor-pointer group"
               >
                 <span
-                  className="w-2 h-2 rounded-sm shrink-0 transition-opacity"
-                  style={{ background: o.color, boxShadow: on ? `0 0 6px ${o.color}` : 'none', opacity: on ? 1 : 0.3 }}
+                  className="w-2 h-2 rounded-sm shrink-0"
+                  style={{ background: on ? o.color : '#27272a', boxShadow: on ? `0 0 9px ${o.color}` : 'none' }}
                 />
                 <span className="flex-1 text-[10.5px] text-text-secondary group-hover:text-text-primary transition-colors">
                   {o.label}
                 </span>
-                <span className="text-[9.5px] text-text-ghost">{edgeCounts[o.countKey].toLocaleString()}</span>
+                <span className="text-[9.5px] text-text-ghost">{edgeCounts[o.countKey].toLocaleString()} edges</span>
               </div>
             )
           })}
@@ -88,11 +96,12 @@ export default function VizControls({ filters, onFiltersChange, edgeCounts, deca
                   <button
                     key={d}
                     onClick={() => update({ decadeFilter: value })}
-                    className={`rounded-full border px-2 py-0.5 text-[9.5px] transition-colors ${
-                      active
-                        ? 'border-transparent bg-accent-dim text-white'
-                        : 'border-border bg-surface text-text-muted hover:text-text-primary'
-                    }`}
+                    className="rounded-[20px] px-2 py-0.5 text-[9.5px] transition-colors"
+                    style={{
+                      border: `1px solid ${active ? '#7c3aed' : '#27272a'}`,
+                      background: active ? 'rgba(109,40,217,.28)' : '#18181b',
+                      color: active ? '#c4b5fd' : '#a1a1aa',
+                    }}
                   >
                     {d}
                   </button>
@@ -135,7 +144,7 @@ export default function VizControls({ filters, onFiltersChange, edgeCounts, deca
           <p className="m-0 text-[10.5px] text-text-faint">Nothing selected.</p>
         )}
         <p className="mt-2.5 mb-0 text-[9.5px] leading-[1.6] text-text-ghost">
-          Click a node to select · double-click an album to focus · scroll to zoom · drag to pan · Esc to reset.
+          {VIEW_HINTS[filters.viewMode] ?? VIEW_HINTS.galaxy}
         </p>
       </Panel>
     </div>
