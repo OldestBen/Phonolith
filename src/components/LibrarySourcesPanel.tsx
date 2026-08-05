@@ -65,10 +65,23 @@ interface RowState {
   message?: string
 }
 
+/** Bare inline-input styling that fits inside FieldsPanel's own bordered value box
+ * (same pattern as the "Output routing" fields on the Settings page). */
+const FIELD_INPUT = 'w-full bg-transparent text-text-secondary text-[11px] focus:outline-none placeholder:text-text-ghost'
+
 export default function LibrarySourcesPanel() {
   const [sources, setSources] = useState<LibrarySource[]>([])
   const [showAdd, setShowAdd] = useState(false)
   const [rowState, setRowState] = useState<Record<number, RowState>>({})
+
+  // Quick-add form — mirrors the mockup's inline "Add library source" fields
+  // (Name + Path) for the common local-mount case. SMB/NFS/iSCSI need more
+  // fields than the mockup's two-field form envisioned, so those still go
+  // through the AddLibrarySource modal via the "advanced setup" link below.
+  const [quickName, setQuickName] = useState('')
+  const [quickPath, setQuickPath] = useState('')
+  const [quickSaving, setQuickSaving] = useState(false)
+  const [quickError, setQuickError] = useState<string | null>(null)
 
   const load = useCallback(() => {
     fetch('/api/library/sources')
@@ -79,7 +92,32 @@ export default function LibrarySourcesPanel() {
 
   useEffect(() => { load() }, [load])
 
-  usePageHeader('Sources', `${sources.length} source${sources.length === 1 ? '' : 's'} · watched by Tremor`)
+  usePageHeader('Library Sources', `watched by Tremor · ${sources.length} source${sources.length === 1 ? '' : 's'}`)
+
+  const handleQuickAdd = async () => {
+    if (!quickName.trim()) { setQuickError('Name is required'); return }
+    if (!quickPath.trim()) { setQuickError('Path is required'); return }
+    setQuickSaving(true)
+    setQuickError(null)
+    try {
+      const r = await fetch('/api/library/sources', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: quickName.trim(), type: 'local', config: { path: quickPath.trim() } }),
+      })
+      if (!r.ok) {
+        const d = await r.json()
+        throw new Error(d.error ?? 'Save failed')
+      }
+      setQuickName('')
+      setQuickPath('')
+      load()
+    } catch (e) {
+      setQuickError(e instanceof Error ? e.message : 'Save failed')
+    } finally {
+      setQuickSaving(false)
+    }
+  }
 
   const patchRow = (id: number, patch: RowState) =>
     setRowState(s => ({ ...s, [id]: { ...s[id], ...patch } }))
@@ -156,9 +194,6 @@ export default function LibrarySourcesPanel() {
     }
   })
 
-  const localCount = sources.filter(s => s.type === 'local').length
-  const networkCount = sources.length - localCount
-
   return (
     <div className="mx-auto flex max-w-[900px] flex-col gap-[13px] px-6 py-6">
       <ScreenDesc>
@@ -177,19 +212,48 @@ export default function LibrarySourcesPanel() {
       <FieldsPanel
         title="Add library source"
         fields={[
-          { label: 'Total sources', value: String(sources.length) },
-          { label: 'Local mounts', value: String(localCount), mono: true },
-          { label: 'Network shares', value: String(networkCount), mono: true },
+          {
+            label: 'Name',
+            value: (
+              <input
+                type="text"
+                value={quickName}
+                onChange={e => setQuickName(e.target.value)}
+                placeholder="Studio SSD"
+                className={FIELD_INPUT}
+              />
+            ),
+          },
+          {
+            label: 'Path (container path)',
+            mono: true,
+            value: (
+              <input
+                type="text"
+                value={quickPath}
+                onChange={e => setQuickPath(e.target.value)}
+                placeholder="/music/studio"
+                className={`${FIELD_INPUT} font-mono`}
+              />
+            ),
+          },
         ]}
-        action="+ Add source"
-        onAction={() => setShowAdd(true)}
+        action={quickSaving ? 'Adding…' : '+ Add source'}
+        onAction={handleQuickAdd}
       />
+      {quickError && <p className="-mt-2 text-[10.5px] text-danger">{quickError}</p>}
+      <button
+        onClick={() => setShowAdd(true)}
+        className="self-start text-[10px] text-text-ghost transition-colors hover:text-accent"
+      >
+        Need SMB, NFS, or iSCSI instead? Use advanced setup →
+      </button>
 
       <NoteBox
         notes={[
+          'The path must already be mounted inside the analyst container, where Tremor watches for changes — by default the LIBRARY_PATH volume is mounted at /music.',
+          'To watch a new host directory, add it as a volume mount in docker-compose.yml and recreate the analyst service, then enter the resulting container path here. Tremor’s automatic watcher only covers the LIBRARY_PATH mount — for this or any SMB/NFS/iSCSI source, use Scan to index it.',
           'Credentials for SMB sources are encrypted at rest with AES-256-GCM (CREDENTIAL_KEY) before they touch the database — plaintext passwords are never stored or returned by the API.',
-          'Adding a source takes effect immediately: the analyst sidecar starts watching the new path with no restart required.',
-          'Removing a source stops future scans of that path but does not delete already-indexed files or their metadata.',
         ]}
       />
 
