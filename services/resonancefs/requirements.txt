@@ -1,4 +1,0 @@
-nats-py>=2.6.0
-pysmb>=1.2.9
-loguru>=0.7.0
-keyring>=24.3.0

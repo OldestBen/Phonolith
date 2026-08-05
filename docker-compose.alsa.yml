@@ -1,0 +1,13 @@
+# Optional overlay — grants Lucid exclusive access to a host ALSA device
+# (USB DAC, HAT, etc.) for bit-perfect playback. Browser streaming works
+# without this file; apply it only on hosts with real audio hardware:
+#
+#   docker compose -f docker-compose.yml -f docker-compose.alsa.yml up -d
+#
+# On Linux, add your user to the 'audio' group on the host first.
+services:
+  lucid:
+    devices:
+      - /dev/snd:/dev/snd
+    group_add:
+      - audio

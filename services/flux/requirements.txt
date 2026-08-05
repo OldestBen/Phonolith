@@ -1,4 +1,0 @@
-nats-py>=2.6.0
-loguru>=0.7.0
-zeroconf>=0.131.0
-pyatv>=0.14.0

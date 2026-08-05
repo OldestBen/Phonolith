@@ -1,0 +1,14 @@
+fastapi==0.111.0
+uvicorn[standard]==0.29.0
+pyalsaaudio==0.10.0
+soundfile==0.12.1
+numpy==1.26.4
+httpx==0.27.0
+redis==5.0.4
+pydantic==2.7.1
+zeroconf==0.132.2
+pyatv==0.14.5
+# SMB streaming: Lucid opens files on network (SMB/CIFS) sources directly over
+# the wire, since it only bind-mounts the local /music tree. Same lib the
+# analyst uses so credentials/behaviour match.
+smbprotocol==1.13.0

@@ -1,0 +1,198 @@
+"""
+flux.py — AirPlay endpoint discovery and streaming for Lucid.
+
+Uses zeroconf to browse ``_raop._tcp.local.`` (Remote Audio Output Protocol)
+service announcements, maintaining a live registry of discovered AirPlay
+receivers. Actual streaming is delegated to ``pyatv``, which implements the
+RTSP session negotiation and ALAC encoding required to speak to both legacy
+AirPlay (RAOP) and AirPlay 2 receivers — reimplementing that protocol stack
+by hand would be a large, fragile undertaking with no real upside over a
+maintained library that already handles device-specific quirks and, where
+required, AirPlay 2 pairing/encryption.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import logging
+import threading
+from typing import Any
+
+import pyatv
+from pyatv.const import Protocol
+from zeroconf import ServiceBrowser, ServiceListener, Zeroconf
+
+log = logging.getLogger("lucid.flux")
+
+_RAOP_SERVICE_TYPE = "_raop._tcp.local."
+
+
+class _RaopListener(ServiceListener):
+    """
+    Zeroconf service listener that populates :attr:`FluxManager.discovered`
+    as AirPlay (RAOP) services come and go.
+    """
+
+    def __init__(self, registry: dict[str, dict[str, Any]]) -> None:
+        self._registry = registry
+
+    def add_service(self, zc: Zeroconf, type_: str, name: str) -> None:
+        info = zc.get_service_info(type_, name)
+        if info is None:
+            return
+        # The RAOP service name is typically "<MAC>@<Device Name>._raop._tcp.local."
+        friendly_name = name.split("@", 1)[-1].split("._")[0] if "@" in name else name.split("._")[0]
+        host = (
+            ".".join(str(b) for b in info.addresses[0])
+            if info.addresses
+            else "unknown"
+        )
+        port = info.port
+        model = (info.properties.get(b"am", b"") or b"").decode("utf-8", errors="replace")
+
+        entry = {"name": friendly_name, "host": host, "port": port, "model": model}
+        self._registry[friendly_name] = entry
+        log.info("AirPlay endpoint discovered: %s (%s:%d, model=%r)", friendly_name, host, port, model)
+
+    def remove_service(self, zc: Zeroconf, type_: str, name: str) -> None:  # noqa: ARG002
+        friendly_name = name.split("@", 1)[-1].split("._")[0] if "@" in name else name.split("._")[0]
+        removed = self._registry.pop(friendly_name, None)
+        if removed:
+            log.info("AirPlay endpoint lost: %s", friendly_name)
+
+    def update_service(self, zc: Zeroconf, type_: str, name: str) -> None:
+        # Re-use add_service to refresh the entry.
+        self.add_service(zc, type_, name)
+
+
+class FluxManager:
+    """
+    Discovers AirPlay receivers on the local network via mDNS/Zeroconf.
+
+    Usage::
+
+        flux = FluxManager()
+        flux.start()
+        ...
+        endpoints = flux.list_endpoints()
+        ...
+        flux.stop()
+    """
+
+    def __init__(self) -> None:
+        self.discovered: dict[str, dict[str, Any]] = {}
+        self._zeroconf: Zeroconf | None = None
+        self._browser: ServiceBrowser | None = None
+        self._lock = threading.Lock()
+        self._stream_task: asyncio.Task[None] | None = None
+        self._active_endpoint: str | None = None
+        # Guards stream_to/stop_streaming against concurrent /play requests
+        # racing each other: without it, two overlapping calls can both pass
+        # the "stop the previous stream" check before either has set
+        # _stream_task, leaving the first stream orphaned and uncancellable.
+        self._stream_lock = asyncio.Lock()
+
+    # ------------------------------------------------------------------
+    # Lifecycle
+    # ------------------------------------------------------------------
+
+    def start(self) -> None:
+        """Start mDNS browsing for RAOP/AirPlay services in a background thread."""
+        if self._zeroconf is not None:
+            log.debug("FluxManager already started")
+            return
+        try:
+            self._zeroconf = Zeroconf()
+            listener = _RaopListener(self.discovered)
+            self._browser = ServiceBrowser(self._zeroconf, _RAOP_SERVICE_TYPE, listener)
+            log.info("FluxManager started — browsing for %s", _RAOP_SERVICE_TYPE)
+        except Exception:
+            log.exception("Failed to start FluxManager / Zeroconf browser")
+
+    def stop(self) -> None:
+        """Stop the mDNS browser and release Zeroconf resources."""
+        if self._zeroconf is not None:
+            try:
+                self._zeroconf.close()
+                log.info("FluxManager stopped")
+            except Exception:
+                log.exception("Error stopping FluxManager")
+            finally:
+                self._zeroconf = None
+                self._browser = None
+
+    # ------------------------------------------------------------------
+    # Discovery API
+    # ------------------------------------------------------------------
+
+    def list_endpoints(self) -> list[dict[str, Any]]:
+        """
+        Return all currently discovered AirPlay endpoints.
+
+        Each entry is a dict with keys ``name``, ``host``, ``port``,
+        and ``model``.
+        """
+        return list(self.discovered.values())
+
+    def endpoint_info(self, name: str) -> dict[str, Any] | None:
+        """Return the info dict for the named endpoint, or ``None`` if not found."""
+        return self.discovered.get(name)
+
+    # ------------------------------------------------------------------
+    # Streaming (RTSP/ALAC via pyatv)
+    # ------------------------------------------------------------------
+
+    async def stream_to(self, endpoint_name: str, file_path: str) -> None:
+        """
+        Stream *file_path* to the named AirPlay endpoint over RTSP/ALAC.
+
+        Any in-flight AirPlay stream started by a previous call is cancelled
+        first — Lucid only ever drives one output at a time.
+        """
+        entry = self.discovered.get(endpoint_name)
+        if entry is None:
+            raise ValueError(f"Unknown AirPlay endpoint: {endpoint_name!r}")
+
+        async with self._stream_lock:
+            await self._stop_streaming_locked()
+            self._active_endpoint = endpoint_name
+            self._stream_task = asyncio.create_task(self._do_stream(entry["host"], file_path, endpoint_name))
+
+    async def _do_stream(self, host: str, file_path: str, endpoint_name: str) -> None:
+        loop = asyncio.get_running_loop()
+        try:
+            atvs = await pyatv.scan(loop, hosts=[host], protocol={Protocol.RAOP})
+            if not atvs:
+                log.warning("AirPlay endpoint %s (%s) did not respond to scan", endpoint_name, host)
+                return
+            atv = await pyatv.connect(atvs[0], loop)
+        except Exception:
+            log.exception("Failed to connect to AirPlay endpoint %s (%s)", endpoint_name, host)
+            return
+
+        try:
+            log.info("Streaming %s to AirPlay endpoint %s (%s)", file_path, endpoint_name, host)
+            await atv.stream.stream_file(file_path)
+        except asyncio.CancelledError:
+            log.info("AirPlay stream to %s cancelled", endpoint_name)
+            raise
+        except Exception:
+            log.exception("AirPlay stream to %s (%s) failed", endpoint_name, host)
+        finally:
+            atv.close()
+
+    async def stop_streaming(self) -> None:
+        """Cancel any in-flight AirPlay stream."""
+        async with self._stream_lock:
+            await self._stop_streaming_locked()
+
+    async def _stop_streaming_locked(self) -> None:
+        """``stop_streaming`` body, assuming ``self._stream_lock`` is already held."""
+        if self._stream_task is not None and not self._stream_task.done():
+            self._stream_task.cancel()
+            try:
+                await self._stream_task
+            except (asyncio.CancelledError, Exception):
+                pass
+        self._stream_task = None
+        self._active_endpoint = None

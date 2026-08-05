@@ -1,0 +1,16 @@
+export const dynamic = 'force-dynamic'
+
+import { NextRequest, NextResponse } from 'next/server'
+import { getUserFromSessionCookie, SESSION_COOKIE_NAME } from '@/lib/auth'
+import { searchSoulseek } from '@/lib/soulcatcher'
+
+export async function GET(req: NextRequest) {
+  const user = await getUserFromSessionCookie(req.cookies.get(SESSION_COOKIE_NAME)?.value)
+  if (!user) return NextResponse.json({ error: 'Not authenticated.' }, { status: 401 })
+
+  const q = req.nextUrl.searchParams.get('q')?.trim()
+  if (!q) return NextResponse.json({ results: [] })
+
+  const results = await searchSoulseek(q)
+  return NextResponse.json({ results })
+}

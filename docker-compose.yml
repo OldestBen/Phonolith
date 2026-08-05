@@ -1,424 +1,210 @@
-x-logging: &logging
-  driver: "json-file"
-  options:
-    max-size: "10m"
-    max-file: "3"
-
-x-env: &common-env
-  NATS_URL: nats://nats:4222
-  DATA_DIR: /data
-
-x-rust-volumes: &rust-volumes
-  - ${LIBRARY_PATH:-/tmp/phonolith-lib}:/library:ro
-  - phonolith-data:/data
-
 services:
 
-  # ── Infrastructure ─────────────────────────────────────────────────────────
-
-  nats:
-    image: nats:2.10-alpine
-    restart: unless-stopped
-    command: ["--js", "--m", "8222", "--sd", "/data"]
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
     ports:
-      - "4222:4222"
-      - "8222:8222"
+      - "${APP_PORT:-3000}:3000"
+    environment:
+      - GENIUS_ACCESS_TOKEN=${GENIUS_ACCESS_TOKEN}
+      - DATABASE_URL=postgresql://phonolith:phonolith@db:5432/phonolith
+      - REDIS_URL=redis://redis:6379
+      - ANALYST_URL=http://analyst:8000
+      - LUCID_URL=http://lucid:8001
+      - CREDENTIAL_KEY=${CREDENTIAL_KEY:-}
+      - DISCOGS_USER_TOKEN=${DISCOGS_USER_TOKEN:-}
+      - ACOUSTID_API_KEY=${ACOUSTID_API_KEY:-}
+      - MUSICBRAINZ_APP_NAME=${MUSICBRAINZ_APP_NAME:-Phonolith}
+      - MUSICBRAINZ_APP_VERSION=${MUSICBRAINZ_APP_VERSION:-1.0}
+      - MUSICBRAINZ_CONTACT=${MUSICBRAINZ_CONTACT:-}
+      - S3_BUCKET=${S3_BUCKET:-}
+      - S3_REGION=${S3_REGION:-}
+      - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID:-}
+      - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY:-}
+      - POLYPHONY_BACKUP_DIR=/data/polyphony-backups
+      - SLSKD_URL=http://slskd:5030
+      - SLSKD_API_KEY=${SLSKD_API_KEY:-}
+      - INTERNAL_SERVICE_TOKEN=${INTERNAL_SERVICE_TOKEN:-}
     volumes:
-      - nats-data:/data
-    logging: *logging
-
-  # ── Ingestion Layer ────────────────────────────────────────────────────────
-
-  tremor:
-    build: ./services/tremor
+      - polyphony_backups:/data/polyphony-backups
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_started
     restart: unless-stopped
-    environment:
-      <<: *common-env
-      LIBRARY_PATH: /library
-      RUST_LOG: tremor=info
-    volumes: *rust-volumes
-    depends_on: [nats]
-    logging: *logging
 
-  bitforge:
-    build: ./services/bitforge
-    restart: unless-stopped
+  analyst:
+    build:
+      context: ./analyst
+      dockerfile: Dockerfile
+    ports:
+      - "${ANALYST_PORT:-8000}:8000"
     environment:
-      <<: *common-env
-      LIBRARY_PATH: /library
-      WORKER_POOL_SIZE: ${WORKER_POOL_SIZE:-4}
-      RUST_LOG: bitforge=info
-    volumes: *rust-volumes
-    depends_on: [nats]
-    logging: *logging
-
-  # ── VFS Layer ──────────────────────────────────────────────────────────────
-
-  resonancefs:
-    build: ./services/resonancefs
-    restart: unless-stopped
-    environment:
-      <<: *common-env
+      - APP_URL=http://app:3000
+      - REDIS_URL=redis://redis:6379
+      - LIBRARY_PATH=/music
+      - ACOUSTID_API_KEY=${ACOUSTID_API_KEY:-}
+      - INTERNAL_SERVICE_TOKEN=${INTERNAL_SERVICE_TOKEN:-}
     volumes:
-      - phonolith-data:/data
-    cap_add: [SYS_ADMIN]
-    security_opt: [apparmor:unconfined]
-    depends_on: [nats]
-    logging: *logging
-
-  # ── Metadata Layer ─────────────────────────────────────────────────────────
-
-  engram:
-    build: ./services/engram
+      # Read-write: write_tags (main.py) saves edited ID3/Vorbis/MP4 tags back to
+      # library files, and the nested soulcatcher_downloads mount below needs to
+      # create its mountpoint under /music — Docker can't do that under a
+      # read-only bind mount (mkdir would hit EROFS).
+      - ${LIBRARY_PATH:-./music}:/music
+      # Soulcatcher downloads land here via the slskd service below. Mounted into
+      # the analyst's /music tree (not just slskd's) so a library rescan picks up
+      # completed downloads — see src/app/api/soulcatcher/downloads/[id]/ingest.
+      - soulcatcher_downloads:/music/soulcatcher-downloads
+      - waveforms:/waveforms
+    depends_on:
+      - redis
     restart: unless-stopped
-    environment:
-      <<: *common-env
-      LIBRARY_PATH: /library
-    volumes:
-      - ${LIBRARY_PATH:-/tmp/phonolith-lib}:/library
-      - phonolith-data:/data
-    depends_on: [nats]
-    logging: *logging
 
-  lexicon:
-    build: ./services/lexicon
-    restart: unless-stopped
-    environment:
-      <<: *common-env
-      MUSICBRAINZ_USER_AGENT: ${MUSICBRAINZ_USER_AGENT:-Phonolith/0.1.0}
-      DISCOGS_TOKEN: ${DISCOGS_TOKEN:-}
-    volumes:
-      - phonolith-data:/data
-    depends_on: [nats]
-    logging: *logging
-
-  # ── Sonic Lab ──────────────────────────────────────────────────────────────
-
-  prism:
-    build: ./services/prism
-    restart: unless-stopped
-    environment:
-      <<: *common-env
-      LIBRARY_PATH: /library
-      WORKER_POOL_SIZE: ${WORKER_POOL_SIZE:-4}
-    volumes: *rust-volumes
-    depends_on: [nats]
-    logging: *logging
-
-  crest:
-    build: ./services/crest
-    restart: unless-stopped
-    environment:
-      <<: *common-env
-      LIBRARY_PATH: /library
-      WORKER_POOL_SIZE: ${WORKER_POOL_SIZE:-4}
-    volumes: *rust-volumes
-    depends_on: [nats]
-    logging: *logging
-
-  # ── Vaulting Layer ─────────────────────────────────────────────────────────
-
-  aegis:
-    build: ./services/aegis
-    restart: unless-stopped
-    environment:
-      <<: *common-env
-      LIBRARY_PATH: /library
-      S3_ENDPOINT: ${S3_ENDPOINT:-}
-      S3_BUCKET: ${S3_BUCKET:-}
-      S3_ACCESS_KEY: ${S3_ACCESS_KEY:-}
-      S3_SECRET_KEY: ${S3_SECRET_KEY:-}
-      S3_REGION: ${S3_REGION:-us-east-1}
-      WORM_RETENTION_DAYS: ${WORM_RETENTION_DAYS:-0}
-      SUREPLAY_INTERVAL_HOURS: ${SUREPLAY_INTERVAL_HOURS:-720}
-      SUREPLAY_SAMPLE_SIZE: ${SUREPLAY_SAMPLE_SIZE:-50}
-      RUST_LOG: aegis=info
-    volumes: *rust-volumes
-    depends_on: [nats]
-    logging: *logging
-
-  # ── Playback Layer ─────────────────────────────────────────────────────────
-
+  # Lucid — audio transport daemon (browser streaming + optional ALSA exclusive output)
+  # Browser playback (the RAAT-style baseline) needs no audio hardware on the host.
+  # ALSA exclusive output for enthusiast DACs requires the docker-compose.alsa.yml
+  # overlay (adds /dev/snd passthrough) — see README.
   lucid:
-    build: ./services/lucid
-    restart: unless-stopped
-    environment:
-      <<: *common-env
-      LIBRARY_PATH: /library
-      RUST_LOG: lucid=info
-    volumes: *rust-volumes
-    devices:
-      - /dev/snd:/dev/snd
-    group_add: [audio]
-    depends_on: [nats]
-    logging: *logging
-
-  flux:
-    build: ./services/flux
-    restart: unless-stopped
-    network_mode: host
-    environment:
-      <<: *common-env
-      AIRPLAY_RECEIVER_NAME: ${AIRPLAY_RECEIVER_NAME:-Phonolith}
-    volumes:
-      - phonolith-data:/data
-    depends_on: [nats]
-    logging: *logging
-
-  # ── External sync ─────────────────────────────────────────────────────────
-
-  lastfm:
-    build: ./services/lastfm
-    restart: unless-stopped
-    environment:
-      <<: *common-env
-      LASTFM_API_KEY: ${LASTFM_API_KEY:-}
-      LASTFM_API_SECRET: ${LASTFM_API_SECRET:-}
-      LASTFM_USERNAME: ${LASTFM_USERNAME:-}
-      LASTFM_SYNC_INTERVAL_HOURS: ${LASTFM_SYNC_INTERVAL_HOURS:-6}
-    volumes:
-      - phonolith-data:/data
-    depends_on: [nats]
-    logging: *logging
-
-  plex:
-    build: ./services/plex
-    restart: unless-stopped
-    environment:
-      <<: *common-env
-      PLEX_URL: ${PLEX_URL:-}
-      PLEX_TOKEN: ${PLEX_TOKEN:-}
-      PLEX_SYNC_INTERVAL_HOURS: ${PLEX_SYNC_INTERVAL_HOURS:-1}
-      LIBRARY_PATH: /library
-    volumes:
-      - ${LIBRARY_PATH:-/tmp/phonolith-lib}:/library:ro
-      - phonolith-data:/data
-    depends_on: [nats]
-    logging: *logging
-
-  # ── Analytics Layer ────────────────────────────────────────────────────────
-
-  echograph:
-    build: ./services/echograph
-    restart: unless-stopped
-    environment:
-      <<: *common-env
-      LASTFM_API_KEY: ${LASTFM_API_KEY:-}
-      LASTFM_API_SECRET: ${LASTFM_API_SECRET:-}
-      LASTFM_USERNAME: ${LASTFM_USERNAME:-}
-    volumes:
-      - phonolith-data:/data
-    depends_on: [nats]
-    logging: *logging
-
-  cathode:
-    build: ./services/cathode
-    restart: unless-stopped
-    environment:
-      <<: *common-env
-    volumes:
-      - phonolith-data:/data
-    depends_on: [nats]
-    logging: *logging
-
-  # ── Ecosystem Layer ────────────────────────────────────────────────────────
-
-  polyphony:
-    build: ./services/polyphony
-    restart: unless-stopped
+    build:
+      context: ./lucid
+      dockerfile: Dockerfile
     ports:
-      - "51820:51820/udp"
+      - "${LUCID_PORT:-8001}:8001"
     environment:
-      <<: *common-env
-      POLYPHONY_NODE_ALIAS: ${POLYPHONY_NODE_ALIAS:-phonolith-node}
+      - REDIS_URL=redis://redis:6379
+      - APP_URL=http://app:3000
+      - INTERNAL_SERVICE_TOKEN=${INTERNAL_SERVICE_TOKEN:-}
     volumes:
-      - phonolith-data:/data
-      - polyphony-keys:/keys
-    cap_add: [NET_ADMIN]
-    depends_on: [nats]
-    logging: *logging
-
-  sonic-codex:
-    build: ./services/sonic-codex
+      - ${LIBRARY_PATH:-./music}:/music:ro
+    depends_on:
+      - redis
     restart: unless-stopped
+
+  # Caddy — single public entry point. Routes media bytes and the realtime
+  # transport WebSocket directly to Lucid (never through the Next.js app),
+  # everything else to the Next.js app. Set SITE_ADDRESS to a real domain
+  # to get automatic Let's Encrypt HTTPS; left unset, it serves plain HTTP
+  # on HTTP_PORT for LAN/no-domain use.
+  caddy:
+    image: caddy:2-alpine
+    ports:
+      - "${HTTP_PORT:-8080}:80"
+      - "${HTTPS_PORT:-8443}:443"
     environment:
-      <<: *common-env
+      # Resolve the default here, not in the Caddyfile: docker-compose always
+      # *defines* this var (just empty if unset on the host), and Caddy's
+      # {$VAR:default} placeholder only applies its default when the var is
+      # unset — not when it's defined-but-empty — so an empty SITE_ADDRESS
+      # would reach Caddy as a literal empty address and corrupt parsing of
+      # the whole site block.
+      - SITE_ADDRESS=${SITE_ADDRESS:-:80}
     volumes:
-      - phonolith-data:/data
-    depends_on: [nats]
-    logging: *logging
-
-  # ── Semantic embedding engine ─────────────────────────────────────────────
-
-  semantic:
-    build: ./services/semantic
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - app
+      - lucid
     restart: unless-stopped
-    environment:
-      <<: *common-env
-      DATA_DIR: /data
-      WORKER_POOL_SIZE: "2"
-    volumes:
-      - ${LIBRARY_PATH:-/tmp/phonolith-lib}:/library:ro
-      - phonolith-data:/data
-    depends_on: [nats]
-    logging: *logging
 
-  # ── Opus proxy transcoder ─────────────────────────────────────────────────
-
-  opus-proxy:
-    build: ./services/opus-proxy
-    restart: unless-stopped
-    environment:
-      <<: *common-env
-      PROXY_DIR: /data/proxies
-      OPUS_BITRATE: "128k"
-      WORKER_POOL_SIZE: "2"
-    volumes:
-      - ${LIBRARY_PATH:-/tmp/phonolith-lib}:/library:ro
-      - phonolith-proxies:/data/proxies
-    depends_on: [nats]
-    logging: *logging
-
-  # ── Waveform renderer ─────────────────────────────────────────────────────
-
-  waveform:
-    build: ./services/waveform
-    restart: unless-stopped
-    environment:
-      <<: *common-env
-      DATA_DIR: /data/waveforms
-      WAVEFORM_RESOLUTION: "1800"
-      WORKER_POOL_SIZE: "2"
-    volumes:
-      - ${LIBRARY_PATH:-/tmp/phonolith-lib}:/library:ro
-      - phonolith-waveforms:/data/waveforms
-    depends_on: [nats]
-    logging: *logging
-
-  accuraterip:
-    build: ./services/accuraterip
-    restart: unless-stopped
-    environment:
-      <<: *common-env
-    volumes:
-      - ${LIBRARY_PATH:-/tmp/phonolith-lib}:/library:ro
-      - phonolith-data:/data
-    depends_on: [nats]
-    logging: *logging
-
-  smart:
-    build: ./services/smart
-    restart: unless-stopped
-    privileged: true                    # required for smartctl raw device access
-    environment:
-      <<: *common-env
-      SMART_POLL_INTERVAL_SECS: "3600"
-      DEVICES: ${SMART_DEVICES:-}       # e.g. /dev/sda,/dev/sdb  — empty = auto-detect
-    volumes:
-      - /dev:/dev:ro
-    depends_on: [nats]
-    logging: *logging
-
-  # ── DAP Provisioning ──────────────────────────────────────────────────────
-
-  dap:
-    build: ./services/dap
-    restart: unless-stopped
-    environment:
-      <<: *common-env
-      LIBRARY_PATH: /library
-    volumes:
-      - ${LIBRARY_PATH:-/tmp/phonolith-lib}:/library:ro
-      - phonolith-data:/data
-      - ${DAP_MOUNT_ROOT:-/tmp/phonolith-dap}:/dap
-    depends_on: [nats]
-    logging: *logging
-
-  # ── Acoustic Fingerprint ───────────────────────────────────────────────────
-
-  fingerprint:
-    build: ./services/fingerprint
-    restart: unless-stopped
-    environment:
-      <<: *common-env
-      LIBRARY_PATH: /library
-    volumes:
-      - ${LIBRARY_PATH:-/tmp/phonolith-lib}:/library:ro
-      - phonolith-data:/data
-    depends_on: [nats]
-    logging: *logging
-
-  # ── SNMP NAS Monitoring ────────────────────────────────────────────────────
-
-  snmp:
-    build: ./services/snmp
-    restart: unless-stopped
-    environment:
-      <<: *common-env
-      NAS_HOSTS: ${NAS_HOSTS:-}
-      SNMP_COMMUNITY: ${SNMP_COMMUNITY:-public}
-      SNMP_POLL_INTERVAL_SECS: ${SNMP_POLL_INTERVAL_SECS:-300}
-    depends_on: [nats]
-    logging: *logging
-
-  # ── Tailscale (optional — enable with: docker compose --profile tailscale up) ──
-
+  # Tailscale — optional sidecar that joins this instance to your private tailnet,
+  # giving zero-config remote access without forwarding any ports. Reachable at the
+  # container's Tailscale IP once authenticated; combine with `tailscale serve`/`funnel`
+  # (run via `docker compose exec tailscale tailscale serve ...`) to publish Caddy over
+  # the tailnet or the public internet. Harmless if TAILSCALE_AUTHKEY is left unset —
+  # the container will simply sit idle without joining a tailnet.
   tailscale:
     image: tailscale/tailscale:latest
-    restart: unless-stopped
-    profiles: [tailscale]
-    hostname: ${TAILSCALE_HOSTNAME:-phonolith}
-    environment:
-      TS_AUTHKEY: ${TAILSCALE_AUTHKEY:-}
-      TS_STATE_DIR: /var/lib/tailscale
-      TS_USERSPACE: "false"
-    volumes:
-      - tailscale-state:/var/lib/tailscale
-      - /dev/net/tun:/dev/net/tun
     cap_add:
       - NET_ADMIN
       - NET_RAW
-    network_mode: host
-    logging: *logging
-
-  # ── API Gateway ────────────────────────────────────────────────────────────
-
-  api:
-    build: ./services/api
-    restart: unless-stopped
-    ports:
-      - "${API_PORT:-8000}:8000"
+    devices:
+      - /dev/net/tun:/dev/net/tun
     environment:
-      <<: *common-env
-      LIBRARY_PATH: /library
-      PLEX_URL: ${PLEX_URL:-}
-      PLEX_TOKEN: ${PLEX_TOKEN:-}
-      WAVEFORM_DIR: /data/waveforms
-      PROXY_DIR: /data/proxies
-      SEMANTIC_DB: /data/semantic.db
-      POLYPHONY_DB: /data/polyphony.db
+      - TS_AUTHKEY=${TAILSCALE_AUTHKEY:-}
+      - TS_STATE_DIR=/var/lib/tailscale
+      - TS_EXTRA_ARGS=--accept-routes
     volumes:
-      - ${LIBRARY_PATH:-/tmp/phonolith-lib}:/library:ro
-      - phonolith-data:/data
-      - phonolith-waveforms:/data/waveforms:ro
-      - phonolith-proxies:/data/proxies:ro
-    depends_on: [nats]
-    logging: *logging
-
-  # ── Web UI ─────────────────────────────────────────────────────────────────
-
-  ui:
-    build: ./ui
+      - tailscale_state:/var/lib/tailscale
     restart: unless-stopped
-    ports:
-      - "${UI_PORT:-3000}:80"
-    depends_on: [api]
-    logging: *logging
+
+  # Cloudflare Tunnel — optional sidecar that exposes Caddy through Cloudflare's edge,
+  # useful for sharing this instance without revealing your home IP. Requires a tunnel
+  # token created in the Cloudflare Zero Trust dashboard (Networks → Tunnels). Without
+  # CLOUDFLARE_TUNNEL_TOKEN set, this container will fail to start cleanly — that's
+  # expected and harmless; leave it stopped (or never run `docker compose up cloudflared`)
+  # if you don't use Cloudflare Tunnel.
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    command: tunnel run
+    environment:
+      - TUNNEL_TOKEN=${CLOUDFLARE_TUNNEL_TOKEN:-}
+    depends_on:
+      - caddy
+    restart: unless-stopped
+
+  # slskd — Soulseek client daemon, headless. Provides the REST API that
+  # src/lib/soulcatcher.ts talks to (search, browse, enqueue downloads).
+  # Only reachable on the internal Docker network — the Next.js app proxies
+  # to it via SLSKD_URL, so no host port is published here.
+  slskd:
+    image: slskd/slskd:latest
+    environment:
+      - SLSKD_REMOTE_CONFIGURATION=true
+      - SLSKD_SLSK_USERNAME=${SOULSEEK_USERNAME:-}
+      - SLSKD_SLSK_PASSWORD=${SOULSEEK_PASSWORD:-}
+      - SLSKD_HTTP_PORT=5030
+      - SLSKD_API_KEY=${SLSKD_API_KEY:-}
+      # In-progress transfers are written here, under the /app config volume —
+      # a different volume than soulcatcher_downloads below, so the analyst's
+      # watcher (which only sees soulcatcher_downloads) can never observe a
+      # partially-written file. slskd renames into SLSKD_DOWNLOADS_DIR only
+      # once a transfer completes. Set explicitly rather than relying on
+      # slskd's default (APP_DIR/incomplete) so this guarantee survives a
+      # slskd version bump changing that default.
+      - SLSKD_INCOMPLETE_DIR=/app/incomplete
+      - SLSKD_DOWNLOADS_DIR=/downloads
+    volumes:
+      - slskd_config:/app
+      - soulcatcher_downloads:/downloads
+    restart: unless-stopped
+
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: phonolith
+      POSTGRES_PASSWORD: phonolith
+      POSTGRES_DB: phonolith
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    # Uncomment to expose PostgreSQL to the host (e.g. for DB tools):
+    # ports:
+    #   - "${DB_PORT:-5432}:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U phonolith"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    volumes:
+      - redisdata:/data
+    # Uncomment to expose Redis to the host (e.g. for redis-cli debugging):
+    # ports:
+    #   - "${REDIS_PORT:-6379}:6379"
+    restart: unless-stopped
 
 volumes:
-  phonolith-data:
-  nats-data:
-  polyphony-keys:
-  phonolith-waveforms:
-  phonolith-proxies:
-  tailscale-state:
+  pgdata:
+  redisdata:
+  waveforms:
+  caddy_data:
+  caddy_config:
+  polyphony_backups:
+  tailscale_state:
+  slskd_config:
+  soulcatcher_downloads:

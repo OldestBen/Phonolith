@@ -1,199 +1,351 @@
 # Phonolith
 
-**The Command Center for the Music Obsessive.**
+**Command Centre for the Music Obsessive.**
 
-Phonolith is a self-hosted Local Music Intelligence Engine — an open-source, modular platform that treats a music library the way a high-frequency trading floor treats data: real-time, hyper-granular, and cross-referenced with every available external signal.
-
-It is not a player. It is not a tagger. It is the operating system beneath your entire music collection.
+Phonolith is a self-hosted music intelligence platform. It indexes your local audio library, enriches every track with metadata from MusicBrainz and Genius, gives you an annotated lyric reader, and renders your collection as an interactive galaxy visualisation. Everything runs in Docker — one `compose up` is all it takes.
 
 ---
 
-## Core Philosophy
+## Features
 
-- **Hash-first identity** — every file is a BLAKE3 hash, not a path.
-- **Bit-perfect or bust** — the signal chain is fully observable and mathematically transparent.
-- **Zero trust, zero knowledge** — encrypted at rest before a single byte leaves your network.
-- **Metadata is truth** — you wrote those tags. Phonolith guards them.
+### Library & Analysis
+- Mount any local path, NFS share, or SMB/CIFS share as a library source
+- Streaming BLAKE3 file hashing — no temp files, no full downloads over the network
+- Automatic tag extraction (title, artist, album, year, track) via mutagen
+- Dynamic Range (DR) score computed with librosa RMS/peak analysis
+- Spectral upscale detection (frequency-ceiling check above 18 kHz)
+- Waveform PNG rendered per file (1200 × 200 px, dark background, violet waveform)
+- AcoustID acoustic fingerprinting — links files to MusicBrainz recordings
+- Two-phase SMB scan: live "discovering" progress → parallel 4-worker indexing
+
+### Metadata Enrichment
+- **MusicBrainz** — canonical artist IDs (MBID), accurate release dates, ISRCs, label, recording metadata; rate-limited to 1 req/s per the MusicBrainz guidelines
+- **Genius** — song descriptions, structured credits (producer, writer, featured), per-line annotations, and lyrics
+- **Discogs** (optional) — additional release metadata and pressing information
+- All data is cached in PostgreSQL first; external APIs are only called on a cache miss
+
+### Lyrics & Annotations
+- Full lyrics stored locally after first fetch — no repeat API calls
+- Per-line Genius annotations with expandable inline view
+- User annotations layered alongside Genius annotations
+- Copy / Download / Mark-as-read actions per song
+
+### Visualisation
+- Force-directed galaxy: album nodes orbit an artist centre, song nodes cluster around albums
+- Spider-web connection overlays: collaborator, producer, era (±2 yr)
+- Double-click an album to enter focus mode — others fade, songs fan out with labels
+- Zoom (0.3× – 3×) and pan on canvas; timeline view (year axis, album swim-lanes)
+- Filters: album, decade, tag
+
+### History & Tags
+- Every lyrics read, download, and manual mark is recorded with a timestamp
+- EchoGraph page: reads-per-week line chart, top-artists bar chart, chronological event log
+- Tag any song; filter the library and discography views by tag
+
+### Playback
+- **Lucid** — bit-perfect ALSA playback daemon (Linux, Docker profile `audio`): exclusive ALSA lock via pyalsaaudio, gapless queue, frame-accurate seek, RAM pre-caching, two decode paths (soundfile for FLAC/WAV/AIFF; FFmpeg pipe for MP3/AAC/M4A)
+- **Signal Path Visualizer** — fixed bottom playback bar with a full-screen "Signal Path" overlay showing the end-to-end chain (Source → Decoder → DSP → Transport → Endpoint), animated flowing pulse while playing, bit-perfect status badge per stage
+- **Flux** — AirPlay endpoint discovery via zeroconf (`_raop._tcp.local.`); RTSP/ALAC streaming is a future milestone
+
+### Settings & Backup
+- In-app settings for API keys with live "Test" buttons
+- Library source management (add, remove, scan, test) with real-time scan progress
+- PostgreSQL backup to S3 on demand or scheduled
+- AES-256-GCM encryption of SMB/NFS credentials at rest (`CREDENTIAL_KEY`)
+
+### Soulcatcher (Soulseek)
+- Search the Soulseek network for tracks via the `slskd` sidecar
+- Queue downloads from any peer; download history tracked in PostgreSQL
+- One-click "Add to Library" triggers an analyst rescan of the downloads folder once a transfer completes
 
 ---
 
-## Named Subsystems
+## Architecture
 
-Phonolith is composed of discrete, independently deployable microservices. Each has a name that reflects its purpose precisely.
+```
+Browser
+  └── Next.js 14 (App Router, TypeScript)
+        ├── /api/* — DB-first API routes, Redis cache
+        ├── postgres.js → PostgreSQL 16
+        ├── ioredis   → Redis 7
+        └── HTTP      → Analyst sidecar
+                     → Lucid sidecar (optional, Linux only)
 
-| Name | Layer | Role |
-|---|---|---|
-| **ResonanceFS** | Ingestion | Secure Virtual Filesystem (SMB/NFS/CIFS mount layer) |
-| **Tremor** | Ingestion | Filesystem watcher daemon (inotify / FSEvents) |
-| **Engram** | Metadata | Metadata lock engine & version-control guardian |
-| **Lexicon** | Metadata | Deep-scraping metadata resolver (MusicBrainz, Discogs, ENGINEER tags) |
-| **Prism** | Sonic Lab | Spectral analysis & fake-FLAC / upscale detector |
-| **Crest** | Sonic Lab | Dynamic Range (DR / Crest Factor) calculator |
-| **Aegis** | Vaulting | Immutable S3 backup, encryption & chunking engine |
-| **Bit-Forge** | Vaulting | BLAKE3 hashing service & deduplication index |
-| **Lucid** | Playback | Bit-perfect ALSA-exclusive audio transport daemon |
-| **Flux** | Playback | Downsampling & AirPlay 2 routing sub-routine |
-| **EchoGraph** | Analytics | Scrobble history, Sankey diagrams & genre-evolution engine |
-| **Cathode** | Analytics | Hardware endpoint tracker & burn-in accountant |
-| **Polyphony** | Ecosystem | Cryptographic peer-network ("Syndicate") for trusted node cross-referencing |
-| **Sonic Codex** | Ecosystem | Portable library manifest format (`.codex`) — the blueprint, not the bits |
+Analyst sidecar (Python / FastAPI)
+  ├── scanner.py     — BLAKE3 · mutagen · DR · spectral · waveform · AcoustID
+  ├── accuraterip.py — CRCv1 verification for FLAC/WAV/AIFF during indexing
+  ├── watcher.py     — watchdog → debounced rescan on file change
+  └── POST /api/library/ingest → Next.js (internal network only)
 
-Full architectural detail for every subsystem lives in [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
+Lucid sidecar (Python / FastAPI — Docker profile: audio — Linux only)
+  ├── alsa.py        — exclusive ALSA lock via pyalsaaudio; gapless queue playback
+  ├── decode.py      — soundfile (FLAC/WAV/AIFF) · FFmpeg pipe (MP3/AAC/M4A)
+  ├── airplay.py     — AirPlay endpoint discovery via zeroconf (_raop._tcp.local.)
+  └── signal_path    — state published to Redis key lucid:signal_path
+```
+
+Four core Docker services: `app`, `analyst`, `db` (Postgres 16), `redis` (Redis 7).
+A fifth optional service `lucid` starts only with the `audio` Docker profile (Linux hosts only).
 
 ---
 
 ## Quick Start
 
-### Prerequisites
-
-- Docker 24+ and Docker Compose v2
-- A host directory containing your music files (FLAC, MP3, AAC, DSF, WAV…)
-
-### 1 — Configure
+**Prerequisites:** Docker with Compose v2.
 
 ```bash
+git clone https://github.com/OldestBen/Phonolith
+cd Phonolith
 cp .env.example .env
-# Optional: set LIBRARY_PATH to your music directory, or leave blank
-# and add sources later via the Sources page in the UI.
-nano .env
 ```
 
-### 2 — Boot
+Edit `.env` and set at minimum:
+
+```env
+GENIUS_ACCESS_TOKEN=your_token_here   # https://genius.com/api-clients
+LIBRARY_PATH=/path/to/your/music      # absolute path on the Docker host
+```
+
+Then start everything:
 
 ```bash
 docker compose up -d
 ```
 
-The stack will be ready once NATS is healthy and EchoGraph has created the JetStream streams (a few seconds). Open the web UI at **http://localhost:3000**.
+Open **http://localhost:8080** in your browser — Caddy is the single public entry point, routing media bytes and the realtime transport socket directly to Lucid and everything else to the app.
 
-### 3 — Watch ingestion
-
-```bash
-docker compose logs -f tremor bitforge echograph
-```
-
-Tremor detects new files → Bit-Forge computes BLAKE3 hashes → EchoGraph writes tracks to DuckDB. The UI reflects new tracks within seconds.
+To get automatic HTTPS, point a domain's DNS at your host and set `SITE_ADDRESS=your.domain.com` in `.env` before starting — Caddy will obtain and renew a Let's Encrypt certificate and serve on 443 (`HTTPS_PORT`) with no further configuration. This requires your router to forward ports 80 and 443 to this host (Caddy uses the HTTP-01 challenge on 80 to prove domain ownership) — if those ports aren't reachable from the internet, certificate issuance will fail and Caddy will refuse to start. If you can't forward those ports, skip `SITE_ADDRESS` and use the Tailscale or Cloudflare Tunnel sidecars below instead, which don't need any inbound ports open.
 
 ---
 
-## Service Overview
+## Remote Access
 
-| Service | What it does |
+Phonolith can be reached remotely without manually exposing ports, via two optional
+Docker Compose sidecars. Both are configured from **Settings → Remote Access** (or
+directly in `.env`) and are harmless to leave undeployed if you don't need them.
+
+**Tailscale** joins this instance to your private tailnet — zero-config private
+remote access, no port forwarding. Generate an auth key from the
+[Tailscale admin console](https://login.tailscale.com/admin/settings/keys), set
+`TAILSCALE_AUTHKEY` in `.env` or in Settings, then run:
+
+```bash
+docker compose up -d tailscale
+```
+
+The container joins your tailnet and is reachable at its Tailscale IP; use
+`docker compose exec tailscale tailscale serve ...` (or `funnel`) to publish Caddy
+over the tailnet or the public internet.
+
+**Cloudflare Tunnel** exposes this instance through Cloudflare's edge — good for
+sharing with others without revealing your home IP. Create a tunnel in the
+[Cloudflare Zero Trust dashboard](https://one.dash.cloudflare.com/) (Networks →
+Tunnels) and copy its token into `CLOUDFLARE_TUNNEL_TOKEN`, then run:
+
+```bash
+docker compose up -d cloudflared
+```
+
+Without a token set, the `cloudflared` container will fail to start cleanly — that's
+expected; just don't bring it up. Whichever option you use, after saving a new token
+in Settings you must re-run `docker compose up -d` (or the specific service) yourself
+— the Next.js app cannot restart sibling containers.
+
+---
+
+## Lucid — Audio Transport
+
+Lucid is a Python/FastAPI daemon (port 8001) that serves as Phonolith's playback transport, modelled on Roon's RAAT philosophy: the server resolves and (when needed) decodes, the endpoint owns the clock, and the signal path is disclosed honestly rather than hidden.
+
+**Browser playback** (no audio hardware required) is the baseline — Lucid passes the original file bytes through `/stream/{hash}` (HTTP Range supported, no transcoding) and the browser decodes locally via the Web Audio API. This works on any host as soon as `docker compose up -d` is running.
+
+**ALSA exclusive output** (bit-perfect, for a USB DAC or other ALSA-compatible hardware) is an optional addon on top of the same Lucid container:
+
+**Requirements (Linux only):**
+- Linux host with the ALSA sound subsystem available
+- `/dev/snd` device directory exposed to the container
+- Your host user must be a member of the `audio` group: `sudo usermod -aG audio $USER`
+
+**Enable it with the ALSA overlay:**
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.alsa.yml up -d
+```
+
+**Signal path state** is published to the Redis key `lucid:signal_path` on every state change and forwarded in realtime over `ws://.../ws/state` — the Playback Bar's signal path display subscribes to this socket rather than polling.
+
+**REST API** (port 8001): `/play`, `/pause`, `/resume`, `/stop`, `/seek`, `/status`, `/devices`, `/queue/*`, `/airplay/endpoints`, `/stream/{hash}` (GET), `/ws/state` (WebSocket)
+
+> AirPlay (Flux) is available as an alternative output path once RTSP/ALAC streaming is implemented.
+
+---
+
+## Environment Variables
+
+| Variable | Required | Description |
+|---|---|---|
+| `GENIUS_ACCESS_TOKEN` | Yes | Genius API client access token |
+| `DATABASE_URL` | Auto | Set by Compose; override for external Postgres |
+| `REDIS_URL` | Auto | Set by Compose; override for external Redis |
+| `ANALYST_URL` | Auto | Internal URL of the analyst sidecar |
+| `LIBRARY_PATH` | Recommended | Absolute host path mounted into the analyst container as `/music` |
+| `MUSICBRAINZ_APP_NAME` | Recommended | Identifies your instance in MusicBrainz User-Agent (default: `Phonolith`) |
+| `MUSICBRAINZ_APP_VERSION` | Recommended | Sent with MusicBrainz requests (default: `1.0`) |
+| `MUSICBRAINZ_CONTACT` | Recommended | Your email — required by MusicBrainz fair-use policy |
+| `ACOUSTID_API_KEY` | Optional | AcoustID API key for fingerprint lookup |
+| `DISCOGS_USER_TOKEN` | Optional | Discogs personal access token |
+| `S3_BUCKET` | Optional | S3 bucket name for database backups |
+| `S3_REGION` | Optional | AWS region for the S3 bucket |
+| `AWS_ACCESS_KEY_ID` | Optional | AWS credentials for S3 backup |
+| `AWS_SECRET_ACCESS_KEY` | Optional | AWS credentials for S3 backup |
+| `HTTP_PORT` | Optional | Host port for Caddy, the public entry point (default: `8080`) |
+| `HTTPS_PORT` | Optional | Host port for Caddy's HTTPS listener (default: `8443`) |
+| `SITE_ADDRESS` | Optional | Domain name for automatic Let's Encrypt HTTPS via Caddy; blank serves plain HTTP |
+| `APP_PORT` | Optional | Host port for the Next.js app directly, bypassing Caddy (default: `3000`) |
+| `ANALYST_PORT` | Optional | Host port for the analyst sidecar (default: `8000`) |
+| `LUCID_URL` | Optional | Base URL of the Lucid playback daemon (default: `http://lucid:8001`) |
+| `LUCID_PORT` | Optional | Host port for Lucid directly, bypassing Caddy (default: `8001`) |
+| `CREDENTIAL_KEY` | Recommended | AES-256-GCM key for encrypting SMB/NFS credentials at rest. Generate: `openssl rand -hex 32`. Falls back to a SHA-256 of `DATABASE_URL` if unset (not suitable for production). |
+| `TAILSCALE_AUTHKEY` | Optional | Tailscale auth key — joins the `tailscale` sidecar to your private tailnet for zero-config remote access |
+| `CLOUDFLARE_TUNNEL_TOKEN` | Optional | Cloudflare Tunnel token — connects the `cloudflared` sidecar to a tunnel created in the Cloudflare Zero Trust dashboard |
+| `SOULSEEK_USERNAME` | Optional | Soulseek network username, passed to the `slskd` sidecar |
+| `SOULSEEK_PASSWORD` | Optional | Soulseek network password, passed to the `slskd` sidecar |
+| `SLSKD_API_KEY` | Optional | API key protecting slskd's own REST API; sent by the app as the `X-API-Key` header |
+
+---
+
+## Library Sources
+
+Phonolith supports four source types, configurable in **Settings → Library Sources**:
+
+| Type | Notes |
 |---|---|
-| **nats** | JetStream message bus — internal backbone for all events |
-| **tremor** | inotify filesystem watcher; emits `phonolith.hash.*` events |
-| **bitforge** | BLAKE3 content-hash worker; hash follows file across renames |
-| **resonancefs** | FUSE virtual filesystem for SMB/NFS library mounts |
-| **engram** | Tag journal — captures every metadata edit with full diff history |
-| **lexicon** | Metadata resolver — enriches tracks via MusicBrainz + Discogs |
-| **prism** | Spectral analysis + fake-FLAC / bitrate-upscale detector |
-| **crest** | Dynamic range (DR / crest factor) scorer |
-| **aegis** | S3/WORM vault — AES-256 chunked backup with SurePlay integrity checks |
-| **lucid** | Bit-perfect ALSA audio transport daemon |
-| **flux** | AirPlay 2 receiver + zone routing (multiroom fan-out) |
-| **echograph** | Exclusive DuckDB writer — persists all analytics events |
-| **cathode** | Hardware endpoint tracker; logs burn-in hours per device |
-| **polyphony** | WireGuard peer mesh; propagates Ed25519-signed metadata corrections |
-| **sonic-codex** | Generates portable `.codex` library snapshots (gzip SQLite) |
-| **semantic** | Computes BPM, key, and audio embeddings for similarity search |
-| **opus-proxy** | Transcodes lossless files to Opus 128k on-demand for web playback |
-| **waveform** | Pre-renders peak/RMS waveform arrays for the UI player |
-| **accuraterip** | Verifies rips against the AccurateRip CRC database |
-| **smart** | S.M.A.R.T. drive health monitor (requires privileged container) |
-| **dap** | DAP provisioning — syncs curated subsets to SD cards / USB drives for portable players |
-| **fingerprint** | Acoustic fingerprinting via Chromaprint — detects identical recordings across encodings |
-| **snmp** | SNMP NAS monitor — polls Synology / QNAP for disk health, temperature, RAID status |
-| **api** | FastAPI gateway — REST + WebSocket; reads DuckDB in read-only mode |
-| **ui** | React web interface served via nginx |
+| **Local** | Any path accessible inside the analyst container |
+| **NFS** | Pre-mount on the host; provide the mount path |
+| **iSCSI** | Pre-mount on the host; provide the mount path |
+| **SMB / CIFS** | Host, share, optional subfolder, optional credentials and domain |
+
+SMB scans run in two phases:
+1. **Discovering** — walks the share tree, reports file count live as it grows
+2. **Indexing** — hashes and reads tags in parallel (4 workers); posts each record to the app immediately
+
+Progress is shown in real time via the notification bell (top-right corner).
+
+### Synology DSM
+Enable SMB service in **Control Panel → File Services → SMB**. Use the NAS IP, share name (e.g. `music`), and your DSM username/password.
+
+### TrueNAS SCALE
+Enable SMB in **Shares → Windows (SMB) Shares**. Set SMB protocol minimum to SMB2 or higher.
 
 ---
 
-## Hardware Requirements
+## Metadata Sources
 
-### Audio playback (Lucid)
-
-Lucid needs access to the ALSA sound device. The compose file maps `/dev/snd`.
-Ensure your music library host has an ALSA-capable sound card, or remove the
-`lucid` service if you only use AirPlay output.
-
-```yaml
-# docker-compose.yml (already configured)
-devices:
-  - /dev/snd:/dev/snd
-group_add: [audio]
-```
-
-### AirPlay output (Flux)
-
-Flux uses `network_mode: host` so mDNS advertisements reach your LAN.
-This means it binds directly to the host network stack.
-
-### S.M.A.R.T. monitoring (smart)
-
-The `smart` service runs privileged with `/dev` mounted read-only so `smartctl`
-can query raw device registers. Set `SMART_DEVICES=/dev/sda,/dev/sdb` in `.env`,
-or leave it empty to auto-detect via `smartctl --scan`.
-
-### ResonanceFS (optional)
-
-ResonanceFS is only needed if you want to mount a remote NFS/SMB share as your
-library root. It requires `CAP_SYS_ADMIN` and `apparmor:unconfined`. If your
-music is on a locally mounted path you can disable this service entirely.
-
----
-
-## Optional Services
-
-The following services are safe to disable if you don't need them:
-
-```bash
-# Disable S3 vaulting (leave S3_BUCKET empty in .env, or comment out in compose)
-# Disable AirPlay:
-docker compose stop flux
-
-# Disable drive monitoring:
-docker compose stop smart
-
-# Disable ResonanceFS (if library is locally mounted):
-docker compose stop resonancefs
-
-# Disable acoustic fingerprinting:
-docker compose stop fingerprint
-
-# Disable NAS SNMP monitoring (leave NAS_HOSTS empty or stop service):
-docker compose stop snmp
-```
-
-### Tailscale remote access (optional)
-
-To enable the Tailscale sidecar (provides secure remote access to the UI and API):
-
-```bash
-# 1. Get an auth key from https://login.tailscale.com/admin/settings/keys
-# 2. Add to .env:  TAILSCALE_AUTHKEY=tskey-auth-...
-# 3. Start with the tailscale profile:
-docker compose --profile tailscale up -d tailscale
-```
-
-Once connected, the Phonolith UI and API are accessible from any Tailscale device
-at `http://phonolith:3000` (or whatever `TAILSCALE_HOSTNAME` you set).
-
----
-
-## Data Persistence
-
-All persistent data lives in named Docker volumes:
-
-| Volume | Contents |
+| Source | Data provided |
 |---|---|
-| `phonolith-data` | DuckDB analytics DB + per-service SQLite files |
-| `nats-data` | JetStream message store |
-| `phonolith-waveforms` | Pre-rendered waveform JSON |
-| `phonolith-proxies` | Opus proxy transcodes |
-| `polyphony-keys` | WireGuard keys for peer mesh |
+| **MusicBrainz** | Artist MBID, canonical release dates, ISRCs, label, recording IDs — the audiophile-grade open music encyclopedia |
+| **Genius** | Song descriptions, structured credits (producer / writer / featured), per-line annotations, lyrics |
+| **Discogs** | Additional release and pressing metadata (optional) |
+| **AcoustID** | Acoustic fingerprint → MusicBrainz recording match for untagged or mis-tagged files |
+
+MusicBrainz is always queried on first artist or song fetch and its data is stored alongside Genius data. The two sources are complementary: MusicBrainz provides authoritative identifiers and release structure; Genius provides textual commentary and lyrics.
 
 ---
 
-## License
+## API Overview
 
-GNU Affero General Public License v3.0 — see [`LICENSE`](LICENSE).
+All routes are under `/api`. Full documentation is available at `/docs` inside the running app.
+
+| Method | Route | Description |
+|---|---|---|
+| GET | `/api/search?q=` | Search artists |
+| GET | `/api/artist/[id]` | Artist detail |
+| GET | `/api/artist/[id]/songs` | Paginated discography |
+| GET | `/api/song/[id]` | Song detail |
+| GET | `/api/song/[id]/lyrics` | Lyrics (fetch + cache on miss) |
+| GET | `/api/song/[id]/credits` | Producer / writer / featured credits |
+| GET | `/api/song/[id]/annotations` | Genius annotations |
+| GET/POST | `/api/tags` | List or create tags |
+| POST/DELETE | `/api/song/[id]/tags` | Add / remove tag |
+| GET | `/api/history` | Event log |
+| GET | `/api/library` | All indexed library files |
+| GET | `/api/library/status` | Scan status and progress |
+| POST | `/api/library/scan` | Trigger a full scan |
+| GET | `/api/visualize/[id]` | Visualisation data for an artist |
+| GET | `/api/visualize/[id]/connections` | Pre-computed connection graph |
+| GET | `/api/waveforms/[hash]` | Waveform PNG (proxied from analyst) |
+| POST | `/api/backup/trigger` | Dump Postgres → S3 |
+| GET | `/api/versions` | Albums with multiple library versions/masters |
+| GET | `/api/versions/[albumId]` | Side-by-side version comparison for an album |
+| GET | `/api/engram/[hash]` | Last 50 metadata snapshots for a file (newest first) |
+| POST | `/api/engram/[hash]/restore` | Restore all or a subset of fields from a prior snapshot |
+| GET | `/api/lucid/status` | Lucid signal path and queue state |
+| POST | `/api/lucid/play` | Start playback via Lucid |
+| POST | `/api/lucid/pause` | Pause Lucid playback |
+| POST | `/api/lucid/resume` | Resume Lucid playback |
+| POST | `/api/lucid/stop` | Stop Lucid playback |
+| POST | `/api/lucid/seek` | Seek to position in current track |
+| GET | `/api/lucid/devices` | Available ALSA devices and AirPlay endpoints |
+| GET | `/api/soulcatcher/status` | slskd connectivity status |
+| GET | `/api/soulcatcher/search?q=` | Search the Soulseek network |
+| GET | `/api/soulcatcher/downloads` | List tracked downloads, reconciled against live slskd transfer state |
+| POST | `/api/soulcatcher/download` | Enqueue a download from a search result |
+| POST | `/api/soulcatcher/downloads/[id]/ingest` | Trigger an analyst rescan to bring a completed download into the library |
+
+---
+
+## Development
+
+```bash
+npm install
+npm run dev        # Next.js dev server on :3000
+```
+
+Run Postgres and Redis locally (or via Docker):
+
+```bash
+docker compose up db redis -d
+```
+
+The analyst sidecar is optional for UI development — library-related pages will show empty states without it.
+
+### Type checking
+
+```bash
+npx tsc --noEmit
+```
+
+### Building
+
+```bash
+npm run build
+```
+
+---
+
+## Naming
+
+The fourteen subsystems in Phonolith each have a name. You'll see these in the `/docs` page and in code comments:
+
+| Name | Layer | Purpose |
+|---|---|---|
+| **ResonanceFS** | Ingestion | File system watcher and multi-source library scanner |
+| **Tremor** | Ingestion | SMB/NFS streaming indexer |
+| **Engram** | Metadata | Metadata lock engine (MusicBrainz canonical store) |
+| **Lexicon** | Metadata | Credit and annotation aggregator (Genius + Discogs) |
+| **Prism** | Sonic Lab | Spectral analysis and upscale detection |
+| **Crest** | Sonic Lab | Dynamic Range computation |
+| **Aegis** | Vaulting | PostgreSQL schema + S3 backup |
+| **Bit-Forge** | Vaulting | Waveform renderer and fingerprint pipeline |
+| **Lucid** | Playback | ALSA bit-perfect playback daemon (Implemented — basic) |
+| **Flux** | Playback | AirPlay 2 routing layer (Implemented — basic) |
+| **EchoGraph** | Analytics | Listening history charts and event log |
+| **Cathode** | Analytics | Hardware endpoint tracker (planned) |
+| **Polyphony** | Ecosystem | Cryptographic peer network for Codex sharing (planned) |
+| **Sonic Codex** | Ecosystem | Portable `.codex` manifest format for verified releases |
+
+---
+
+## Licence
+
+MIT

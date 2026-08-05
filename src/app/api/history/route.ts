@@ -1,0 +1,79 @@
+export const dynamic = 'force-dynamic'
+
+import { NextRequest, NextResponse } from 'next/server'
+import { sql } from '@/lib/db'
+import { getUserFromSessionCookie, SESSION_COOKIE_NAME } from '@/lib/auth'
+
+export async function GET(req: NextRequest) {
+  const user = await getUserFromSessionCookie(req.cookies.get(SESSION_COOKIE_NAME)?.value)
+  if (!user) return NextResponse.json({ error: 'Not authenticated.' }, { status: 401 })
+
+  const artistId = req.nextUrl.searchParams.get('artist_id')
+  const songId = req.nextUrl.searchParams.get('song_id')
+  const event = req.nextUrl.searchParams.get('event')
+  const limit = parseInt(req.nextUrl.searchParams.get('limit') || '50')
+
+  let rows
+  if (songId) {
+    rows = await sql`
+      SELECT h.*, s.title AS song_title, ar.name AS artist_name
+      FROM history h
+      LEFT JOIN songs s ON h.song_id = s.id
+      LEFT JOIN artists ar ON h.artist_id = ar.id
+      WHERE h.song_id = ${parseInt(songId)}
+      ORDER BY h.created_at DESC
+      LIMIT ${limit}
+    `
+  } else if (artistId) {
+    rows = await sql`
+      SELECT h.*, s.title AS song_title, ar.name AS artist_name
+      FROM history h
+      LEFT JOIN songs s ON h.song_id = s.id
+      LEFT JOIN artists ar ON h.artist_id = ar.id
+      WHERE h.artist_id = ${parseInt(artistId)}
+      ORDER BY h.created_at DESC
+      LIMIT ${limit}
+    `
+  } else if (event) {
+    rows = await sql`
+      SELECT h.*, s.title AS song_title, ar.name AS artist_name
+      FROM history h
+      LEFT JOIN songs s ON h.song_id = s.id
+      LEFT JOIN artists ar ON h.artist_id = ar.id
+      WHERE h.event = ${event}
+      ORDER BY h.created_at DESC
+      LIMIT ${limit}
+    `
+  } else {
+    rows = await sql`
+      SELECT h.*, s.title AS song_title, ar.name AS artist_name
+      FROM history h
+      LEFT JOIN songs s ON h.song_id = s.id
+      LEFT JOIN artists ar ON h.artist_id = ar.id
+      ORDER BY h.created_at DESC
+      LIMIT ${limit}
+    `
+  }
+
+  return NextResponse.json(rows)
+}
+
+export async function POST(req: NextRequest) {
+  const user = await getUserFromSessionCookie(req.cookies.get(SESSION_COOKIE_NAME)?.value)
+  if (!user) return NextResponse.json({ error: 'Not authenticated.' }, { status: 401 })
+
+  const { song_id, artist_id, event } = await req.json() as {
+    song_id?: number
+    artist_id?: number
+    event: string
+  }
+
+  if (!event) return NextResponse.json({ error: 'Missing event' }, { status: 400 })
+
+  const rows = await sql`
+    INSERT INTO history (song_id, artist_id, event)
+    VALUES (${song_id ?? null}, ${artist_id ?? null}, ${event})
+    RETURNING *
+  `
+  return NextResponse.json(rows[0], { status: 201 })
+}

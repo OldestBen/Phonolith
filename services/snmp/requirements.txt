@@ -1,3 +1,0 @@
-nats-py==2.6.0
-loguru==0.7.2
-pysnmp==6.1.3
