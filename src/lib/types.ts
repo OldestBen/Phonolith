@@ -159,6 +159,7 @@ export interface LibraryFile {
 }
 
 export interface AlbumSummary {
+  album_id?: number | null
   album: string
   artist: string
   year?: string

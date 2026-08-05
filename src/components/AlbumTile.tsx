@@ -14,13 +14,16 @@ function MusicNotePlaceholder() {
   )
 }
 
-export default function AlbumTile({ album, artist, year, track_count, cover_hash, has_cover }: AlbumSummary) {
+export default function AlbumTile({ album_id, album, artist, year, track_count, cover_hash, has_cover }: AlbumSummary) {
   const [imgError, setImgError] = useState(false)
   const showImage = has_cover && cover_hash && !imgError
+  const href = album_id
+    ? `/library/album?id=${album_id}`
+    : `/library/album?album=${encodeURIComponent(album)}&artist=${encodeURIComponent(artist)}`
 
   return (
     <Link
-      href={`/library?album=${encodeURIComponent(album)}&artist=${encodeURIComponent(artist)}`}
+      href={href}
       className="group block rounded-xl border border-border bg-surface card-hover overflow-hidden"
     >
       <div className="aspect-square relative overflow-hidden bg-surface-2">
