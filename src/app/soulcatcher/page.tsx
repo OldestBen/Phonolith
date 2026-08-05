@@ -1,6 +1,6 @@
 'use client'
 
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 import { usePageHeader } from '@/contexts/PageHeaderContext'
 import { C, col, cell, DataTable, type TableCell } from '@/components/panel'
 
@@ -132,6 +132,15 @@ function fmtBadgeStyle(r: SoulseekResult): React.CSSProperties {
   }
 }
 
+// Mockup's Size/Br/Slots/Speed/Q table cells each carry an explicit
+// `font-size:10.5px` (smaller than the table's 11.5px base) that Peer/File
+// don't — DataTable applies one uniform size to every cell, so we reproduce
+// the per-column override here at the call site instead of touching the
+// shared primitive.
+function sm(v: ReactNode): ReactNode {
+  return <span style={{ fontSize: 10.5 }}>{v}</span>
+}
+
 // A segmented (dashed) progress fill — mirrors the mockup's seg().
 function segStyle(color: string, pct: number): React.CSSProperties {
   return {
@@ -224,7 +233,7 @@ function FilterChips({ filters, onToggle }: { filters: FilterState; onToggle: (k
           <button
             key={f.key}
             onClick={() => onToggle(f.key)}
-            className="shrink-0 rounded-[20px] px-2.5 py-[5px] text-[10.5px] transition-colors"
+            className="shrink-0 rounded-[20px] px-[9px] py-[5px] text-[10.5px] transition-colors"
             style={{
               border: `1px solid ${on ? '#7c3aed' : '#27272a'}`,
               background: on ? 'rgba(109,40,217,.28)' : '#18181b',
@@ -355,12 +364,12 @@ function PostTransferPanel({
 
   return (
     <div className="rounded-[10px] border border-border bg-[#101012] px-[14px] py-[13px]">
-      <p className="m-0 mb-2.5 text-[9px] uppercase tracking-[.2em] text-text-ghost">Post-transfer</p>
+      <p className="m-0 mb-[9px] text-[9px] uppercase tracking-[.2em] text-text-ghost">Post-transfer</p>
 
       {!download ? (
         <p className="m-0 text-[10.5px] text-text-ghost">Queue a download to see its progress here.</p>
       ) : (
-        <div className="flex flex-col gap-1.5">
+        <div className="flex flex-col gap-[7px]">
           <p className="m-0 mb-0.5 overflow-hidden text-ellipsis whitespace-nowrap text-[10px] text-text-faint">
             {basename(download.filename)}
           </p>
@@ -384,7 +393,7 @@ function PostTransferPanel({
       <button
         onClick={onIngest}
         disabled={!canIngest || ingesting}
-        className="mt-[11px] w-full rounded-md py-1.5 text-[10.5px] font-medium text-white shadow-[0_0_16px_rgba(109,40,217,.45)] transition-colors hover:bg-accent-dim disabled:cursor-not-allowed disabled:opacity-40 disabled:shadow-none"
+        className="mt-[11px] w-full rounded-md px-[10px] py-1.5 text-[10.5px] font-medium text-white shadow-[0_0_16px_rgba(109,40,217,.45)] transition-colors hover:bg-accent-dim disabled:cursor-not-allowed disabled:opacity-40 disabled:shadow-none"
         style={{ background: '#6d28d9' }}
       >
         {download?.local_path
@@ -405,7 +414,7 @@ function HistoryPanel({ downloads }: { downloads: SoulcatcherDownload[] }) {
 
   return (
     <div className="rounded-[10px] border border-border bg-[#101012] px-[14px] py-[13px]">
-      <p className="m-0 mb-2.5 text-[9px] uppercase tracking-[.2em] text-text-ghost">History</p>
+      <p className="m-0 mb-[9px] text-[9px] uppercase tracking-[.2em] text-text-ghost">History</p>
       {history.length === 0 ? (
         <p className="m-0 text-[10.5px] text-text-ghost">Nothing finished yet.</p>
       ) : (
@@ -575,18 +584,18 @@ export default function SoulcatcherPage() {
     const key = `${r.username}:${r.filename}`
     const slots =
       r.hasFreeUploadSlot === undefined
-        ? cell('—', C.faint)
-        : cell(r.hasFreeUploadSlot ? 'Free' : 'Busy', r.hasFreeUploadSlot ? C.green : C.red)
+        ? cell(sm('—'), C.faint)
+        : cell(sm(r.hasFreeUploadSlot ? 'Free' : 'Busy'), r.hasFreeUploadSlot ? C.green : C.red)
 
     return [
       cell(r.username, C.txt),
       cell(<span title={r.filename}>{basename(r.filename)}</span>, C.dim),
       cell(<span style={fmtBadgeStyle(r)}>{fmtLabel(r)}</span>),
-      cell(formatSize(r.size), C.dim),
-      cell(r.bitRate ? `${r.bitRate}k` : '—', C.faint),
+      cell(sm(formatSize(r.size)), C.dim),
+      cell(sm(r.bitRate ? `${r.bitRate}k` : '—'), C.mut),
       slots,
-      cell(r.uploadSpeed != null ? formatSpeed(r.uploadSpeed) : '—', C.dim),
-      cell(r.queueLength != null ? String(r.queueLength) : '—', C.faint),
+      cell(sm(r.uploadSpeed != null ? formatSpeed(r.uploadSpeed) : '—'), C.dim),
+      cell(sm(r.queueLength != null ? String(r.queueLength) : '—'), C.mut),
       cell(<QueueButton onClick={() => handleDownload(r)} busy={downloadingKey === key} />, undefined, 'right'),
     ]
   })
