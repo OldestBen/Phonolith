@@ -343,6 +343,7 @@ function formatBytes(bytes: number): string {
 
 function BackupSection() {
   const [configured, setConfigured] = useState<boolean | null>(null)
+  const [bucket, setBucket] = useState<string | null>(null)
   const [lastBackup, setLastBackup] = useState<LastBackup | null>(null)
   const [backing, setBacking] = useState(false)
   const [status, setStatus] = useState<string | null>(null)
@@ -354,6 +355,7 @@ function BackupSection() {
       .then(data => {
         if (!data) return
         setConfigured(!!data.configured)
+        setBucket(data.bucket ?? null)
         setLastBackup(data.last_backup ?? null)
       })
       .catch(() => {})
@@ -386,7 +388,7 @@ function BackupSection() {
 
   const badgeColor = configured === null ? C.mut : configured ? C.green : C.yel
   const card: CardSpec = {
-    title: 's3://phonolith-vault',
+    title: bucket ? `s3://${bucket}` : 'S3 backup',
     sub: configured === null ? 'Checking S3 configuration…' : configured ? 'S3 configured' : 'Fill in the fields above to enable backups',
     badge: configured === null ? 'checking…' : configured ? '✓ configured' : '⚠ not configured',
     badgeColor,

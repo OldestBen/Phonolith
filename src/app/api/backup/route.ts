@@ -14,7 +14,8 @@ export async function GET(req: NextRequest) {
   const user = await getUserFromSessionCookie(req.cookies.get(SESSION_COOKIE_NAME)?.value)
   if (!user) return NextResponse.json({ error: 'Not authenticated.' }, { status: 401 })
 
-  const configured = !!(await getSetting('S3_BUCKET') && await getSetting('AWS_ACCESS_KEY_ID'))
+  const bucket = await getSetting('S3_BUCKET')
+  const configured = !!(bucket && await getSetting('AWS_ACCESS_KEY_ID'))
 
   let lastBackup = null
   const raw = await getSetting(LAST_BACKUP_KEY)
@@ -28,6 +29,7 @@ export async function GET(req: NextRequest) {
 
   return NextResponse.json({
     configured,
+    bucket: bucket || null,
     last_backup: lastBackup,
   })
 }
