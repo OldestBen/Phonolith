@@ -180,7 +180,7 @@ export interface HistoryEvent {
   artist_id?: number
   track_id?: string
   user_id?: number
-  event: 'lyrics_read' | 'lyrics_download' | 'play'
+  event: 'lyrics_read' | 'lyrics_download' | 'lyrics_marked_read' | 'annotation_added' | 'play'
   created_at: string
   // Joined
   song_title?: string

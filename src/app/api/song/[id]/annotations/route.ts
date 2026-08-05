@@ -38,13 +38,18 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
   const { fragment, body } = await req.json() as { fragment: string; body: string }
   if (!fragment || !body) return NextResponse.json({ error: 'Missing fields' }, { status: 400 })
 
-  const songRows = await sql`SELECT id FROM songs WHERE genius_id = ${id}`
+  const songRows = await sql`SELECT id, artist_id FROM songs WHERE genius_id = ${id}`
   if (songRows.length === 0) return NextResponse.json({ error: 'Song not found' }, { status: 404 })
 
   const rows = await sql`
     INSERT INTO annotations (song_id, fragment, body, source)
     VALUES (${songRows[0].id}, ${fragment}, ${body}, 'user')
     RETURNING *
+  `
+
+  await sql`
+    INSERT INTO history (song_id, artist_id, event)
+    VALUES (${songRows[0].id}, ${songRows[0].artist_id ?? null}, 'annotation_added')
   `
 
   return NextResponse.json(rows[0], { status: 201 })

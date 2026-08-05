@@ -78,11 +78,15 @@ function EventBadge({ event }: { event: HistoryEvent['event'] }) {
   const styles: Record<string, string> = {
     lyrics_read: 'bg-accent/10 border-accent/20 text-accent',
     lyrics_download: 'bg-success/10 border-success/20 text-success',
+    lyrics_marked_read: 'bg-accent/10 border-accent/20 text-accent',
+    annotation_added: 'bg-accent/10 border-accent/20 text-accent',
     play: 'bg-warning/10 border-warning/20 text-warning',
   }
   const labels: Record<string, string> = {
     lyrics_read: 'Read',
     lyrics_download: 'Download',
+    lyrics_marked_read: 'Marked read',
+    annotation_added: 'Annotation',
     play: 'Play',
   }
   return (

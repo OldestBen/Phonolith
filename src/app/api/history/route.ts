@@ -9,11 +9,22 @@ export async function GET(req: NextRequest) {
   if (!user) return NextResponse.json({ error: 'Not authenticated.' }, { status: 401 })
 
   const artistId = req.nextUrl.searchParams.get('artist_id')
+  const songId = req.nextUrl.searchParams.get('song_id')
   const event = req.nextUrl.searchParams.get('event')
   const limit = parseInt(req.nextUrl.searchParams.get('limit') || '50')
 
   let rows
-  if (artistId) {
+  if (songId) {
+    rows = await sql`
+      SELECT h.*, s.title AS song_title, ar.name AS artist_name
+      FROM history h
+      LEFT JOIN songs s ON h.song_id = s.id
+      LEFT JOIN artists ar ON h.artist_id = ar.id
+      WHERE h.song_id = ${parseInt(songId)}
+      ORDER BY h.created_at DESC
+      LIMIT ${limit}
+    `
+  } else if (artistId) {
     rows = await sql`
       SELECT h.*, s.title AS song_title, ar.name AS artist_name
       FROM history h

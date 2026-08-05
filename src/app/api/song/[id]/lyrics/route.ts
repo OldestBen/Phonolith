@@ -14,25 +14,31 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
   const id = parseInt(params.id)
   if (isNaN(id)) return NextResponse.json({ error: 'Invalid id' }, { status: 400 })
 
-  const cacheKey = `lyrics:${id}`
-  const cached = await rget(cacheKey)
-  if (cached) return NextResponse.json(cached)
+  // `?refresh=1` bypasses both the redis and DB cache and re-fetches from
+  // LRCLIB/Genius — this backs the "Re-fetch Genius" action in the reader.
+  const forceRefresh = req.nextUrl.searchParams.get('refresh') === '1'
 
-  // DB cache
-  const rows = await sql`
-    SELECT l.*, s.path, s.artist_id
-    FROM lyrics l
-    JOIN songs s ON l.song_id = s.id
-    WHERE s.genius_id = ${id}
-  `
-  if (rows.length > 0) {
-    const result = {
-      content: rows[0].content,
-      synced_lyrics: rows[0].synced_lyrics ?? null,
-      scraped_at: rows[0].scraped_at,
+  const cacheKey = `lyrics:${id}`
+  if (!forceRefresh) {
+    const cached = await rget(cacheKey)
+    if (cached) return NextResponse.json(cached)
+
+    // DB cache
+    const rows = await sql`
+      SELECT l.*, s.path, s.artist_id
+      FROM lyrics l
+      JOIN songs s ON l.song_id = s.id
+      WHERE s.genius_id = ${id}
+    `
+    if (rows.length > 0) {
+      const result = {
+        content: rows[0].content,
+        synced_lyrics: rows[0].synced_lyrics ?? null,
+        scraped_at: rows[0].scraped_at,
+      }
+      await rset(cacheKey, result, 600)
+      return NextResponse.json(result)
     }
-    await rset(cacheKey, result, 600)
-    return NextResponse.json(result)
   }
 
   const songRows = await sql`
@@ -82,10 +88,12 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
     SET content = EXCLUDED.content, synced_lyrics = EXCLUDED.synced_lyrics, scraped_at = NOW()
   `
 
-  await sql`
-    INSERT INTO history (song_id, artist_id, event)
-    VALUES (${dbSongId}, ${artist_id ?? null}, 'lyrics_read')
-  `
+  if (!forceRefresh) {
+    await sql`
+      INSERT INTO history (song_id, artist_id, event)
+      VALUES (${dbSongId}, ${artist_id ?? null}, 'lyrics_read')
+    `
+  }
 
   const result = { content, synced_lyrics: syncedLyrics, scraped_at: new Date().toISOString() }
   await rset(cacheKey, result, 600)
