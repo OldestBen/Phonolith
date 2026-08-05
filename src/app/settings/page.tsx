@@ -212,7 +212,7 @@ function PlaybackSection() {
           setLucidOnline(true)
           const devList: AlsaDevice[] = Array.isArray(data) ? data : (data.devices ?? [])
           setDevices(devList)
-        } else if (data?.online === false) {
+        } else {
           setLucidOnline(false)
         }
       })
@@ -222,13 +222,15 @@ function PlaybackSection() {
     fetch('/api/lucid/status')
       .then(r => r.ok ? r.json() : null)
       .then(data => {
-        if (data?.online !== false) {
+        if (data && data.online !== false) {
           setLucidOnline(true)
           if (data?.device) setDevice(data.device)
           if (data?.endpoint_name) setEndpointName(data.endpoint_name)
+        } else if (!data) {
+          setLucidOnline(false)
         }
       })
-      .catch(() => {})
+      .catch(() => setLucidOnline(false))
   }, [])
 
   const handleSave = async () => {
