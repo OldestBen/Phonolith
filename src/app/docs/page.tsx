@@ -496,14 +496,14 @@ analyst ← POST /scan-source {type, config, name}
               ['Tremor', 'Ingestion', 'Filesystem watcher daemon (inotify / FSEvents)', <StatusBadge key="t" status="implemented" />],
               ['Engram', 'Metadata', 'Metadata lock engine & version-control guardian', <StatusBadge key="e" status="partial" />],
               ['Lexicon', 'Metadata', 'Deep-scraping metadata resolver (MusicBrainz, Discogs, ENGINEER tags)', <StatusBadge key="l" status="partial" />],
-              ['Prism', 'Sonic Lab', 'Spectral analysis & fake-FLAC / upscale detector', <StatusBadge key="pr" status="partial" />],
-              ['Crest', 'Sonic Lab', 'Dynamic Range (DR / Crest Factor) calculator', <StatusBadge key="cr" status="partial" />],
+              ['Prism', 'Sonic Lab', 'Spectral analysis & fake-FLAC / upscale detector', <StatusBadge key="pr" status="implemented" />],
+              ['Crest', 'Sonic Lab', 'Dynamic Range (DR / Crest Factor) calculator', <StatusBadge key="cr" status="implemented" />],
               ['Aegis', 'Vaulting', 'Immutable S3 backup, encryption & chunking engine', <StatusBadge key="ag" status="partial" />],
               ['Bit-Forge', 'Vaulting', 'BLAKE3 hashing service & deduplication index', <StatusBadge key="bf" status="implemented" />],
               ['Lucid', 'Playback', 'Bit-perfect ALSA-exclusive audio transport daemon', <StatusBadge key="lu" status="partial" />],
               ['Flux', 'Playback', 'AirPlay endpoint discovery & RTSP/ALAC streaming sidecar', <StatusBadge key="fl" status="implemented" />],
               ['EchoGraph', 'Analytics', 'Scrobble history, Sankey diagrams & genre-evolution engine', <StatusBadge key="eg" status="partial" />],
-              ['Cathode', 'Analytics', 'Hardware endpoint tracker & burn-in accountant', <StatusBadge key="ca" status="planned" />],
+              ['Cathode', 'Analytics', 'Hardware endpoint tracker & burn-in accountant', <StatusBadge key="ca" status="partial" />],
               ['Polyphony', 'Ecosystem', 'Peer network: trusted library sharing, presence, backup mirroring, LAN discovery', <StatusBadge key="po" status="implemented" />],
               ['Sonic Codex', 'Ecosystem', 'Portable library manifest format (.codex) — the blueprint, not the bits', <StatusBadge key="sc" status="planned" />],
             ]}
@@ -655,7 +655,7 @@ analyst ← POST /scan-source {type, config, name}
                   rows={[
                     ['Genius API', 'Artist bio, song metadata, lyrics, credits, annotations', '5 min (Redis)', 'Implemented'],
                     ['MusicBrainz API', 'MBID, release dates, ISRC, label, recording info', '5 min (Redis)', 'Implemented'],
-                    ['Discogs API', 'Pressing details, catalogue numbers, format info', 'Not yet', 'Planned'],
+                    ['Discogs API', 'Pressing details, catalogue numbers, format info', '24 h (Redis)', 'Implemented'],
                     ['File Tags (mutagen)', 'ENGINEER, PRODUCER, MASTERED BY, embedded credits', 'N/A', 'Partial'],
                   ]}
                 />
@@ -677,21 +677,31 @@ analyst ← POST /scan-source {type, config, name}
                   responses are Redis-cached for 5 minutes to minimise load.
                 </p>
               </SubSubSection>
-              <SubSubSection title="Planned: Discogs Integration">
+              <SubSubSection title="Discogs Integration">
                 <p>
                   Discogs holds the most complete database of physical pressing information — catalogue numbers,
-                  matrix / runout etchings, label variants, country of pressing, and release year. Lexicon will
-                  use the Discogs API (authenticated via <code className="text-accent">DISCOGS_USER_TOKEN</code>)
-                  to resolve pressing-level detail for files in your library that match a known release. This is
-                  especially valuable for vinyl rips and physical media transfers.
+                  matrix / runout etchings, label variants, country of pressing, and release year. Lexicon uses
+                  the Discogs API (authenticated via <code className="text-accent">DISCOGS_USER_TOKEN</code>,
+                  <code className="text-accent">GET /api/library/[hash]/pressing</code>) to resolve pressing-level
+                  detail for a file, Redis-cached for 24 hours. This is an on-demand, per-file lookup triggered
+                  from the file detail page — not yet run automatically in the background during ingest, which is
+                  the main remaining gap between this and full automatic resolution.
                 </p>
               </SubSubSection>
-              <SubSubSection title="Planned: ENGINEER Tag Extraction">
+              <SubSubSection title="ENGINEER Tag Extraction">
                 <p>
                   Many high-quality lossless files (particularly from HD Tracks, Bandcamp, and mastering studios)
-                  embed rich credits in the TXXX, ENGINEER, PRODUCER, and COMMENT tags. Lexicon will parse these
-                  during the deep-analysis pass and cross-reference them against MusicBrainz recording credits to
-                  build a provenance chain linking every file to a specific mastering session.
+                  embed rich credits in the TXXX, ENGINEER, PRODUCER, and COMMENT tags. The analyst sidecar reads
+                  these during tagging (<code className="text-accent">_read_engineer_tag</code> in{' '}
+                  <code className="text-accent">scanner.py</code>) across the three tag formats that matter —
+                  ID3 <code className="text-accent">TXXX:ENGINEER</code>/<code className="text-accent">TIPL</code>/
+                  <code className="text-accent">TMCL</code> frames, FLAC/Vorbis&apos;s plain{' '}
+                  <code className="text-accent">engineer</code> comment, and MP4/AAC&apos;s freeform{' '}
+                  <code className="text-accent">----:com.apple.iTunes:ENGINEER</code> atom — and the result feeds
+                  the real Engineer Matrix page. What&apos;s still unbuilt is cross-referencing an embedded
+                  ENGINEER credit against MusicBrainz recording credits to build a full provenance chain linking
+                  a file to a specific mastering session — today the tag is taken at face value with no
+                  corroboration.
                 </p>
               </SubSubSection>
             </SubsystemCard>
@@ -702,7 +712,7 @@ analyst ← POST /scan-source {type, config, name}
             <SubsystemCard
               name="Prism"
               layer="Sonic Lab"
-              status="partial"
+              status="implemented"
               role="Spectral analysis & fake-FLAC / upscale detector"
             >
               <p>
@@ -755,7 +765,7 @@ analyst ← POST /scan-source {type, config, name}
             <SubsystemCard
               name="Crest"
               layer="Sonic Lab"
-              status="partial"
+              status="implemented"
               role="Dynamic Range (DR / Crest Factor) calculator"
             >
               <p>
@@ -789,10 +799,13 @@ analyst ← POST /scan-source {type, config, name}
               </SubSubSection>
               <SubSubSection title="Current Status">
                 <p>
-                  Crest is fully implemented in the Analyst sidecar. It is currently skipped during the fast
-                  SMB scan to avoid downloading full audio files. A <strong>Deep Analysis</strong> pass (coming
-                  soon) will run Crest and Prism over all library_files rows where{' '}
-                  <code className="text-accent">dr_score IS NULL</code>.
+                  Crest is fully implemented in the Analyst sidecar. It&apos;s skipped during the fast scan pass
+                  (local or SMB) to avoid the cost of decoding full audio just to index a file. The{' '}
+                  <strong>Deep Analysis</strong> pass that runs Crest and Prism over every{' '}
+                  <code className="text-accent">library_files</code> row where{' '}
+                  <code className="text-accent">dr_score IS NULL</code> has shipped — it runs automatically
+                  right after a scan by default, and on demand at any time via the &quot;Analyse Unscanned&quot;
+                  button on the Library page (<code className="text-accent">POST /api/library/deep-scan-pending</code>).
                 </p>
               </SubSubSection>
             </SubsystemCard>
@@ -1012,21 +1025,36 @@ Example:    phonolith-backup-2026-06-15T00:00:00Z.sql.gz`}</CodeBlock>
             <SubsystemCard
               name="Cathode"
               layer="Analytics"
-              status="planned"
+              status="partial"
               role="Hardware endpoint tracker & burn-in accountant"
             >
               <p>
-                Cathode is the hardware-awareness layer. It tracks which audio output devices have been used
-                for playback, how many hours each device has accumulated, and whether tube or capacitor-coupled
-                endpoints have received appropriate burn-in time. This is particularly useful for audiophiles
-                who maintain multiple DACs, amplifiers, or headphones with different warm-up requirements.
+                Cathode is the hardware-awareness layer. It tracks which audio output devices exist in your
+                system and how many hours each has accumulated, so audiophiles maintaining multiple DACs,
+                amplifiers, or headphones with different burn-in/warm-up requirements have somewhere to log it.
               </p>
-              <SubSubSection title="Planned Capabilities">
+              <SubSubSection title="Current Implementation">
                 <ul className="list-disc list-inside space-y-1">
-                  <li>Device registry: name, type (DAC / amplifier / headphone / IEM), acquisition date, notes</li>
-                  <li>Play-hour accounting: cumulative hours of audio played through each device</li>
-                  <li>Burn-in tracking: configurable targets (e.g. &quot;100 hours for Sennheiser HD800&quot;) with progress bar</li>
-                  <li>Integration with Lucid (ALSA device name) and Flux (AirPlay receiver name) for automatic accounting</li>
+                  <li>Real Postgres table (<code className="text-accent">hardware_profiles</code>): name, description, <code className="text-accent">device_type</code> (dac / amp / speaker / headphone / dap / system), a <code className="text-accent">components</code> JSONB array ([{'{'}role, model{'}'}, ...]), <code className="text-accent">total_hours</code>, and an associated <code className="text-accent">lucid_device</code> (ALSA device name)</li>
+                  <li>Full CRUD API at <code className="text-accent">/api/cathode/profiles</code> and a real page at <code className="text-accent">/cathode</code> — add a profile, see a real burn-in gauge driven by its actual <code className="text-accent">total_hours</code></li>
+                  <li><code className="text-accent">history</code> rows can reference a <code className="text-accent">hardware_profile_id</code>, so play events are attributable to a device once that linkage is populated</li>
+                </ul>
+              </SubSubSection>
+              <SubSubSection title="Gap: hours don't accumulate automatically">
+                <p>
+                  <code className="text-accent">POST /api/cathode/profiles/[id]/hours</code> adds to a profile&apos;s
+                  <code className="text-accent"> total_hours</code>, and its own comment says it&apos;s{' '}
+                  &quot;used by Lucid when a track finishes playing on a known endpoint&quot; — but nothing in
+                  Lucid actually calls it, and there&apos;s no manual UI trigger either. In practice{' '}
+                  <code className="text-accent">total_hours</code> today is only ever whatever a profile was
+                  created with; it never climbs from real playback. Wiring Lucid&apos;s track-end event (and,
+                  per the original plan, Flux&apos;s AirPlay session end) to this endpoint is the one piece of
+                  real work standing between the current state and a genuinely automatic burn-in accountant.
+                </p>
+              </SubSubSection>
+              <SubSubSection title="Still planned">
+                <ul className="list-disc list-inside space-y-1">
+                  <li>Burn-in targets (e.g. &quot;100 hours for Sennheiser HD800&quot;) with a progress bar against that target, not just a raw hour count</li>
                   <li>Export burn-in report as PDF or CSV</li>
                 </ul>
               </SubSubSection>
