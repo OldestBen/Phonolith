@@ -542,7 +542,7 @@ export default function CathodePage() {
               ? 'each arc = share of total tracked hours · amber = most-used endpoint'
               : 'add a profile to start tracking burn-in hours'
           }
-          height={280}
+          height={330}
           background="radial-gradient(circle at 50% 50%,#151024 0%,#09090c 72%)"
           draw={drawDial}
         />
