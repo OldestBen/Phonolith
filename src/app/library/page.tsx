@@ -1,18 +1,20 @@
 'use client'
 
-import { Fragment, useState, useEffect, useRef, Suspense } from 'react'
+import { useState, useEffect, useRef, Suspense } from 'react'
 import Link from 'next/link'
-import { useRouter, useSearchParams } from 'next/navigation'
+import { useRouter } from 'next/navigation'
 import type { LibraryFile, AlbumSummary } from '@/lib/types'
 import AlbumTile from '@/components/AlbumTile'
 import { useBrowserPlayer } from '@/contexts/BrowserPlayerContext'
+import { useAnalysisQueue } from '@/hooks/useAnalysisQueue'
+import BulkActionBar from '@/components/BulkActionBar'
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 function basename(filePath: string): string {
   return filePath.split('/').pop() ?? filePath
 }
 
-function formatFormat(file: LibraryFile): string {
+function formatFormat(file: { format?: string; bit_depth?: number; sample_rate?: number }): string {
   const parts = [file.format?.toUpperCase()]
   if (file.bit_depth && file.sample_rate) {
     parts.push(`${file.bit_depth}/${Math.round(file.sample_rate / 1000)}`)
@@ -20,34 +22,30 @@ function formatFormat(file: LibraryFile): string {
   return parts.filter(Boolean).join(' ')
 }
 
-interface DiscGroup {
-  disc_number: number
-  files: LibraryFile[]
+function formatDuration(ms?: number): string {
+  if (!ms) return '—'
+  const s = Math.round(ms / 1000)
+  const m = Math.floor(s / 60)
+  return `${m}:${(s % 60).toString().padStart(2, '0')}`
 }
 
-function groupByDisc(files: LibraryFile[]): DiscGroup[] {
-  const groups = new Map<number, LibraryFile[]>()
-  for (const f of files) {
-    const disc = f.disc_number ?? 1
-    if (!groups.has(disc)) groups.set(disc, [])
-    groups.get(disc)!.push(f)
-  }
-  return Array.from(groups.entries())
-    .sort(([a], [b]) => a - b)
-    .map(([disc_number, discFiles]) => ({
-      disc_number,
-      files: [...discFiles].sort((a, b) => {
-        if (a.track_number == null && b.track_number == null) {
-          return basename(a.file_path).localeCompare(basename(b.file_path))
-        }
-        if (a.track_number == null) return 1
-        if (b.track_number == null) return -1
-        return a.track_number - b.track_number
-      }),
-    }))
+function DrScore({ score }: { score?: number }) {
+  if (score == null) return <span className="text-text-muted">—</span>
+  const cls = score > 12 ? 'text-success' : score >= 8 ? 'text-warning' : 'text-danger'
+  return <span className={cls}>{score}</span>
 }
 
-function FileRow({ file, onOpen }: { file: LibraryFile; onOpen: () => void }) {
+function FileRow({
+  file,
+  selected,
+  onToggle,
+  onOpen,
+}: {
+  file: LibraryFile
+  selected: boolean
+  onToggle: () => void
+  onOpen: () => void
+}) {
   const player = useBrowserPlayer()
   const isPlaying = player.currentHash === file.blake3_hash && player.isPlaying
 
@@ -56,6 +54,9 @@ function FileRow({ file, onOpen }: { file: LibraryFile; onOpen: () => void }) {
       onClick={onOpen}
       className="border-b border-border/50 hover:bg-surface-2 cursor-pointer transition-colors"
     >
+      <td className="py-2 pl-1 pr-2 w-8" onClick={e => e.stopPropagation()}>
+        <input type="checkbox" checked={selected} onChange={onToggle} className="w-3.5 h-3.5 accent-accent cursor-pointer" />
+      </td>
       <td className="py-2 pr-3 w-8" onClick={e => e.stopPropagation()}>
         <button
           onClick={() => isPlaying ? player.pause() : player.playQueue([file.blake3_hash])}
@@ -102,15 +103,63 @@ function FileRow({ file, onOpen }: { file: LibraryFile; onOpen: () => void }) {
   )
 }
 
-function DrScore({ score }: { score?: number }) {
-  if (score == null) return <span className="text-text-muted">—</span>
-  const cls =
-    score > 12
-      ? 'text-success'
-      : score >= 8
-      ? 'text-warning'
-      : 'text-danger'
-  return <span className={cls}>{score}</span>
+// ── Songs tab: one row per matched song, not one row per file ─────────────────
+interface SongRow {
+  song_id: number
+  song_title: string
+  release_date: string | null
+  artist_name: string
+  album_id: number | null
+  album_name: string | null
+  blake3_hash: string
+  format?: string
+  dr_score?: number
+  bit_depth?: number
+  sample_rate?: number
+  duration_ms?: number
+  spectral_ok?: boolean
+  is_preferred: boolean
+  file_count: string | number
+}
+
+function SongRowView({
+  song,
+  selected,
+  onToggle,
+  onOpen,
+}: {
+  song: SongRow
+  selected: boolean
+  onToggle: () => void
+  onOpen: () => void
+}) {
+  return (
+    <tr onClick={onOpen} className="border-b border-border/50 hover:bg-surface-2 cursor-pointer transition-colors">
+      <td className="py-2 pl-1 pr-2 w-8" onClick={e => e.stopPropagation()}>
+        <input type="checkbox" checked={selected} onChange={onToggle} className="w-3.5 h-3.5 accent-accent cursor-pointer" />
+      </td>
+      <td className="py-2.5 pr-4 text-sm text-text-primary max-w-xs truncate">{song.song_title}</td>
+      <td className="py-2.5 pr-4 text-text-muted truncate max-w-[200px]">{song.artist_name}</td>
+      <td className="py-2.5 pr-4 text-text-muted truncate max-w-[200px]">
+        {song.album_id ? (
+          <Link href={`/library/album?id=${song.album_id}`} onClick={e => e.stopPropagation()} className="hover:text-accent transition-colors">
+            {song.album_name}
+          </Link>
+        ) : (song.album_name ?? '—')}
+      </td>
+      <td className="py-2.5 pr-4 text-text-muted">{formatFormat(song)}</td>
+      <td className="py-2.5 pr-4 font-mono"><DrScore score={song.dr_score} /></td>
+      <td className="py-2.5 pr-4 text-text-muted font-mono">{formatDuration(song.duration_ms)}</td>
+      <td className="py-2.5 pr-4 text-text-muted text-xs">
+        {Number(song.file_count) > 1 ? `${song.file_count} versions` : ''}
+      </td>
+      <td className="py-2.5" onClick={e => e.stopPropagation()}>
+        <Link href={`/song/${song.song_id}`} className="text-xs text-text-muted hover:text-accent transition-colors">
+          Details →
+        </Link>
+      </td>
+    </tr>
+  )
 }
 
 // ── Library status ────────────────────────────────────────────────────────────
@@ -123,7 +172,6 @@ interface ScanProgress {
 }
 
 interface LibraryStatus {
-  file_count?: number
   last_scan?: string
   watcher_status?: string
   library_path?: string
@@ -134,21 +182,15 @@ interface LibraryStatus {
 // ── Filter types ──────────────────────────────────────────────────────────────
 type DRFilter = 'all' | 'high' | 'mid' | 'low'
 type MatchFilter = 'all' | 'matched' | 'unmatched'
-type ViewMode = 'albums' | 'files'
+type ViewMode = 'albums' | 'songs' | 'files'
+const PAGE_SIZE = 100
 
 function LibraryPageInner() {
   const router = useRouter()
-  const searchParams = useSearchParams()
-  const albumParam = searchParams.get('album')
-  const artistParam = searchParams.get('artist')
 
-  const [view, setView] = useState<ViewMode>(albumParam ? 'files' : 'albums')
-  const [files, setFiles] = useState<LibraryFile[]>([])
-  const [albums, setAlbums] = useState<AlbumSummary[]>([])
-  const [albumsLoading, setAlbumsLoading] = useState(true)
-  const [albumQuery, setAlbumQuery] = useState('')
+  const [view, setView] = useState<ViewMode>('albums')
   const [status, setStatus] = useState<LibraryStatus | null>(null)
-  const [loading, setLoading] = useState(true)
+  const [libraryTotal, setLibraryTotal] = useState<number | null>(null)
   const [scanning, setScanning] = useState(false)
   const [scanMsg, setScanMsg] = useState<string | null>(null)
   const [activeScan, setActiveScan] = useState(false)
@@ -157,11 +199,29 @@ function LibraryPageInner() {
   const [autoDeep, setAutoDeep] = useState(true)
   const progressRef = useRef<HTMLDivElement>(null)
 
-  // Filters
+  // Albums tab
+  const [albums, setAlbums] = useState<AlbumSummary[]>([])
+  const [albumsLoading, setAlbumsLoading] = useState(true)
+  const [albumQuery, setAlbumQuery] = useState('')
+
+  // Files tab — server-paginated/filtered now, not a full-table client fetch
+  const [files, setFiles] = useState<LibraryFile[]>([])
+  const [filesTotal, setFilesTotal] = useState(0)
+  const [filesOffset, setFilesOffset] = useState(0)
+  const [filesLoading, setFilesLoading] = useState(true)
+  const [search, setSearch] = useState('')
   const [formatFilter, setFormatFilter] = useState<string>('all')
   const [drFilter, setDrFilter] = useState<DRFilter>('all')
   const [matchFilter, setMatchFilter] = useState<MatchFilter>('all')
-  const [search, setSearch] = useState(albumParam ?? '')
+  const filesQueue = useAnalysisQueue()
+
+  // Songs tab
+  const [songs, setSongs] = useState<SongRow[]>([])
+  const [songsTotal, setSongsTotal] = useState(0)
+  const [songsOffset, setSongsOffset] = useState(0)
+  const [songsLoading, setSongsLoading] = useState(true)
+  const [songQuery, setSongQuery] = useState('')
+  const songsQueue = useAnalysisQueue()
 
   // Close progress popover on outside click
   useEffect(() => {
@@ -174,20 +234,25 @@ function LibraryPageInner() {
     return () => document.removeEventListener('mousedown', handler)
   }, [])
 
-  // Initial load
+  // Library status — polled independently of whichever tab is active, so the
+  // header's file count and scan indicator are always real regardless of
+  // pagination/filters on the Files/Songs tabs below.
   useEffect(() => {
-    Promise.all([
-      fetch('/api/library').then(r => r.ok ? r.json() : { files: [] }),
-      fetch('/api/library/status').then(r => r.ok ? r.json() : null),
-    ])
-      .then(([libData, statusData]) => {
-        setFiles(libData.files ?? libData ?? [])
-        setStatus(statusData)
-        if (statusData?.scanning) setActiveScan(true)
-      })
-      .catch(() => {})
-      .finally(() => setLoading(false))
-  }, [])
+    let cancelled = false
+    const load = () => {
+      fetch('/api/library/status')
+        .then(r => r.ok ? r.json() : null)
+        .then(data => {
+          if (cancelled || !data) return
+          setStatus(data)
+          setActiveScan(!!data.scanning)
+        })
+        .catch(() => {})
+    }
+    load()
+    const id = setInterval(load, activeScan ? 3000 : 15000)
+    return () => { cancelled = true; clearInterval(id) }
+  }, [activeScan])
 
   // Load the auto-deep-analysis preference
   useEffect(() => {
@@ -197,38 +262,17 @@ function LibraryPageInner() {
       .catch(() => {})
   }, [])
 
-  // Files-view search — refetched server-side via trigram similarity (debounced)
+  // The header's overall file count needs a real DB total independent of
+  // whichever tab is active — the analyst's own status endpoint only
+  // reports files touched since it last restarted (files_indexed), not a
+  // persistent library-wide total, so it can't be used for this. Refetched
+  // on mount and again whenever an active scan finishes.
   useEffect(() => {
-    if (view !== 'files' || albumParam) return
-    const id = setTimeout(() => {
-      setLoading(true)
-      const qs = search.trim() ? `?q=${encodeURIComponent(search.trim())}` : ''
-      fetch(`/api/library${qs}`)
-        .then(r => r.ok ? r.json() : { files: [] })
-        .then(data => setFiles(data.files ?? data ?? []))
-        .catch(() => {})
-        .finally(() => setLoading(false))
-    }, 300)
-    return () => clearTimeout(id)
-  }, [view, search, albumParam])
-
-  // Poll while a scan is active — show files as they arrive, like Plex/Roon
-  useEffect(() => {
-    if (!activeScan) return
-    const id = setInterval(async () => {
-      try {
-        const [libData, statusData] = await Promise.all([
-          fetch('/api/library').then(r => r.ok ? r.json() : null),
-          fetch('/api/library/status').then(r => r.ok ? r.json() : null),
-        ])
-        if (libData) setFiles(libData.files ?? libData ?? [])
-        if (statusData) {
-          setStatus(statusData)
-          if (!statusData.scanning) setActiveScan(false)
-        }
-      } catch {}
-    }, 3000)
-    return () => clearInterval(id)
+    if (activeScan) return
+    fetch('/api/library?limit=1')
+      .then(r => r.ok ? r.json() : null)
+      .then(data => { if (typeof data?.total === 'number') setLibraryTotal(data.total) })
+      .catch(() => {})
   }, [activeScan])
 
   // Albums grid data — refetched when the search box changes (debounced)
@@ -245,6 +289,51 @@ function LibraryPageInner() {
     }, 200)
     return () => clearTimeout(id)
   }, [view, albumQuery])
+
+  // Files tab — server-side search/filters/pagination (debounced on search
+  // only; filter/offset changes fetch immediately).
+  useEffect(() => {
+    if (view !== 'files') return
+    const id = setTimeout(() => {
+      setFilesLoading(true)
+      const params = new URLSearchParams()
+      if (search.trim()) params.set('q', search.trim())
+      if (formatFilter !== 'all') params.set('format', formatFilter)
+      if (drFilter !== 'all') params.set('dr', drFilter)
+      if (matchFilter !== 'all') params.set('match', matchFilter)
+      params.set('limit', String(PAGE_SIZE))
+      params.set('offset', String(filesOffset))
+      fetch(`/api/library?${params.toString()}`)
+        .then(r => r.ok ? r.json() : { files: [], total: 0 })
+        .then(data => { setFiles(data.files ?? []); setFilesTotal(data.total ?? 0) })
+        .catch(() => {})
+        .finally(() => setFilesLoading(false))
+    }, search ? 300 : 0)
+    return () => clearTimeout(id)
+  }, [view, search, formatFilter, drFilter, matchFilter, filesOffset])
+
+  // Reset to page 1 whenever a filter/search changes
+  useEffect(() => { setFilesOffset(0) }, [search, formatFilter, drFilter, matchFilter])
+
+  // Songs tab — same server-side search/pagination pattern
+  useEffect(() => {
+    if (view !== 'songs') return
+    const id = setTimeout(() => {
+      setSongsLoading(true)
+      const params = new URLSearchParams()
+      if (songQuery.trim()) params.set('q', songQuery.trim())
+      params.set('limit', String(PAGE_SIZE))
+      params.set('offset', String(songsOffset))
+      fetch(`/api/library/songs?${params.toString()}`)
+        .then(r => r.ok ? r.json() : { songs: [], total: 0 })
+        .then(data => { setSongs(data.songs ?? []); setSongsTotal(data.total ?? 0) })
+        .catch(() => {})
+        .finally(() => setSongsLoading(false))
+    }, songQuery ? 300 : 0)
+    return () => clearTimeout(id)
+  }, [view, songQuery, songsOffset])
+
+  useEffect(() => { setSongsOffset(0) }, [songQuery])
 
   const handleDeepScan = async () => {
     setDeepScanning(true)
@@ -291,28 +380,14 @@ function LibraryPageInner() {
     }
   }
 
-  // Derive unique formats for filter dropdown
-  const formats = ['all', ...Array.from(new Set(files.map(f => f.format).filter(Boolean) as string[]))]
+  const formats = ['all', 'flac', 'mp3', 'alac', 'aac', 'wav', 'dsf', 'ogg']
 
-  // Apply filters
-  const filtered = files.filter(f => {
-    if (formatFilter !== 'all' && f.format !== formatFilter) return false
-    if (drFilter === 'high' && (f.dr_score == null || f.dr_score <= 12)) return false
-    if (drFilter === 'mid' && (f.dr_score == null || f.dr_score < 8 || f.dr_score > 12)) return false
-    if (drFilter === 'low' && (f.dr_score == null || f.dr_score >= 8)) return false
-    if (matchFilter === 'matched' && !f.song_id) return false
-    if (matchFilter === 'unmatched' && f.song_id) return false
-    if (albumParam && f.album !== albumParam) return false
-    if (artistParam && f.artist !== artistParam) return false
-    return true
-  })
+  const totalFileCount = libraryTotal ?? filesTotal
 
-  const isAlbumFiltered = Boolean(albumParam && artistParam)
-  const showDiscHeaders = isAlbumFiltered && filtered.some(f => (f.disc_number ?? 1) > 1)
-  const discGroups = isAlbumFiltered ? groupByDisc(filtered) : null
+  const activeQueue = view === 'songs' ? songsQueue : filesQueue
 
   return (
-    <div className="min-h-screen px-4 py-8 pb-20 md:pb-8">
+    <div className="min-h-screen px-4 py-8 pb-28 md:pb-8">
       {/* Top bar */}
       <div className="flex flex-wrap items-center gap-4 mb-6">
         <div className="flex items-center gap-3">
@@ -323,7 +398,7 @@ function LibraryPageInner() {
               className="px-2 py-0.5 rounded-full bg-surface-2 border border-border text-text-muted text-xs flex items-center gap-1.5 hover:border-accent/40 transition-colors"
             >
               {activeScan && <span className="w-1.5 h-1.5 rounded-full bg-accent animate-pulse shrink-0" />}
-              {files.length} file{files.length !== 1 ? 's' : ''}
+              {totalFileCount} file{totalFileCount !== 1 ? 's' : ''}
               {activeScan && ' — scanning…'}
             </button>
             {showProgress && status && (
@@ -370,20 +445,15 @@ function LibraryPageInner() {
               Last scan: {new Date(status.last_scan).toLocaleString()}
             </span>
           )}
-          {(() => {
-            const unscanned = files.filter(f => f.dr_score == null).length
-            return unscanned > 0 ? (
-              <button
-                onClick={handleDeepScan}
-                disabled={deepScanning || activeScan}
-                title={`${unscanned} fast-indexed file${unscanned !== 1 ? 's' : ''} with no DR score`}
-                className="px-3 py-1.5 rounded-lg bg-warning/10 border border-warning/30 text-warning text-xs font-medium
-                           hover:bg-warning/20 transition-colors disabled:opacity-50"
-              >
-                {deepScanning ? 'Analysing…' : `Analyse Unscanned (${unscanned})`}
-              </button>
-            ) : null
-          })()}
+          <button
+            onClick={handleDeepScan}
+            disabled={deepScanning || activeScan}
+            title="Deep-analyse every file fast-indexed with no DR score yet"
+            className="px-3 py-1.5 rounded-lg bg-warning/10 border border-warning/30 text-warning text-xs font-medium
+                       hover:bg-warning/20 transition-colors disabled:opacity-50"
+          >
+            {deepScanning ? 'Analysing…' : 'Analyse Unscanned'}
+          </button>
           <button
             onClick={toggleAutoDeep}
             role="switch"
@@ -426,6 +496,14 @@ function LibraryPageInner() {
             Albums
           </button>
           <button
+            onClick={() => setView('songs')}
+            className={`px-3 py-1 rounded-md text-xs font-medium transition-colors ${
+              view === 'songs' ? 'bg-accent text-white' : 'text-text-muted hover:text-text-primary'
+            }`}
+          >
+            Songs
+          </button>
+          <button
             onClick={() => setView('files')}
             className={`px-3 py-1 rounded-md text-xs font-medium transition-colors ${
               view === 'files' ? 'bg-accent text-white' : 'text-text-muted hover:text-text-primary'
@@ -437,21 +515,12 @@ function LibraryPageInner() {
 
         <input
           type="text"
-          value={view === 'albums' ? albumQuery : search}
-          onChange={e => view === 'albums' ? setAlbumQuery(e.target.value) : setSearch(e.target.value)}
-          placeholder={view === 'albums' ? 'Search albums or artists…' : 'Search files…'}
+          value={view === 'albums' ? albumQuery : view === 'songs' ? songQuery : search}
+          onChange={e => view === 'albums' ? setAlbumQuery(e.target.value) : view === 'songs' ? setSongQuery(e.target.value) : setSearch(e.target.value)}
+          placeholder={view === 'albums' ? 'Search albums or artists…' : view === 'songs' ? 'Search songs, artists, or albums…' : 'Search files…'}
           className="bg-surface border border-border text-text-primary text-sm rounded-lg px-3 py-1.5 flex-1 min-w-[200px] max-w-sm
                      placeholder:text-text-muted focus:outline-none focus:border-accent"
         />
-
-        {(albumParam || artistParam) && view === 'files' && (
-          <button
-            onClick={() => router.push('/library')}
-            className="px-3 py-1.5 rounded-lg bg-surface-2 border border-border text-text-muted text-xs hover:text-text-primary transition-colors"
-          >
-            Clear album filter ×
-          </button>
-        )}
       </div>
 
       {view === 'albums' ? (
@@ -472,10 +541,56 @@ function LibraryPageInner() {
         ) : (
           <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-4">
             {albums.map(a => (
-              <AlbumTile key={`${a.artist}::${a.album}`} {...a} />
+              <AlbumTile key={a.album_id ?? `${a.artist}::${a.album}`} {...a} />
             ))}
           </div>
         )
+      ) : view === 'songs' ? (
+        <>
+          {songsLoading ? (
+            <div className="space-y-2 animate-pulse">
+              {Array.from({ length: 8 }).map((_, i) => <div key={i} className="h-10 bg-surface-2 rounded" />)}
+            </div>
+          ) : songs.length === 0 ? (
+            <div className="flex flex-col items-center justify-center py-24 text-center">
+              <p className="text-text-muted text-base mb-2">
+                {songQuery ? 'No songs match your search.' : 'No matched songs yet — songs appear here once files are matched to a real song.'}
+              </p>
+            </div>
+          ) : (
+            <>
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm min-w-[720px]">
+                  <thead>
+                    <tr className="border-b border-border">
+                      <th className="py-2 pl-1 w-8" />
+                      <th className="text-left text-text-muted font-medium py-2 pr-4">Title</th>
+                      <th className="text-left text-text-muted font-medium py-2 pr-4">Artist</th>
+                      <th className="text-left text-text-muted font-medium py-2 pr-4">Album</th>
+                      <th className="text-left text-text-muted font-medium py-2 pr-4">Format</th>
+                      <th className="text-left text-text-muted font-medium py-2 pr-4">DR</th>
+                      <th className="text-left text-text-muted font-medium py-2 pr-4">Time</th>
+                      <th className="text-left text-text-muted font-medium py-2 pr-4">Versions</th>
+                      <th className="text-left text-text-muted font-medium py-2">Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {songs.map(s => (
+                      <SongRowView
+                        key={s.song_id}
+                        song={s}
+                        selected={songsQueue.selected.has(s.blake3_hash)}
+                        onToggle={() => songsQueue.toggle(s.blake3_hash)}
+                        onOpen={() => router.push(`/song/${s.song_id}`)}
+                      />
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              <PaginationBar total={songsTotal} offset={songsOffset} pageSize={PAGE_SIZE} onOffset={setSongsOffset} />
+            </>
+          )}
+        </>
       ) : (
         <>
           {/* Filters */}
@@ -516,59 +631,100 @@ function LibraryPageInner() {
           </div>
 
           {/* Table */}
-          {loading ? (
+          {filesLoading ? (
             <div className="space-y-2 animate-pulse">
               {Array.from({ length: 8 }).map((_, i) => (
                 <div key={i} className="h-10 bg-surface-2 rounded" />
               ))}
             </div>
-          ) : filtered.length === 0 ? (
+          ) : files.length === 0 ? (
             <div className="flex flex-col items-center justify-center py-24 text-center">
               <p className="text-text-muted text-base mb-2">
-                {files.length === 0
+                {filesTotal === 0 && !search && formatFilter === 'all' && drFilter === 'all' && matchFilter === 'all'
                   ? 'No files indexed. Mount a music directory and click Scan Library.'
                   : 'No files match the current filters.'}
               </p>
             </div>
           ) : (
-            <div className="overflow-x-auto">
-              <table className="w-full text-sm min-w-[640px]">
-                <thead>
-                  <tr className="border-b border-border">
-                    <th className="py-2 w-8" />
-                    <th className="text-left text-text-muted font-medium py-2 pr-4">File</th>
-                    <th className="text-left text-text-muted font-medium py-2 pr-4">Format</th>
-                    <th className="text-left text-text-muted font-medium py-2 pr-4">DR</th>
-                    <th className="text-left text-text-muted font-medium py-2 pr-4">Quality</th>
-                    <th className="text-left text-text-muted font-medium py-2 pr-4">Matched Song</th>
-                    <th className="text-left text-text-muted font-medium py-2">Actions</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {discGroups
-                    ? discGroups.map(group => (
-                        <Fragment key={group.disc_number}>
-                          {showDiscHeaders && (
-                            <tr>
-                              <td colSpan={7} className="pt-4 pb-1 text-text-muted text-xs uppercase tracking-widest font-medium">
-                                Disc {group.disc_number}
-                              </td>
-                            </tr>
-                          )}
-                          {group.files.map(file => (
-                            <FileRow key={file.blake3_hash} file={file} onOpen={() => router.push(`/library/${file.blake3_hash}`)} />
-                          ))}
-                        </Fragment>
-                      ))
-                    : filtered.map(file => (
-                        <FileRow key={file.blake3_hash} file={file} onOpen={() => router.push(`/library/${file.blake3_hash}`)} />
-                      ))}
-                </tbody>
-              </table>
-            </div>
+            <>
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm min-w-[640px]">
+                  <thead>
+                    <tr className="border-b border-border">
+                      <th className="py-2 pl-1 w-8" />
+                      <th className="py-2 w-8" />
+                      <th className="text-left text-text-muted font-medium py-2 pr-4">File</th>
+                      <th className="text-left text-text-muted font-medium py-2 pr-4">Format</th>
+                      <th className="text-left text-text-muted font-medium py-2 pr-4">DR</th>
+                      <th className="text-left text-text-muted font-medium py-2 pr-4">Quality</th>
+                      <th className="text-left text-text-muted font-medium py-2 pr-4">Matched Song</th>
+                      <th className="text-left text-text-muted font-medium py-2">Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {files.map(file => (
+                      <FileRow
+                        key={file.blake3_hash}
+                        file={file}
+                        selected={filesQueue.selected.has(file.blake3_hash)}
+                        onToggle={() => filesQueue.toggle(file.blake3_hash)}
+                        onOpen={() => router.push(`/library/${file.blake3_hash}`)}
+                      />
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              <PaginationBar total={filesTotal} offset={filesOffset} pageSize={PAGE_SIZE} onOffset={setFilesOffset} />
+            </>
           )}
         </>
       )}
+
+      <BulkActionBar
+        count={activeQueue.total}
+        queueState={activeQueue.queueState}
+        queued={activeQueue.queued}
+        failed={activeQueue.failed}
+        onQueue={activeQueue.queueAnalysis}
+        onClear={activeQueue.clear}
+      />
+    </div>
+  )
+}
+
+function PaginationBar({
+  total,
+  offset,
+  pageSize,
+  onOffset,
+}: {
+  total: number
+  offset: number
+  pageSize: number
+  onOffset: (offset: number) => void
+}) {
+  const page = Math.floor(offset / pageSize) + 1
+  const pageCount = Math.max(1, Math.ceil(total / pageSize))
+  if (pageCount <= 1) return null
+  return (
+    <div className="flex items-center justify-between mt-4 text-xs text-text-muted">
+      <span>Page {page} of {pageCount} · {total.toLocaleString()} total</span>
+      <div className="flex gap-2">
+        <button
+          onClick={() => onOffset(Math.max(0, offset - pageSize))}
+          disabled={offset === 0}
+          className="px-2.5 py-1 rounded-md bg-surface-2 border border-border disabled:opacity-40 hover:border-accent/40 transition-colors"
+        >
+          ← Prev
+        </button>
+        <button
+          onClick={() => onOffset(offset + pageSize)}
+          disabled={offset + pageSize >= total}
+          className="px-2.5 py-1 rounded-md bg-surface-2 border border-border disabled:opacity-40 hover:border-accent/40 transition-colors"
+        >
+          Next →
+        </button>
+      </div>
     </div>
   )
 }
