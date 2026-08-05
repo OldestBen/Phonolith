@@ -32,14 +32,19 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: 'Provide either id, or both artist and album.' }, { status: 400 })
   }
 
+  // Mirror the SQL side's normalization exactly (collapse whitespace runs,
+  // not just trim) so a fallback artist+album lookup matches the same
+  // raw_key the grouping query would compute for those files.
+  const normalize = (s: string) => s.toLowerCase().replace(/\s+/g, ' ').trim()
   const rawKey = artistParam && albumParam
-    ? `${albumParam.trim().toLowerCase()}::${artistParam.trim().toLowerCase()}`
+    ? `${normalize(albumParam)}::${normalize(artistParam)}`
     : null
 
   const rows = await sql`
     WITH canon AS (
       SELECT al.id AS album_id, al.name AS album_name, ar.name AS artist_name,
-             lower(trim(al.name)) AS norm_album, lower(trim(ar.name)) AS norm_artist
+             trim(regexp_replace(lower(al.name), '[\s ]+', ' ', 'g')) AS norm_album,
+             trim(regexp_replace(lower(ar.name), '[\s ]+', ' ', 'g')) AS norm_artist
       FROM albums al
       JOIN artists ar ON ar.id = al.artist_id
     ),
@@ -49,15 +54,16 @@ export async function GET(req: NextRequest) {
         COALESCE(t.track_number, lf.track_number) AS resolved_track_number,
         COALESCE(t.disc_number, lf.disc_number)   AS resolved_disc_number,
         COALESCE(s.album_id, c.album_id) AS resolved_album_id,
-        lower(trim(COALESCE(lf.album, ''))) || '::' || lower(trim(COALESCE(lf.artist, ''))) AS raw_key
+        trim(regexp_replace(lower(COALESCE(lf.album, '')), '[\s ]+', ' ', 'g')) || '::' ||
+        trim(regexp_replace(lower(COALESCE(lf.artist, '')), '[\s ]+', ' ', 'g')) AS raw_key
       FROM library_files lf
       LEFT JOIN songs s ON s.id = lf.song_id
       LEFT JOIN artists ar2 ON s.artist_id = ar2.id
       LEFT JOIN tracks t ON lf.track_id = t.id
       LEFT JOIN canon c
-        ON c.norm_album = lower(trim(COALESCE(lf.album, '')))
-       AND c.norm_artist = lower(trim(COALESCE(lf.artist, '')))
-      WHERE lf.album IS NOT NULL
+        ON c.norm_album = trim(regexp_replace(lower(COALESCE(lf.album, '')), '[\s ]+', ' ', 'g'))
+       AND c.norm_artist = trim(regexp_replace(lower(COALESCE(lf.artist, '')), '[\s ]+', ' ', 'g'))
+      WHERE lf.album IS NOT NULL OR s.album_id IS NOT NULL
     )
     SELECT k.*
     FROM keyed k

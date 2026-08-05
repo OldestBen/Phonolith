@@ -70,10 +70,12 @@ function HomePageInner() {
     }
     setLoading(true)
     setSearched(true)
+    // GET /api/search returns a bare array of artist hits, not { artists: [...] } —
+    // same shape (and same historical bug) as the Galaxy search fixed earlier.
     fetch(`/api/search?q=${encodeURIComponent(q)}`)
-      .then(r => r.ok ? r.json() : { artists: [] })
+      .then(r => r.ok ? r.json() : [])
       .then(data => {
-        setArtists(data.artists ?? [])
+        setArtists(Array.isArray(data) ? data : [])
       })
       .catch(() => setArtists([]))
       .finally(() => setLoading(false))
