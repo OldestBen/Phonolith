@@ -31,19 +31,15 @@ export default function EngineersPage() {
 
   const cards: CardSpec[] = (stats ?? []).map(e => {
     const dr = e.avg_dr
-    const pills = [
-      e.lossless_ratio,
-      e.verified_count > 0 ? `${e.verified_count} AccurateRip-verified` : null,
-    ].filter((p): p is string => Boolean(p))
 
     return {
       title: e.engineer,
       sub: `${e.file_count} track${e.file_count === 1 ? '' : 's'} · ${e.pct_of_library}% of library`,
       dot: dr != null ? drColor(dr) : undefined,
-      pills,
+      pills: [e.lossless_ratio],
       bar: dr != null ? Math.max(0, Math.min(100, (dr / 20) * 100)) : undefined,
       barColor: dr != null ? drColor(dr) : undefined,
-      barLabel: dr != null ? `DR${Math.round(dr)}` : '—',
+      barLabel: dr != null ? `DR${dr.toFixed(1)}` : '—',
     }
   })
 
@@ -51,7 +47,7 @@ export default function EngineersPage() {
     <div className="mx-auto flex max-w-[900px] flex-col gap-[13px] px-6 py-6">
       <ScreenDesc>
         Engineers and masterers ranked by average Dynamic Range score across your library. DR ≥ 14
-        excellent · DR ≥ 8 good · DR &lt; 8 compressed.
+        excellent · DR ≥ 10 good · DR ≥ 8 fair · DR ≥ 5 compressed · DR &lt; 5 heavily compressed.
       </ScreenDesc>
 
       {stats == null ? (
