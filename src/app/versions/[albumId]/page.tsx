@@ -5,14 +5,16 @@
  * `P.versions` table + "crest-factor gauge wall" canvas). Compares every
  * distinct format/bit-depth/sample-rate pressing of one album.
  *
- * Real data only: dr_avg, format, engineer and accuraterip_status all come
- * straight off library_files (via groupFileVersions). The mockup's Peak/RMS/
- * Label columns were dropped — no such columns exist anywhere in the schema
- * (see migrations, none define peak/rms/label). "Year" is derived from the
- * matched songs' release_date (falls back to the album's release_date), and
- * the ⚠ loudness-war flag is computed for real: a version is flagged only
- * if an EARLIER-year version of the same album has a meaningfully higher
- * average DR (>= LOUDNESS_WAR_DR_DROP points) — nothing here is hardcoded.
+ * Real data only: dr_avg, format and engineer (mockup's "Mastered by") all
+ * come straight off library_files (via groupFileVersions). The mockup's
+ * Peak/RMS/Label columns were dropped — no such columns exist anywhere in
+ * the schema (see migrations, none define peak/rms/label). "Year" is derived
+ * from the matched songs' release_date (falls back to the album's release
+ * date), and the ⚠ loudness-war flag is computed for real: a version is
+ * flagged only if an EARLIER-year version of the same album has a
+ * meaningfully higher average DR (>= LOUDNESS_WAR_DR_DROP points) — nothing
+ * here is hardcoded. The preferred-version star (column 1) is a live control
+ * wired to PATCH /api/versions/[albumId]/preferred, not a static glyph.
  */
 
 import { useEffect, useState, useCallback, useRef } from 'react'
@@ -120,13 +122,6 @@ function versionYear(v: Version, albumReleaseDate?: string): number | null {
     if (!Number.isNaN(y)) return y
   }
   return null
-}
-
-function accurateRipCell(status?: string): { text: string; color: string } {
-  if (status === 'verified') return { text: '✓ verified', color: C.green }
-  if (status === 'mismatch') return { text: '⚠ mismatch', color: C.red }
-  if (status === 'not_found') return { text: 'not found', color: C.mut }
-  return { text: '—', color: C.mut }
 }
 
 interface GaugeDatum {
@@ -323,7 +318,6 @@ export default function VersionComparePage() {
     const isEffectivePreferred = v.signature === effectivePreferredSignature
     const lw = lwFlagged.has(v.signature)
     const engineer = primaryEngineer(v.tracks)
-    const ar = accurateRipCell(v.accuraterip_status)
 
     let flagGlyph = '—'
     let flagColor = C.mut
@@ -339,26 +333,30 @@ export default function VersionComparePage() {
     }
 
     return [
-      cell(isEffectivePreferred ? '★' : '', C.vio, 'center'),
-      cell(year ?? '—', C.txt),
-      cell(formatLabel(v), C.dim),
-      cell(v.dr_avg != null ? `DR${v.dr_avg}` : '—', v.dr_avg != null ? drColor(v.dr_avg) : C.mut),
-      cell(engineer ?? '—', C.mut),
-      cell(ar.text, ar.color),
-      cell(flagGlyph, flagColor, 'center'),
       cell(
         isEffectivePreferred ? (
-          <span className="text-[10px] font-medium" style={{ color: C.green }}>Preferred ✓</span>
+          <span title="Preferred version" style={{ color: C.amb, textShadow: `0 0 6px ${C.amb}66` }}>
+            ★
+          </span>
         ) : (
           <button
             onClick={() => setPreferred(v.signature)}
             disabled={savingSignature === v.signature}
-            className="rounded-md border border-[#3f3f46] bg-surface px-2.5 py-1 text-[10px] text-text-secondary transition-colors hover:border-accent/40 disabled:opacity-50"
+            title="Set as preferred version"
+            aria-label="Set as preferred version"
+            className="text-text-ghost transition-colors hover:text-amber disabled:opacity-50"
           >
-            {savingSignature === v.signature ? 'Saving…' : 'Set preferred'}
+            {savingSignature === v.signature ? '…' : '☆'}
           </button>
-        )
+        ),
+        undefined,
+        'center'
       ),
+      cell(year ?? '—', C.txt),
+      cell(formatLabel(v), C.dim),
+      cell(v.dr_avg != null ? `DR${v.dr_avg}` : '—', v.dr_avg != null ? drColor(v.dr_avg) : C.mut),
+      cell(engineer ?? '—', C.mut),
+      cell(flagGlyph, flagColor, 'center'),
     ]
   })
 
@@ -381,9 +379,9 @@ export default function VersionComparePage() {
       <CanvasPanel
         title="Crest-factor gauge wall"
         subtitle={`${album.name} · ${versions.length} pressing${versions.length === 1 ? '' : 's'} · needle = live DR${
-          lwFlagged.size > 0 ? ', red ring = loudness war' : ''
+          lwFlagged.size > 0 ? ', red arc = loudness war' : ''
         }`}
-        height={220}
+        height={250}
         background="linear-gradient(180deg,#141419,#0a0a0c)"
         draw={drawGaugeWall}
       />
@@ -408,10 +406,8 @@ export default function VersionComparePage() {
           col('Year'),
           col('Format'),
           col('DR'),
-          col('Engineer'),
-          col('AccurateRip'),
+          col('Mastered by'),
           col('Flags', 'center'),
-          col('Action'),
         ]}
         rows={rows}
       />

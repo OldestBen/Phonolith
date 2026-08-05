@@ -63,7 +63,7 @@ export default function VersionsPage() {
           <p className="m-0 text-sm text-text-muted">Loading version comparisons…</p>
         </div>
       ) : cards.length > 0 ? (
-        <div className="grid gap-2.5" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))' }}>
+        <div className="grid gap-2.5" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))' }}>
           {cards.map(c => (
             <Link key={c.album_id} href={`/versions/${c.album_id}`} className="block">
               <CardGrid cards={[c]} columns={false} />
